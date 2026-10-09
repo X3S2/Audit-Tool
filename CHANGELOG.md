@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.7.0] - 2026-11-10
+
+### UI/UX Refactoring
+
+#### Navigation & Layout
+- **Hierarchical Navigation**: Audits mit Subpages (Audits Overview, Räume & Objekte, Standorte, Vorlagen)
+- **Admin Navigation**: Admin Page mit Subpages (Benutzer, Backup, Export, Logs)
+- **Expandable Menu Items**: Navigation mit Collapse/Expand-Indikatoren
+  - Subpages anzeigen sich beim Klick auf Parent-Item
+  - Responsive Design (Desktop/Tablet/Mobile)
+
+#### Header Improvements
+- **Profile Dropdown**: Avatar mit Initialen statt nur Name
+  - Klick öffnet Dropdown mit: Mein Profil, Passwort ändern, Logout
+  - Bessere Sichtbarkeit und Usability
+- **Theme Toggle**: Dark/Light Mode Button im Header
+  - Benutzerfreundlichere Platzierung
+  - Gekoppelt mit localStorage für Persistierung
+
+#### Admin Page
+- **Tab Navigation**: Benutzer, Backup, Export, Logs Tabs
+  - Bessere Strukturierung statt alles auf einer Seite
+  - Schnellere Navigation zwischen Admin-Funktionen
+
+#### Profile Page
+- **Theme Toggle**: Interaktiver Button zum Wechseln Dark/Light Mode
+  - Anstatt nur statische Anzeige
+  - Mit Hover-Effekten und Animationen
+
+#### Design Enhancements
+- **Toast Notifications**: CSS für Error/Success/Info/Warning Toasts
+  - Fixed positioning (top-right)
+  - Slide-in/slide-out Animationen
+  - Weniger aufdringlich als globale Banner
+- **Tab Styling**: Moderne Tab-Navigation mit:
+  - Gradient Underline für aktive Tabs
+  - Smooth Transitions
+  - Emoji-Icons für bessere UX
+
+#### Component Framework
+- Created reusable components (Header, Navigation, Alert, Tabs)
+  - Struktur vorbereitet für zukünftige Refactoring
+  - Barrel exports für clean imports
+
+### Status
+- ✅ Hierarchical Navigation implementiert
+- ✅ Admin Tab Navigation funktioniert
+- ✅ Profile Dark Mode Toggle aktiv
+- ✅ Toast CSS vorbereitet
+- ✅ Alle Build-Fehler behoben
+- ⏳ Error-Banner Toast-Migration (geplant für v1.7.1)
+
 ## [1.6.3] - 2026-10-09
 
 ### Bugfix
