@@ -92,6 +92,7 @@ builder.Services.AddSingleton(userStore);
 builder.Services.AddSingleton(auditStore);
 builder.Services.AddSingleton(new BackupStore(backupDirectory, userStore));
 builder.Services.AddSingleton<BackupScheduleStore>();
+builder.Services.AddSingleton(new RefreshTokenStore(storageDirectory));
 builder.Services.AddHostedService<BackupService>();
 
 var app = builder.Build();
@@ -115,7 +116,7 @@ app.MapGet("/api/health", () => Results.Ok(new
     sessionTimeoutHours = 8
 }));
 
-app.MapPost("/api/auth/login", (LoginRequest request, UserStore users) =>
+app.MapPost("/api/auth/login", (LoginRequest request, UserStore users, RefreshTokenStore refreshTokens) =>
 {
     if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
     {
@@ -129,12 +130,40 @@ app.MapPost("/api/auth/login", (LoginRequest request, UserStore users) =>
     }
 
     var token = TokenHelper.CreateJwtToken(user, jwtKey, jwtIssuer, jwtAudience);
+    var refreshToken = refreshTokens.GenerateRefreshToken(user.Id);
     return Results.Ok(new
     {
         token,
+        refreshToken,
         expiresInHours = 8,
         expiresAtUtc = DateTime.UtcNow.AddHours(8),
         user = new UserSummary(user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive)
+    });
+});
+
+app.MapPost("/api/auth/refresh", (TokenRefreshRequest request, RefreshTokenStore refreshTokens, UserStore users) =>
+{
+    var userId = refreshTokens.ValidateRefreshToken(request.RefreshToken);
+    if (userId is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var user = users.GetById(userId.Value);
+    if (user is null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var newAccessToken = TokenHelper.CreateJwtToken(user, jwtKey, jwtIssuer, jwtAudience);
+    var newRefreshToken = refreshTokens.GenerateRefreshToken(user.Id);
+    refreshTokens.RevokeRefreshToken(request.RefreshToken);
+
+    return Results.Ok(new TokenRefreshResponse
+    {
+        AccessToken = newAccessToken,
+        RefreshToken = newRefreshToken,
+        ExpiresIn = 8 * 3600
     });
 });
 
