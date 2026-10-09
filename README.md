@@ -1,4 +1,4 @@
-# 🎯 Audit-Tool v1.6.0 - Produktionsreife Audit-Management-Lösung
+# 🎯 Audit-Tool v1.7.0 - Moderne UI/UX mit Produktionsreife
 
 **Enterprise-Ready | Deutsch | React + ASP.NET Core + PostgreSQL | Docker**
 
@@ -8,7 +8,7 @@
 
 **Audit-Tool** ist eine professionelle, deutschsprachige Web-Anwendung zur Verwaltung von Audits, Standorten, Räumen, Objekten, Bildern und Checklisten. Das System bietet erweiterte Funktionen für Benutzerverwaltung, PDF-Exporte, automatische Backups und ein sicheres Token-basiertes Authentifizierungssystem mit Audit-Logging.
 
-### 🎯 Kernfunktionen (v1.6.0)
+### 🎯 Kernfunktionen (v1.7.0)
 
 | Feature | Status | Version |
 |---------|--------|---------|
@@ -22,6 +22,8 @@
 | **Error Handling** | ✅ | Error Boundaries, Circuit Breaker |
 | **Logging & Audit-Trail** | ✅ | JSONL Format, Request Tracking |
 | **Validierung & Security** | ✅ | XSS-Protection, Input-Sanitization |
+| **Moderne UI/UX (NEW)** | ✅ | Hierarchische Navigation, Komponenten |
+| **Header & Profile** | ✅ | Dropdown-Menü, Avatar, Theme Toggle |
 
 ---
 
