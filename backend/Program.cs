@@ -322,6 +322,71 @@ app.MapPost("/api/users", [Authorize(Policy = "RequireAdminAccess")] (CreateUser
     return Results.Ok(new { user = new UserSummary(user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive) });
 });
 
+app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdminAccess")] (int userId, ResetPasswordRequest request, UserStore users, HttpContext httpContext) =>
+{
+    if (string.IsNullOrWhiteSpace(request.NewPassword))
+    {
+        return Results.BadRequest(new { message = "Neues Passwort ist erforderlich." });
+    }
+
+    var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
+    var targetUser = users.GetById(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { message = "Benutzer nicht gefunden." });
+    }
+
+    if (requesterRole == "Admin" && targetUser.Role == "Superadmin")
+    {
+        return Results.Forbid();
+    }
+
+    users.UpdatePassword(userId, request.NewPassword);
+    return Results.Ok(new { message = "Passwort erfolgreich zurückgesetzt." });
+});
+
+app.MapPut("/api/users/{userId:int}/toggle", [Authorize(Policy = "RequireAdminAccess")] (int userId, UserStore users, HttpContext httpContext) =>
+{
+    var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
+    var targetUser = users.GetById(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { message = "Benutzer nicht gefunden." });
+    }
+
+    if (requesterRole == "Admin" && targetUser.Role == "Superadmin")
+    {
+        return Results.Forbid();
+    }
+
+    users.ToggleActive(userId);
+    var updated = users.GetById(userId);
+    return Results.Ok(new { user = new UserSummary(updated!.Id, updated.UserName, updated.DisplayName, updated.Role, updated.IsActive) });
+});
+
+app.MapDelete("/api/users/{userId:int}", [Authorize(Policy = "RequireAdminAccess")] (int userId, UserStore users, HttpContext httpContext) =>
+{
+    var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
+    var targetUser = users.GetById(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { message = "Benutzer nicht gefunden." });
+    }
+
+    if (requesterRole == "Admin" && targetUser.Role == "Superadmin")
+    {
+        return Results.Forbid();
+    }
+
+    if (targetUser.UserName.Equals("superadmin", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { message = "Der Superadmin-Account kann nicht gelöscht werden." });
+    }
+
+    users.Delete(userId);
+    return Results.Ok(new { message = "Benutzer erfolgreich gelöscht." });
+});
+
 app.MapGet("/api/admin/backups", [Authorize(Policy = "RequireAdminAccess")] (BackupStore backups) =>
     Results.Ok(backups.List()));
 
@@ -803,6 +868,11 @@ public sealed class UserStore
         return _users.FirstOrDefault(u => string.Equals(u.UserName, username, StringComparison.OrdinalIgnoreCase));
     }
 
+    public AppUser? GetById(int userId)
+    {
+        return _users.FirstOrDefault(u => u.Id == userId);
+    }
+
     public AppUser Create(string userName, string password, string? displayName, string role)
     {
         var nextId = _users.Count == 0 ? 1 : _users.Max(x => x.Id) + 1;
@@ -810,6 +880,38 @@ public sealed class UserStore
         _users.Add(user);
         _database.Save("app_users", _users);
         return user;
+    }
+
+    public void UpdatePassword(int userId, string newPassword)
+    {
+        var user = _users.FirstOrDefault(u => u.Id == userId);
+        if (user is not null)
+        {
+            var index = _users.IndexOf(user);
+            _users[index] = user with { Password = newPassword };
+            _database.Save("app_users", _users);
+        }
+    }
+
+    public void ToggleActive(int userId)
+    {
+        var user = _users.FirstOrDefault(u => u.Id == userId);
+        if (user is not null)
+        {
+            var index = _users.IndexOf(user);
+            _users[index] = user with { IsActive = !user.IsActive };
+            _database.Save("app_users", _users);
+        }
+    }
+
+    public void Delete(int userId)
+    {
+        var user = _users.FirstOrDefault(u => u.Id == userId);
+        if (user is not null)
+        {
+            _users.Remove(user);
+            _database.Save("app_users", _users);
+        }
     }
 
     private static List<AppUser> CreateDefaultUsers() => new()
@@ -839,6 +941,7 @@ public sealed record UserSummary(int Id, string UserName, string DisplayName, st
 public sealed record BackupRecord(string Id, string FileName, DateTime CreatedAtUtc, long SizeBytes, string Type);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record CreateUserRequest(string UserName, string Password, string Role, string DisplayName);
+public sealed record ResetPasswordRequest(string NewPassword);
 public sealed record CreateCategoryRequest(string Name, string Description);
 public sealed record CreateSiteRequest(int CategoryId, string Name, string Address, string Phone, string CaretakerPhone);
 public sealed record CreateRoomRequest(int SiteId, string Name, string Description, string? Capacity, string? Area, string? Notes);

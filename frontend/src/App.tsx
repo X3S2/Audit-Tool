@@ -306,6 +306,86 @@ function App() {
     setPage('dashboard')
   }
 
+  const createUser = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!session) {
+      return
+    }
+
+    try {
+      const newUser = await apiRequest<{ user: User }>('/api/users', session, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userName: loginForm.username,
+          password: loginForm.password,
+          displayName: categoryForm.name,
+          role: categoryForm.description
+        })
+      })
+      setUsers((previous) => [...previous, newUser.user])
+      setLoginForm({ username: 'superadmin', password: 'Password123!' })
+      setCategoryForm({ name: '', description: '' })
+      setError('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Benutzer konnte nicht erstellt werden.')
+    }
+  }
+
+  const resetUserPassword = async (userId: number) => {
+    if (!session) {
+      return
+    }
+
+    const newPassword = prompt('Neues Passwort eingeben:')
+    if (!newPassword) {
+      return
+    }
+
+    try {
+      await apiRequest<{ message: string }>(`/api/users/${userId}/password`, session, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword })
+      })
+      setError('Passwort erfolgreich zurückgesetzt.')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Passwort konnte nicht zurückgesetzt werden.')
+    }
+  }
+
+  const toggleUserActive = async (userId: number) => {
+    if (!session) {
+      return
+    }
+
+    try {
+      const result = await apiRequest<{ user: User }>(`/api/users/${userId}/toggle`, session, { method: 'PUT' })
+      setUsers((previous) => previous.map((u) => (u.id === userId ? result.user : u)))
+      setError('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Benutzer-Status konnte nicht geändert werden.')
+    }
+  }
+
+  const deleteUser = async (userId: number) => {
+    if (!session) {
+      return
+    }
+
+    if (!confirm('Sind Sie sicher, dass Sie diesen Benutzer löschen möchten?')) {
+      return
+    }
+
+    try {
+      await apiRequest<{ message: string }>(`/api/users/${userId}`, session, { method: 'DELETE' })
+      setUsers((previous) => previous.filter((u) => u.id !== userId))
+      setError('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Benutzer konnte nicht gelöscht werden.')
+    }
+  }
+
   const createBackup = async () => {
     if (!session) {
       return
@@ -1008,6 +1088,7 @@ function App() {
                     <th>Name</th>
                     <th>Rolle</th>
                     <th>Status</th>
+                    <th>Aktionen</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1016,10 +1097,60 @@ function App() {
                       <td>{user.displayName}</td>
                       <td>{user.role}</td>
                       <td>{user.isActive ? 'Aktiv' : 'Deaktiviert'}</td>
+                      <td>
+                        <button type="button" onClick={() => resetUserPassword(user.id)}>Passwort zurücksetzen</button>
+                        <button type="button" onClick={() => toggleUserActive(user.id)}>
+                          {user.isActive ? 'Deaktivieren' : 'Aktivieren'}
+                        </button>
+                        {user.userName !== 'superadmin' ? (
+                          <button type="button" onClick={() => deleteUser(user.id)}>Löschen</button>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+
+              <form className="form-card" onSubmit={createUser}>
+                <h4>Neuer Benutzer</h4>
+                <div className="form-grid">
+                  <label>
+                    Benutzername
+                    <input
+                      value={loginForm.username}
+                      onChange={(event) => setLoginForm((previous) => ({ ...previous, username: event.target.value }))}
+                      placeholder="benutzername"
+                    />
+                  </label>
+                  <label>
+                    Passwort
+                    <input
+                      type="password"
+                      value={loginForm.password}
+                      onChange={(event) => setLoginForm((previous) => ({ ...previous, password: event.target.value }))}
+                      placeholder="Password123!"
+                    />
+                  </label>
+                  <label>
+                    Anzeigename
+                    <input
+                      value={categoryForm.name}
+                      onChange={(event) => setCategoryForm((previous) => ({ ...previous, name: event.target.value }))}
+                      placeholder="Max Mustermann"
+                    />
+                  </label>
+                  <label>
+                    Rolle
+                    <select value={categoryForm.description} onChange={(event) => setCategoryForm((previous) => ({ ...previous, description: event.target.value }))}>
+                      <option value="Benutzer">Benutzer</option>
+                      <option value="Azubi">Azubi</option>
+                      <option value="Admin">Admin</option>
+                      {activeSession.user.role === 'Superadmin' ? <option value="Superadmin">Superadmin</option> : null}
+                    </select>
+                  </label>
+                </div>
+                <button type="submit" className="primary-button">Benutzer erstellen</button>
+              </form>
 
               <form className="form-card" onSubmit={createCategory}>
                 <h4>Kategorie anlegen</h4>

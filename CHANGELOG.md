@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0] - 2026-10-09
+
+### Hinzugefügt
+- Admin-User-Management mit Passwort-Reset, Aktivierung/Deaktivierung und Löschfunktion
+- Neuer Benutzer-Erstellen-Dialog im Admin-Panel
+- Rollenbasierte Zugriffskontrolle für Admin-Funktionen (Superadmin kann alles, Admin kann nur Benutzer und Azubi verwalten)
+- Frontend-Handler für alle User-Management-Operationen
+
+### Geändert
+- Admin-Panel um neue Benutzer-Management-Operationen erweitert
+- UserStore um zusätzliche Verwaltungsmethoden (GetById, UpdatePassword, ToggleActive, Delete)
+
+### Behoben
+- Admin-Operationen berücksichtigen nun Rolle-Hierarchie (Admin kann Superadmin nicht ändern)
+
 ## [0.1.2] - 2026-10-09
 
 ### Hinzugefügt
