@@ -7,3 +7,7 @@ backend/obj/
 *.user
 *.suo
 .DS_Store
+storage/backups/*
+storage/exports/*
+!storage/backups/.gitkeep
+!storage/exports/.gitkeep
