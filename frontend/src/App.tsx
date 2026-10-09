@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import './theme.css'
 import './App.css'
 import { compressImage } from './imageCompression'
 
@@ -176,6 +177,7 @@ function App() {
 
   useEffect(() => {
     document.body.dataset.theme = theme
+    document.documentElement.className = theme
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
 
