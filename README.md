@@ -9,6 +9,8 @@ Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checkl
 - **Ports**: 4714 Produktiv, 5050 API (Lokal), 5173/5174 Frontend (Lokal mit Fallback)
 - **Datenbank**: SQLite mit persistenter JSON-Serialisierung
 - **Aktuelle Version**: 0.9.0 (Bild-Delete, Theme-Toggle, Komprimierung, Galerie)
+- **Docker**: ✅ Build erfolgreich (Frontend, Backend, PostgreSQL)
+- **Container Status**: ✅ Alle Container (audit-frontend-ui:4714, audit-backend-api:5050, audit-postgres-db:5432) funktionieren
 
 ## Schnellstart
 
