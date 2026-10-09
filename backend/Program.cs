@@ -3,6 +3,10 @@ using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using iText.Kernel.Pdf;
+using iText.Layout;
+using iText.Layout.Element;
+using iText.Layout.Properties;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Data.Sqlite;
@@ -289,6 +293,54 @@ app.MapGet("/api/audits/{auditId:int}", [Authorize] (AuditStore store, int audit
 {
     var audit = store.Audits.FirstOrDefault(item => item.Id == auditId);
     return audit is null ? Results.NotFound() : Results.Ok(audit);
+});
+
+app.MapGet("/api/audits/{auditId:int}/pdf", [Authorize] (AuditStore store, int auditId) =>
+{
+    var audit = store.Audits.FirstOrDefault(item => item.Id == auditId);
+    if (audit is null)
+    {
+        return Results.NotFound();
+    }
+
+    var site = store.Sites.FirstOrDefault(s => s.Id == audit.SiteId);
+    var template = store.Templates.FirstOrDefault(t => t.Id == audit.TemplateId);
+
+    using var memoryStream = new MemoryStream();
+    using (var pdfWriter = new PdfWriter(memoryStream))
+    {
+        pdfWriter.SetCloseStream(false);
+        using var pdfDocument = new PdfDocument(pdfWriter);
+        using var document = new Document(pdfDocument);
+
+        document.Add(new Paragraph($"Audit-Bericht: {audit.Title}").SetFontSize(20).SetBold());
+        document.Add(new Paragraph($"Standort: {site?.Name ?? "Unbekannt"}").SetFontSize(12));
+        document.Add(new Paragraph($"Vorlage: {template?.Name ?? "Unbekannt"}").SetFontSize(12));
+        document.Add(new Paragraph($"Erstellt: {audit.CreatedAtUtc:dd.MM.yyyy HH:mm}").SetFontSize(12));
+        document.Add(new Paragraph($"Status: {audit.Status}").SetFontSize(12));
+        document.Add(new Paragraph(""));
+
+        document.Add(new Paragraph("Checklist-Einträge").SetFontSize(14).SetBold());
+        var table = new Table(UnitValue.CreatePercentArray(new[] { 1f, 2f, 2f, 1f }));
+        table.AddHeaderCell("ID");
+        table.AddHeaderCell("Frage");
+        table.AddHeaderCell("Antwort");
+        table.AddHeaderCell("Status");
+
+        foreach (var entry in audit.ChecklistEntries)
+        {
+            table.AddCell(entry.Id.ToString());
+            table.AddCell(entry.Question);
+            table.AddCell(entry.Answer);
+            table.AddCell(entry.Status);
+        }
+
+        document.Add(table);
+    }
+
+    memoryStream.Seek(0, SeekOrigin.Begin);
+    var fileName = $"audit-{audit.Id}-{DateTime.UtcNow:yyyyMMdd_HHmmss}.pdf";
+    return Results.File(memoryStream.ToArray(), "application/pdf", fileName);
 });
 
 app.MapPost("/api/audits/{auditId:int}/checklist", [Authorize] (AuditStore store, int auditId, CreateChecklistEntryRequest request) =>

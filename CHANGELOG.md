@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.1] - 2026-10-09
+
+### Hinzugefügt
+- PDF-Export-Funktionalität für Audits via iText7-Bibliothek
+- Backend-Endpunkt GET /api/audits/{id}/pdf für PDF-Generierung
+- Frontend-Schaltfläche "PDF" in der Audits-Tabelle für schnelle PDF-Downloads
+- Bouncy Castle Crypto-Adapter für PDF-Verschlüsselung und Signatur-Unterstützung
+
+### Geändert
+- Audits-Tabelle um Aktions-Spalte mit PDF-Export-Button erweitert
+- backend.csproj um itext7.bouncy-castle-adapter Abhängigkeit ergänzt
+
+### Behoben
+- iText7 fehlende Crypto-Bibliothek hinzugefügt (BouncyCastle-Integration)
+
 ## [0.2.0] - 2026-10-09
 
 ### Hinzugefügt

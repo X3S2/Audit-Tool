@@ -608,6 +608,36 @@ function App() {
     }
   }
 
+  const downloadAuditPdf = async (auditId: number, auditTitle: string) => {
+    if (!session) {
+      return
+    }
+
+    try {
+      const response = await fetch(`http://localhost:5050/api/audits/${auditId}/pdf`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${session.token}` }
+      })
+
+      if (!response.ok) {
+        throw new Error(`PDF-Export fehlgeschlagen: ${response.statusText}`)
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `Audit_${auditTitle.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'PDF konnte nicht exportiert werden.')
+    }
+  }
+
+
   const createTemplate = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!session) {
@@ -760,6 +790,7 @@ function App() {
                     <th>Vorlage</th>
                     <th>Einträge</th>
                     <th>Status</th>
+                    <th>Aktionen</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -770,6 +801,16 @@ function App() {
                       <td>{audit.templateName}</td>
                       <td>{audit.entryCount ?? audit.checklistEntries?.length ?? 0}</td>
                       <td>{audit.status}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => downloadAuditPdf(audit.id, audit.title)}
+                          title="Als PDF exportieren"
+                        >
+                          PDF
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
