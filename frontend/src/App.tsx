@@ -853,7 +853,17 @@ function App() {
         { key: 'vorlagen', label: 'Vorlagen' }
       ]
     },
-    { key: 'admin', label: 'Admin Page', visible: session ? canManageUsers(session.user.role) : false },
+    { 
+      key: 'admin', 
+      label: 'Admin Page', 
+      visible: session ? canManageUsers(session.user.role) : false,
+      subpages: [
+        { key: 'admin', label: 'Benutzer' },
+        { key: 'admin', label: 'Backup' },
+        { key: 'admin', label: 'Export' },
+        { key: 'admin', label: 'Logs' }
+      ]
+    },
     { key: 'profil', label: 'Profil', visible: true }
   ]
 
