@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import './theme.css'
 import './App.css'
 import { compressImage } from './imageCompression'
+import { Header } from './components/Header'
+import { Navigation, type PageKey } from './components/Navigation'
+import { Tabs, type TabItem } from './components/Tabs'
+import { Alert } from './components/Alert'
 
 type ThemeMode = 'dark' | 'light'
-type PageKey = 'dashboard' | 'audits' | 'standorte' | 'vorlagen' | 'raume' | 'admin' | 'profil'
 
 type User = {
   id: number
@@ -143,10 +146,10 @@ function App() {
   const [session, setSession] = useState<Session | null>(() => readSession())
   const [page, setPage] = useState<PageKey>('dashboard')
   const [error, setError] = useState('')
+  const [showErrorBanner, setShowErrorBanner] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [showProfileDropdown, setShowProfileDropdown] = useState(false)
-  const [expandedNavItems, setExpandedNavItems] = useState<Set<string>>(new Set())
   const [profile, setProfile] = useState<User | null>(null)
+  const [profileTab, setProfileTab] = useState<'info' | 'theme' | 'password'>('info')
   const [adminTab, setAdminTab] = useState<'benutzer' | 'backup' | 'export' | 'logs'>('benutzer')
   const [categories, setCategories] = useState<Category[]>([])
   const [sites, setSites] = useState<Site[]>([])
@@ -184,6 +187,19 @@ function App() {
     document.documentElement.className = theme
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    if (error) {
+      setShowErrorBanner(true)
+    }
+  }, [error])
+
+  useEffect(() => {
+    if (page.startsWith('admin-')) {
+      const adminTabName = page.replace('admin-', '')
+      setAdminTab(adminTabName as 'benutzer' | 'backup' | 'export' | 'logs')
+    }
+  }, [page])
 
   useEffect(() => {
     if (!session || !imageGalleryObject) {
@@ -831,41 +847,61 @@ function App() {
     }
   }
 
-  const getInitials = (displayName: string): string => {
-    return displayName
-      .split(' ')
-      .map((part) => part[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2)
-  }
-
-  const navItems: Array<{ key: PageKey; label: string; visible: boolean; subpages?: Array<{ key: PageKey; label: string }> }> = [
-    { key: 'dashboard', label: 'Dashboard', visible: true },
+  const navItems = [
+    { key: 'dashboard' as const, label: '📊 Dashboard', visible: true },
     { 
-      key: 'audits', 
-      label: 'Audits', 
+      key: 'audits' as const, 
+      label: '📋 Audits', 
       visible: true,
       subpages: [
-        { key: 'audits', label: 'Audits Overview' },
-        { key: 'raume', label: 'Räume & Objekte' },
-        { key: 'standorte', label: 'Standorte' },
-        { key: 'vorlagen', label: 'Vorlagen' }
+        { key: 'audits' as const, label: 'Audits Overview' },
+        { key: 'audits-raume' as const, label: '🏢 Räume & Objekte' },
+        { key: 'audits-standorte' as const, label: '📍 Standorte' },
+        { key: 'audits-vorlagen' as const, label: '📝 Vorlagen' }
       ]
     },
     { 
-      key: 'admin', 
-      label: 'Admin Page', 
-      visible: session ? canManageUsers(session.user.role) : false,
+      key: 'datenablage' as const, 
+      label: '💾 Datenablage', 
+      visible: true,
       subpages: [
-        { key: 'admin', label: 'Benutzer' },
-        { key: 'admin', label: 'Backup' },
-        { key: 'admin', label: 'Export' },
-        { key: 'admin', label: 'Logs' }
+        { key: 'datenablage' as const, label: '📂 Übersicht' }
       ]
     },
-    { key: 'profil', label: 'Profil', visible: true }
+    { 
+      key: 'einstellungen' as const, 
+      label: '⚙️ Einstellungen', 
+      visible: session ? canManageUsers(session.user.role) : false,
+      subpages: [
+        { key: 'einstellungen' as const, label: '⚙️ Konfiguration' },
+        { key: 'einstellungen' as const, label: '💻 System' }
+      ]
+    },
+    { 
+      key: 'admin' as const, 
+      label: '👨‍💼 Admin', 
+      visible: session ? canManageUsers(session.user.role) : false,
+      subpages: [
+        { key: 'admin-benutzer' as const, label: '👥 Benutzer' },
+        { key: 'admin-backup' as const, label: '💾 Backup' },
+        { key: 'admin-export' as const, label: '📤 Datenexport' },
+        { key: 'admin-logs' as const, label: '📋 Logs' }
+      ]
+    },
+    { key: 'profil' as const, label: '👤 Profil', visible: true }
   ]
+
+  const handleProfileAction = (action: 'profile' | 'password' | 'logout') => {
+    if (action === 'profile') {
+      setPage('profil')
+      setProfileTab('info')
+    } else if (action === 'password') {
+      setPage('profil')
+      setProfileTab('password')
+    } else if (action === 'logout') {
+      logout()
+    }
+  }
 
   if (!session) {
     return (
@@ -894,7 +930,7 @@ function App() {
             />
           </label>
 
-          {error ? <div className="error-box">{error}</div> : null}
+          {showErrorBanner && error ? <div className="error-box">{error}</div> : null}
 
           <button type="submit" disabled={loading}>
             {loading ? 'Anmeldung...' : 'Einloggen'}
@@ -908,120 +944,58 @@ function App() {
 
   const activeSession = session
 
+  // Convert navigation items to Navigation component format
+  const navItemsForComponent = navItems.map((item) => ({
+    key: item.key,
+    label: item.label,
+    visible: item.visible,
+    icon: item.label.split(' ')[0],
+    subpages: item.subpages?.map(subpage => ({
+      key: subpage.key,
+      label: subpage.label
+    }))
+  }))
+
+  const profileTabsData: TabItem[] = [
+    { id: 'info', label: '👤 Benutzer Info', icon: '👤' },
+    { id: 'theme', label: '🎨 Theme', icon: '🎨' },
+    { id: 'password', label: '🔑 Passwort', icon: '🔑' }
+  ]
+
+  const adminTabsData: TabItem[] = [
+    { id: 'benutzer', label: '👥 Benutzer', icon: '👥' },
+    { id: 'backup', label: '💾 Backup', icon: '💾' },
+    { id: 'export', label: '📤 Export', icon: '📤' },
+    { id: 'logs', label: '📋 Logs', icon: '📋' }
+  ]
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand-block">
-          <span className="brand-mark">A</span>
-          <div>
-            <h2>Audit-Tool</h2>
-            <small>Audit- und Datenmanagement</small>
-          </div>
-        </div>
+    <div className="app-wrapper">
+      <Header 
+        theme={theme} 
+        onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} 
+        user={profile ?? activeSession.user} 
+        onProfileClick={handleProfileAction} 
+      />
 
-        <div className="toolbar-right">
-          <button className="theme-toggle" type="button" onClick={() => setTheme((previous) => (previous === 'dark' ? 'light' : 'dark'))}>
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          
-          <div className="profile-dropdown-wrapper">
-            <button 
-              className="profile-button" 
-              type="button" 
-              onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-              aria-expanded={showProfileDropdown}
-            >
-              <span className="profile-avatar" title={profile?.displayName ?? activeSession.user.displayName}>
-                {getInitials(profile?.displayName ?? activeSession.user.displayName)}
-              </span>
-              <span className="profile-info">
-                <span className="profile-name">{profile?.displayName ?? activeSession.user.displayName}</span>
-                <span className="profile-role">{profile?.role ?? activeSession.user.role}</span>
-              </span>
-              <span className="dropdown-arrow">▼</span>
-            </button>
-            
-            {showProfileDropdown && (
-              <div className="profile-dropdown-menu">
-                <button 
-                  type="button" 
-                  className="dropdown-item"
-                  onClick={() => { setPage('profil'); setShowProfileDropdown(false); }}
-                >
-                  👤 Mein Profil
-                </button>
-                <button 
-                  type="button" 
-                  className="dropdown-item"
-                  onClick={() => setShowProfileDropdown(false)}
-                >
-                  🔑 Passwort ändern
-                </button>
-                <div className="dropdown-divider"></div>
-                <button 
-                  type="button" 
-                  className="dropdown-item logout"
-                  onClick={() => { setShowProfileDropdown(false); logout(); }}
-                >
-                  🚪 Abmelden
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <div className="content-shell">
-        <aside className="sidebar">
-          {navItems.filter((item) => item.visible).map((item) => {
-            const isExpanded = expandedNavItems.has(item.key)
-            const hasSubpages = item.subpages && item.subpages.length > 0
-            
-            return (
-              <div key={item.key}>
-                <button
-                  type="button"
-                  className={page === item.key ? 'nav-item active' : 'nav-item'}
-                  onClick={() => {
-                    if (hasSubpages) {
-                      setExpandedNavItems((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(item.key)) {
-                          next.delete(item.key)
-                        } else {
-                          next.add(item.key)
-                        }
-                        return next
-                      })
-                    } else {
-                      setPage(item.key)
-                    }
-                  }}
-                >
-                  <span>{item.label}</span>
-                  {hasSubpages && <span style={{ marginLeft: 'auto' }}>{isExpanded ? '▼' : '▶'}</span>}
-                </button>
-                {hasSubpages && isExpanded && item.subpages && (
-                  <div className="nav-subpages">
-                    {item.subpages.map((subpage) => (
-                      <button
-                        key={subpage.key}
-                        type="button"
-                        className={page === subpage.key ? 'nav-subpage active' : 'nav-subpage'}
-                        onClick={() => setPage(subpage.key)}
-                      >
-                        {subpage.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </aside>
+      <div className="app-container">
+        <Navigation 
+          items={navItemsForComponent} 
+          currentPage={page} 
+          onPageChange={setPage} 
+        />
 
         <main className="main-panel">
-          {error ? <div className="global-alert">{error}</div> : null}
+          {showErrorBanner && error ? (
+            <Alert 
+              type="error" 
+              message={error} 
+              onClose={() => {
+                setShowErrorBanner(false)
+                setError('')
+              }} 
+            />
+          ) : null}
 
           {page === 'dashboard' ? (
             <section className="panel">
@@ -1139,7 +1113,7 @@ function App() {
             </section>
           ) : null}
 
-          {page === 'standorte' ? (
+          {page === 'audits-standorte' ? (
             <section className="panel">
               <h3>Standorte</h3>
               <table>
@@ -1200,7 +1174,7 @@ function App() {
             </section>
           ) : null}
 
-          {page === 'vorlagen' ? (
+          {page === 'audits-vorlagen' ? (
             <section className="panel">
               <h3>Audit-Vorlagen</h3>
               <table>
@@ -1249,7 +1223,7 @@ function App() {
             </section>
           ) : null}
 
-          {page === 'raume' ? (
+          {page === 'audits-raume' ? (
             <section className="panel">
               <h3>Räume & Objekte</h3>
 
@@ -1447,38 +1421,15 @@ function App() {
             </section>
           ) : null}
 
-          {page === 'admin' && canManageUsers(activeSession.user.role) ? (
+          {(page === 'admin' || page.startsWith('admin-')) && canManageUsers(activeSession.user.role) ? (
             <section className="panel">
               <h3>Admin Bereich</h3>
-              
-              <div className="tabs-container" style={{ marginBottom: '24px' }}>
-                <div className="tabs-header">
-                  <button 
-                    className={`tab-button ${adminTab === 'benutzer' ? 'active' : ''}`}
-                    onClick={() => setAdminTab('benutzer')}
-                  >
-                    👥 Benutzer
-                  </button>
-                  <button 
-                    className={`tab-button ${adminTab === 'backup' ? 'active' : ''}`}
-                    onClick={() => setAdminTab('backup')}
-                  >
-                    💾 Backup
-                  </button>
-                  <button 
-                    className={`tab-button ${adminTab === 'export' ? 'active' : ''}`}
-                    onClick={() => setAdminTab('export')}
-                  >
-                    📦 Export
-                  </button>
-                  <button 
-                    className={`tab-button ${adminTab === 'logs' ? 'active' : ''}`}
-                    onClick={() => setAdminTab('logs')}
-                  >
-                    📋 Logs
-                  </button>
-                </div>
-              </div>
+              <Tabs 
+                tabs={adminTabsData} 
+                activeTab={adminTab} 
+                onTabChange={(tabId) => setAdminTab(tabId as 'benutzer' | 'backup' | 'export' | 'logs')} 
+              />
+              <div style={{ marginBottom: '24px' }}></div>
 
               {adminTab === 'benutzer' && (
               <>
@@ -1704,71 +1655,83 @@ function App() {
           {page === 'profil' ? (
             <section className="panel profile-panel">
               <h3>Profil</h3>
-              <div className="profile-grid">
-                <div>
-                  <label>Benutzername</label>
-                  <div className="value-box">{profile?.userName ?? activeSession.user.userName}</div>
-                </div>
-                <div>
-                  <label>Displayname</label>
-                  <div className="value-box">{profile?.displayName ?? activeSession.user.displayName}</div>
-                </div>
-                <div>
-                  <label>Rolle</label>
-                  <div className="value-box">{profile?.role ?? activeSession.user.role}</div>
-                </div>
-                <div>
-                  <label>Theme</label>
-                  <button 
-                    type="button" 
-                    className="theme-toggle-button"
-                    onClick={() => {
-                      const newTheme = theme === 'dark' ? 'light' : 'dark'
-                      setTheme(newTheme)
-                      localStorage.setItem('theme', newTheme)
-                    }}
-                    style={{ padding: '8px 16px', marginTop: '4px' }}
-                  >
-                    {theme === 'dark' ? '🌙 Dark Mode' : '☀️ Light Mode'}
-                  </button>
-                </div>
-              </div>
+              <Tabs 
+                tabs={profileTabsData} 
+                activeTab={profileTab} 
+                onTabChange={(tabId) => setProfileTab(tabId as 'info' | 'theme' | 'password')} 
+              />
+              <div style={{ marginTop: '24px' }}></div>
 
-              <form className="form-card" onSubmit={changePassword}>
-                <h4>Passwort ändern</h4>
-                <div className="form-grid">
-                  <label className="full-width">
-                    Aktuelles Passwort
-                    <input
-                      type="password"
-                      value={passwordForm.currentPassword}
-                      onChange={(event) => setPasswordForm((previous) => ({ ...previous, currentPassword: event.target.value }))}
-                      required
-                    />
-                  </label>
-
-                  <label className="full-width">
-                    Neues Passwort
-                    <input
-                      type="password"
-                      value={passwordForm.newPassword}
-                      onChange={(event) => setPasswordForm((previous) => ({ ...previous, newPassword: event.target.value }))}
-                      required
-                    />
-                  </label>
-
-                  <label className="full-width">
-                    Neues Passwort bestätigen
-                    <input
-                      type="password"
-                      value={passwordForm.confirmPassword}
-                      onChange={(event) => setPasswordForm((previous) => ({ ...previous, confirmPassword: event.target.value }))}
-                      required
-                    />
-                  </label>
+              {profileTab === 'info' && (
+                <div className="profile-grid">
+                  <div>
+                    <label>Benutzername</label>
+                    <div className="value-box">{profile?.userName ?? activeSession.user.userName}</div>
+                  </div>
+                  <div>
+                    <label>Displayname</label>
+                    <div className="value-box">{profile?.displayName ?? activeSession.user.displayName}</div>
+                  </div>
+                  <div>
+                    <label>Rolle</label>
+                    <div className="value-box">{profile?.role ?? activeSession.user.role}</div>
+                  </div>
                 </div>
-                <button type="submit" className="primary-button">Passwort aktualisieren</button>
-              </form>
+              )}
+
+              {profileTab === 'theme' && (
+                <div className="profile-grid">
+                  <div>
+                    <label>Design-Modus</label>
+                    <button 
+                      type="button" 
+                      className="theme-toggle-button"
+                      onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+                      style={{ padding: '8px 16px', marginTop: '4px' }}
+                    >
+                      {theme === 'dark' ? '🌙 Dark Mode' : '☀️ Light Mode'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {profileTab === 'password' && (
+                <form className="form-card" onSubmit={changePassword}>
+                  <h4>Passwort ändern</h4>
+                  <div className="form-grid">
+                    <label className="full-width">
+                      Aktuelles Passwort
+                      <input
+                        type="password"
+                        value={passwordForm.currentPassword}
+                        onChange={(event) => setPasswordForm((previous) => ({ ...previous, currentPassword: event.target.value }))}
+                        required
+                      />
+                    </label>
+
+                    <label className="full-width">
+                      Neues Passwort
+                      <input
+                        type="password"
+                        value={passwordForm.newPassword}
+                        onChange={(event) => setPasswordForm((previous) => ({ ...previous, newPassword: event.target.value }))}
+                        required
+                      />
+                    </label>
+
+                    <label className="full-width">
+                      Neues Passwort bestätigen
+                      <input
+                        type="password"
+                        value={passwordForm.confirmPassword}
+                        onChange={(event) => setPasswordForm((previous) => ({ ...previous, confirmPassword: event.target.value }))}
+                        required
+                      />
+                    </label>
+                  </div>
+                  <button type="submit" className="primary-button">Passwort aktualisieren</button>
+                </form>
+              )}
             </section>
           ) : null}
         </main>
