@@ -300,6 +300,27 @@ app.MapPost("/api/objects/{objectId:int}/images", [Authorize] async (int objectI
     return Results.Ok(new { fileName, sizeBytes = new FileInfo(fullPath).Length, createdAtUtc = DateTime.UtcNow });
 });
 
+app.MapDelete("/api/objects/{objectId:int}/images/{imageName}", [Authorize] (int objectId, string imageName) =>
+{
+    var directory = Path.Combine(uploadDirectory, objectId.ToString());
+    var filePath = Path.Combine(directory, imageName);
+
+    if (!File.Exists(filePath))
+    {
+        return Results.NotFound(new { message = "Bild nicht gefunden." });
+    }
+
+    try
+    {
+        File.Delete(filePath);
+        return Results.Ok(new { message = "Bild erfolgreich gelöscht." });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Bild konnte nicht gelöscht werden: {ex.Message}" });
+    }
+});
+
 app.MapGet("/api/audits", [Authorize] (AuditStore store) => Results.Ok(store.Audits.Select(audit => new AuditInstanceSummary(audit.Id, audit.SiteId, audit.Title, audit.TemplateId, audit.TemplateName, audit.CreatedBy, audit.CreatedAtUtc, audit.Status, audit.ChecklistEntries.Count())).ToList()));
 app.MapPost("/api/audits", [Authorize] (CreateAuditRequest request, AuditStore store, HttpContext httpContext) =>
 {

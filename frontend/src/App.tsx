@@ -706,6 +706,35 @@ function App() {
     }
   }
 
+  // @ts-ignore - Used in onClick handler
+  const deleteGalleryImage = async (imageName: string) => {
+    if (!session || !imageGalleryObject) {
+      return
+    }
+
+    if (!window.confirm(`M?chten Sie das Bild "${imageName}" wirklich l?schen?`)) {
+      return
+    }
+
+    try {
+      const response = await fetch(`http://localhost:5050/api/objects/${imageGalleryObject.id}/images/${imageName}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.token}` }
+      })
+
+      if (!response.ok) {
+        const errorData = (await response.json()) as { message?: string }
+        throw new Error(errorData.message || `L?schen fehlgeschlagen: ${response.statusText}`)
+      }
+
+      const images = await apiRequest<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>(`/api/objects/${imageGalleryObject.id}/images`, session)
+      setGalleryImages(images)
+      setError('')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Bild konnte nicht gel?scht werden.')
+    }
+  }
+
   const changePassword = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!session) {
