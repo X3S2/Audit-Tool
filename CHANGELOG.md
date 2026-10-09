@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.1] - 2026-10-09
+
+### Hinzugefügt
+- theme.css mit CSS-Variablen für Dark- und Light-Mode
+- Dark-Mode als Standard (originale Farbschema)
+- Light-Mode mit hellen Farben und guter Lesbarkeit
+- Sanfte Farbübergänge bei Theme-Wechsel (0.3s Transition)
+- CSS-Variablen: --color-bg-primary, --color-text-primary, --color-accent, etc.
+
+### Geändert
+- App.css: Alle hartkodierten Farben durch CSS-Variablen ersetzt
+- useEffect für Theme-Sync mit document.documentElement.className erweitert
+- CSS-Bundle-Größe: 4.74 KB → 5.85 KB (+1.11 KB für Variablen)
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Features
+- Theme-Wechsel sofort aktiv ohne Seite neuladen
+- Browser-Einstellung wird respektiert (localStorage: THEME_KEY)
+- Theme-Toggle-Button (☀️/🌙) im Topbar sichtbar
+- Alle UI-Elemente responsive auf Theme-Änderung
+
 ## [0.8.0] - 2026-10-09
 
 ### Hinzugefügt
