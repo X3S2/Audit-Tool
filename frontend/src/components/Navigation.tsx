@@ -30,19 +30,35 @@ interface NavigationProps {
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ items, currentPage, onPageChange }) => {
-  const [expandedNav, setExpandedNav] = useState<string | null>(null)
+  const [expandedNav, setExpandedNav] = useState<Set<string>>(new Set())
 
   const isPageActive = (navKey: PageKey): boolean => {
     return currentPage === navKey || currentPage.startsWith(navKey + '-')
   }
 
+  const toggleExpand = (itemKey: string) => {
+    const newExpanded = new Set(expandedNav)
+    if (newExpanded.has(itemKey)) {
+      newExpanded.delete(itemKey)
+    } else {
+      newExpanded.add(itemKey)
+    }
+    setExpandedNav(newExpanded)
+  }
+
   const handleNavClick = (item: NavItem) => {
     if (item.subpages) {
-      setExpandedNav(expandedNav === item.key ? null : item.key)
+      // Expandable item - toggle expand, don't navigate
+      toggleExpand(item.key)
     } else {
+      // Leaf item - navigate directly
       onPageChange(item.key)
-      setExpandedNav(null)
     }
+  }
+
+  const handleSubpageClick = (subpage: { key: PageKey; label: string }) => {
+    onPageChange(subpage.key)
+    // Don't collapse - keep expanded so user can navigate between subpages
   }
 
   return (
@@ -60,21 +76,18 @@ export const Navigation: React.FC<NavigationProps> = ({ items, currentPage, onPa
               {item.icon && <span className="nav-icon">{item.icon}</span>}
               <span className="nav-label">{item.label}</span>
               {item.subpages && (
-                <span className={`nav-arrow ${expandedNav === item.key ? 'expanded' : ''}`}>›</span>
+                <span className={`nav-arrow ${expandedNav.has(item.key) ? 'expanded' : ''}`}>›</span>
               )}
             </button>
 
-            {item.subpages && expandedNav === item.key && (
+            {item.subpages && expandedNav.has(item.key) && (
               <div className="nav-subpages">
                 {item.subpages.map((subpage) => (
                   <button
                     key={subpage.key}
                     type="button"
                     className={`nav-subpage ${currentPage === subpage.key ? 'active' : ''}`}
-                    onClick={() => {
-                      onPageChange(subpage.key)
-                      setExpandedNav(null)
-                    }}
+                    onClick={() => handleSubpageClick(subpage)}
                     title={subpage.label}
                   >
                     {subpage.label}

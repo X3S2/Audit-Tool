@@ -264,12 +264,11 @@ function App() {
 
     const loadData = async () => {
       try {
-        const [categoryData, siteData, templateData, roomData, objectData, auditData] = await Promise.all([
+        const [categoryData, siteData, templateData, roomData, auditData] = await Promise.all([
           apiRequest<Category[]>('/api/categories', session),
           apiRequest<Site[]>('/api/standorte', session),
           apiRequest<Template[]>('/api/templates', session),
           apiRequest<Room[]>('/api/rooms', session),
-          apiRequest<AuditObject[]>('/api/objects', session),
           apiRequest<AuditInstance[]>('/api/audits', session)
         ])
 
@@ -277,7 +276,6 @@ function App() {
         setSites(siteData)
         setTemplates(templateData)
         setRooms(roomData)
-        setObjects(objectData)
         setAudits(auditData)
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Daten konnten nicht geladen werden.')
@@ -1004,7 +1002,7 @@ function App() {
                 <div className="stat-card"><span>Standorte</span><strong>{sites.length}</strong></div>
                 <div className="stat-card"><span>Kategorien</span><strong>{categories.length}</strong></div>
                 <div className="stat-card"><span>Vorlagen</span><strong>{templates.length}</strong></div>
-                <div className="stat-card"><span>Abschluss</span><strong>72%</strong></div>
+                <div className="stat-card"><span>Audits</span><strong>{audits.length}</strong></div>
               </div>
             </section>
           ) : null}
