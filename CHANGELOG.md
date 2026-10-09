@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0] - 2026-10-09
+
+### Hinzugefügt
+- Clientseitige Bild-Komprimierung für Image-Uploads
+- Canvas-basierte Bildern-Resize mit adaptiver Qualitätsreduktion
+- Automatische Qualitätsanpassung zur Einhaltung des 5MB-Limits
+- Maximale Bildauflösung: 1920x1920 Pixel
+- Komprimierungsstatus-Feedback mit visuellen Indikatoren
+- Bandbreite-Optimierung durch lokale Komprimierung statt Server-Komprimierung
+
+### Geändert
+- handleImageGalleryUpload: integriert compressImage() vor FormData-Upload
+- Komprimierte Datei wird als new File() für Upload erstellt
+- Frontend-Bundle-Größe um 1KB erhöht (251.68 KB komprimiert)
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Hinweis
+- Image-Delete-Funktionalität für v0.9.0 geplant
+- Dark/Light Mode Toggle für v0.8.1 geplant
+
 ## [0.7.0] - 2026-10-09
 
 ### Hinzugefügt
