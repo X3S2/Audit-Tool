@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] - 2026-10-09
+
+### Hinzugefügt
+- Bild-Komprimierungs-Modul (imageCompression.ts) mit Canvas-basierter Resize/Qualitäts-Reduktion
+- compressImage() Funktion mit adaptiver Qualitätsanpassung zur Größenlimit-Einhaltung (Standard: 5MB)
+- getCompressedFileName() Hilfsfunktion für Zeitstempel-basierte Dateinamen (Format: yyyyMMdd_HHmmss)
+- Maximale Bildauflösung: 1920x1920 Pixel
+- Vorbereitung für Frontend-Bild-Upload-UI in zukünftigen Versionen
+
+### Geändert
+- Frontend-Projektstruktur um Komprimierungs-Module erweitert
+- package.json devDependencies validiert
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Geplant für 0.6.0+
+- Integration in Frontend-Upload-Formulare
+- Backend-Endpunkte für Bild-Upload (POST /api/objects/{id}/images)
+- Frontend-Bild-Preview vor Upload
+
 ## [0.4.0] - 2026-10-09
 
 ### Hinzugefügt

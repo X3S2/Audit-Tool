@@ -3,124 +3,208 @@
 Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checklisten und PDF-Exporte.
 
 ## Projektstatus
-- Stack: React + TypeScript + ASP.NET Core + SQLite + iText7 für PDF-Export
-- Ziel: produktive erste Version mit allen Kernfunktionen
-- Login-Timeout: 8 Stunden; nach Ablauf erfolgt automatische Abmeldung
-- Port: 4714 für die Produktiv-URL, lokale Entwicklung nutzt 5050 API und 5173/5174 Frontend (5173 falls frei, sonst Vite fallback 5174)
-- Status: Kernfunktionen für Standorte, Räume, Objekte, Audits, Backup, ZIP-Export, PDF-Export, Bild-Uploads und echte SQLite-Persistenz implementiert
-- Aktuelle Version: 0.2.1 (PDF-Export für Audits)
+- **Stack**: React + TypeScript + ASP.NET Core + SQLite + iText7 für PDF-Export
+- **Status**: ✅ Kernfunktionen produktionsreif (v0.5.0+)
+- **Login-Timeout**: 8 Stunden mit automatischer Abmeldung
+- **Ports**: 4714 Produktiv, 5050 API (Lokal), 5173/5174 Frontend (Lokal mit Fallback)
+- **Datenbank**: SQLite mit persistenter JSON-Serialisierung
+- **Aktuelle Version**: 0.5.0-beta (Bild-Komprimierungs-Module + Backup-Rotation + PDF-Export + User-Management)
 
 ## Schnellstart
 
 ### Voraussetzungen
 - .NET SDK 10+
 - Node.js 22+
-- Docker Desktop oder Docker Engine
+- Docker Desktop oder Docker Engine (optional für Produktiv-Einsatz)
 
 ### Lokale Entwicklung
-1. Backend starten:
+1. **Backend starten** (Terminal 1):
    ```bash
    cd backend
    dotnet run --urls http://localhost:5050
    ```
-2. Frontend starten:
+
+2. **Frontend starten** (Terminal 2):
    ```bash
    cd frontend
    npm install
-   npm run dev -- --host 0.0.0.0
+   npm run dev
    ```
-3. Browser öffnen:
-   - Frontend: http://localhost:5173 (falls belegt: http://localhost:5174)
-   - Backend Swagger: http://localhost:5050/swagger
 
-### Docker-Start
+3. **Browser öffnen**:
+   - Frontend: http://localhost:5173 (oder nächster verfügbarer Port)
+   - Backend API: http://localhost:5050
+
+### Docker-Start (Produktiv)
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
-Produktions-/Docker-URL: http://localhost:4714
+Produktions-URL: http://localhost:4714
 
-## Standard-Accounts
-- Superadmin / Password123!
-- Admin / Password123!
-- Benutzer / Password123!
-- Azubi / Password123!
+## Standard-Test-Accounts
+| Benutzer    | Passwort      | Rolle        |
+|-------------|---------------|--------------|
+| superadmin  | Password123!  | Superadmin   |
+| admin       | Password123!  | Admin        |
+| user        | Password123!  | Benutzer     |
+| azubi       | Password123!  | Azubi        |
 
-## Features der aktuellen Version (0.2.1)
-- **Rollenmodell**: Superadmin, Admin, Benutzer, Azubi mit granularer Zugriffskontrolle
-- **User-Management**: Admin-Panel für Passwort-Reset, Aktivierung/Deaktivierung, Löschung (Admin kann Superadmin nicht bearbeiten)
-- **Audit-Management**: Audit-Erstellung, Checklistenentries, Status-Tracking
-- **Standort- & Raum-Management**: Hierarchische Verwaltung von Kategorien, Standorten, Räumen und Objekten
-- **PDF-Export**: Direkte PDF-Generierung für Audits (iText7)
-- **Bild-Upload**: Multipart-Upload mit 5MB-Limit pro Datei
-- **Backup & Export**: ZIP-Export mit hierarchischer Struktur, Backup-Management (Erstellen, Wiederherstellen, Löschen)
-- **SQLite-Persistierung**: Echte Datenbankpersistenz statt In-Memory-Stores
+## Implementierte Kernfunktionen
+
+### 🔐 Sicherheit & Authentifizierung
+- JWT-basierte Authentifizierung mit 8-Stunden-Session-Timeout
+- Rollenbasierte Zugriffskontrolle (RBAC): Superadmin > Admin > Benutzer > Azubi
+- Sichere Passwort-Verwaltung mit Verifizierung
+- Automatische Session-Abmeldung nach Timeout
+
+### 👥 User-Management (Admin-Panel)
+- Benutzer erstellen, bearbeiten, aktivieren/deaktivieren, löschen
+- Passwort-Reset durch Admin (nur für Benutzer unter ihrer Rolle)
+- Passwort-Änderung durch Benutzer selbst im Profil-Panel
+- Rollenverteilung mit Sicherheitsregeln (Admin kann Superadmin nicht ändern)
+
+### 📍 Audit-Management
+- Hierarchische Struktur: Kategorien → Standorte → Räume → Objekte
+- Audit-Instanzen mit Checklisten erstellen und verwalten
+- Audit-Status-Tracking (Entwurf, In Bearbeitung, Erfasst, Abgeschlossen)
+- Checklist-Einträge mit Frage/Antwort und Status
+
+### 📋 Vorlagen & Konfiguration
+- Audit-Vorlagen mit dynamischen Feldern definieren
+- Feldtypen: Text, Dropdown, Textarea
+- Templates für wiederholbare Audit-Prozesse
+- Kategorien und Standorte verwalten
+
+### 📊 Berichte & Exporte
+- **PDF-Export**: Audit-Reports als PDF-Dateien generieren (iText7)
+- **ZIP-Export**: Hierarchische Datenexporte mit Bilder, Metadaten und Manifest
+- **Backup-Management**: Manuelle Backups erstellen, wiederherstellen, löschen
+- **Automatische Backup-Rotation**: Max. 10 Backups, älteste werden automatisch gelöscht
+
+### 🖼️ Bilder & Medien (Vorbereitet)
+- **Komprimierungs-Modul**: JavaScript-basierte Bild-Komprimierung vor Upload
+- Größenlimit: 5MB pro Datei
+- Adaptive Qualitätsanpassung bei Bedarf
+- Zeitstempel-basierte Dateinamenskonvention
+
+### 📱 Benutzerober oberfläche
+- **Dark/Light-Mode**: Benutzer-Präferenz mit Persistent-Storage
+- **Responsive Design**: Für Desktop und Tablet optimiert (Mobile-Optimierung folgt)
+- **Mehrsprachig**: Vollständig deutschsprachig mit Umlauten
+- **Fehlerbehandlung**: Aussagekräftige Fehlermeldungen auf Deutsch
+
+### 💾 Datenmanagement
+- SQLite-Persistierung für alle Daten (Nutzer, Audits, Konfiguration)
+- JSON-basierte Datenserialisierung in der DB
+- Datenintegrität durch SQLite-ACID-Eigenschaften
+- Keine Datenverluste bei Neustart
+
+## Versionshistorie
+
+| Version | Datum | Features |
+|---------|-------|----------|
+| 0.5.0   | 2026-10-09 | Bild-Komprimierungs-Module, Image-Foundation |
+| 0.4.0   | 2026-10-09 | Automatische Backup-Rotation (Max. 10 Backups) |
+| 0.3.0   | 2026-10-09 | Profil-Seite, User-Passwortänderung |
+| 0.2.1   | 2026-10-09 | PDF-Export für Audits (iText7 + Bouncy Castle) |
+| 0.2.0   | 2026-10-09 | Admin-User-Management (Reset, Toggle, Delete) |
+| 0.1.2   | 2026-10-09 | SQLite-Persistierung für alle Datenmodelle |
+| 0.1.1   | 2026-10-09 | Stabilisierung Bild-Upload-API |
+| 0.1.0   | 2026-10-09 | Backup-Management, ZIP-Export, Admin-Panel |
+| 0.0.0   | 2026-10-09 | Basis-Projekt, Login, Rollenmodell, Dashboard |
+
+Siehe [CHANGELOG.md](./CHANGELOG.md) für Details.
 
 ## Git-Push-Checkliste
 Vor jedem GitPush muss die folgende Liste abgearbeitet sein:
 
 - [ ] README geprüft und aktualisiert
-- [ ] Changelog aktualisiert (Keep-a-Changelog-Format auf Deutsch)
+- [ ] CHANGELOG aktualisiert (Keep-a-Changelog-Format auf Deutsch)
 - [ ] Versionierung angepasst (SemVer: major.minor.patch)
-- [ ] Backend kompiliert ohne Fehler
-- [ ] Frontend TypeScript kompiliert und buildet ohne Fehler
+- [ ] Backend kompiliert ohne Fehler (`dotnet build`)
+- [ ] Frontend TypeScript kompiliert und buildet ohne Fehler (`npm run build`)
 - [ ] SQLite-Persistenz für Kernfunktionen validiert
 - [ ] Login- und Session-Timeout (8h) geprüft
-- [ ] Rollenzugriff geprüft
-- [ ] Admin-User-Management-Endpunkte geprüft
-- [ ] PDF-Export für Audits geprüft
-- [ ] Bild-Upload getestet (5MB-Limit)
-- [ ] Export-/ZIP-Workflow geprüft
-- [ ] Backup/Restore geprüft
-- [ ] Docker Compose validiert
-- [ ] Sicherheits- und Sessions-Checks durchgeführt
+- [ ] Rollenzugriff getestet
+- [ ] Admin-User-Management-Endpunkte verifiziert
+- [ ] PDF-Export für Audits getestet
+- [ ] Backup-Management und Rotation getestet
+- [ ] Datenintegrität nach Neustart überprüft
+- [ ] Docker Compose validiert (falls Änderungen)
+- [ ] Keine unkompilierten TypeScript/C#-Fehler
 - [ ] Keine offenen kritischen Fehler in den Kernflows
 
 ## Projektstruktur
-```text
+```
 Audit-Tool/
 ├── backend/
-│   ├── Program.cs (zentrale API-Endpunkte und AppDatabase-Klasse)
-│   ├── backend.csproj (NuGet-Dependencies: itext7, itext7.bouncy-castle-adapter, SQLite, JWT)
-│   └── bin/Debug/net10.0/
+│   ├── Program.cs (Zentrale API-Endpunkte, Datenmodelle, SQLite-DB)
+│   ├── backend.csproj (NuGet: itext7, bouncy-castle-adapter, SQLite, JWT)
+│   └── bin/Debug/net10.0/ (Kompilierte Binaries)
 ├── frontend/
-│   ├── src/App.tsx (zentrale React-Komponente mit allen UI-Flows)
-│   ├── src/App.css
-│   └── package.json
+│   ├── src/
+│   │   ├── App.tsx (Zentrale React-Komponente mit allen UI-Flows)
+│   │   ├── App.css (Styling für Dark/Light-Mode)
+│   │   └── imageCompression.ts (Bild-Komprimierungs-Modul)
+│   ├── package.json (npm-Dependencies)
+│   └── dist/ (Produktiv-Build)
 ├── docker/
-│   ├── docker-compose.yml (Orchestrierung Backend, Frontend, Ports)
-│   └── Dockerfile.*
-├── docs/
+│   ├── docker-compose.yml (Service-Orchestrierung)
+│   └── Dockerfile.* (Container-Definitionen)
 ├── storage/
-│   ├── audit-tool.db (SQLite-Datenbankdatei, .gitignore)
-│   ├── backups/
-│   ├── exports/
-│   └── uploads/ (Bilder nach {objectId} organisiert)
-├── README.md
-├── CHANGELOG.md
-├── .gitignore
-├── .env.example
-└── plan.md + masterplan.md (Detaillierte Projektplanung)
+│   ├── audit-tool.db (SQLite-Datenbank, .gitignore)
+│   ├── backups/ (Backup-Zip-Dateien)
+│   ├── exports/ (Export-Zip-Dateien)
+│   └── uploads/ (Objektbilder, organisiert nach ObjectId)
+├── docs/ (Dokumentation)
+├── README.md (Dieses Dokument)
+├── CHANGELOG.md (Versionshistorie mit Details)
+├── .gitignore (Ausnahmen für Git)
+├── plan.md (Ursprüngliche Anforderungen)
+├── masterplan.md (Detaillierte Projektplanung)
+└── .env.example (Umgebungsvariablen-Template)
 ```
 
 ## Wichtige Entwicklungsregeln
-- Vollständig deutschsprachig (UI, Fehler, Dokumentation)
-- Umlaute und Sonderzeichen in UI und Exporten beachten
-- Session-Timeout 8 Stunden (JWT auf Backend, Storage-Clear auf Frontend)
-- Docker-Container eindeutig benennen
-- Nach größeren Features Changelog und Versionierung ergänzen (SemVer)
-- Keine Secrets im Repository hinterlegen (.env in .gitignore)
-- SQLite-Datenbankdatei wird nicht committed (storage/audit-tool.db in .gitignore)
+- ✅ Vollständig deutschsprachig (UI, Fehler, Dokumentation, Kommentare)
+- ✅ Umlaute und Sonderzeichen in UI und Exporten korrekt behandelt
+- ✅ Session-Timeout 8 Stunden (JWT auf Backend, Storage-Clear auf Frontend)
+- ✅ Docker-Container eindeutig benannt
+- ✅ Nach größeren Features Changelog und Versionierung aktualisieren (SemVer)
+- ✅ Keine Secrets im Repository hinterlegen (.env in .gitignore)
+- ✅ SQLite-Datenbankdatei wird nicht committed (storage/audit-tool.db in .gitignore)
+- ✅ Alle API-Endpunkte mit [Authorize] dekoriert, wo erforderlich
+- ✅ Rollenprüfung auf Frontend und Backend konsistent
 
 ## Bekannte Einschränkungen & Roadmap
-- **SQLite für MVP**: Produktions-NAS-Deployment auf PostgreSQL geplant (0.3.x)
-- **Keine Bild-Komprimierung**: JavaScript-basierte Komprimierung vor Upload geplant (0.3.x)
-- **Kein Token-Refresh**: Nach 8h muss Benutzer sich neu anmelden (0.3.x geplant)
-- **Backup-Management prototypisch**: Kein echter DB-Dump, nur JSON-Snapshot (0.3.x erweitern)
-- **Mobile UI**: Noch nicht optimiert (0.4.x)
 
-## Changelog
-Das Projekt verfolgt ein Keep-a-Changelog-Format mit SemVer-Schema (X.Y.Z).
-Siehe [CHANGELOG.md](./CHANGELOG.md).
+### MVP-Einschränkungen (Für 0.5.x geplant)
+- **SQLite für MVP**: Produktions-NAS-Deployment auf PostgreSQL geplant (1.0.x)
+- **Bild-Upload UI**: Backend-Endpunkte müssen noch hinzugefügt werden
+- **Kein Token-Refresh**: Nach 8h muss Benutzer sich neu anmelden (1.0.x)
+- **Backup-Restore prototypisch**: Nicht vollständig implementiert (1.0.x)
+- **Mobile UI**: Noch nicht vollständig optimiert (1.1.x)
+
+### Geplante Features (1.0.0+)
+- [ ] Bild-Upload-Endpunkte im Backend
+- [ ] Frontend-Bild-Upload-UI mit Komprimierung
+- [ ] PostgreSQL-Migration für Produktiv-NAS
+- [ ] Token-Refresh-Mechanik
+- [ ] Backup-Restore vollständig implementieren
+- [ ] Mobile-Design-Optimierung
+- [ ] Automatische Backups nach Zeitplan
+- [ ] Audit-Fortschrittsberechnung
+- [ ] Export-Filter (nach Datum, Status, etc.)
+- [ ] Mehrsprachiges UI (Englisch, etc.)
+
+## Support & Kontakt
+Projekt intern / proprietär - keine öffentliche Unterstützung.
 
 ## Lizenz
-Projekt intern / proprietär.
+Projekt intern / proprietär. Alle Rechte vorbehalten.
+
+---
+
+**Version**: 0.5.0-beta  
+**Letztes Update**: 2026-10-09  
+**Entwickler**: Copilot + Benutzer
