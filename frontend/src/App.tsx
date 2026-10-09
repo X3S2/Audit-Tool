@@ -1666,7 +1666,18 @@ function App() {
                 </div>
                 <div>
                   <label>Theme</label>
-                  <div className="value-box">{theme === 'dark' ? 'Darkmode' : 'Whitemode'}</div>
+                  <button 
+                    type="button" 
+                    className="theme-toggle-button"
+                    onClick={() => {
+                      const newTheme = theme === 'dark' ? 'light' : 'dark'
+                      setTheme(newTheme)
+                      localStorage.setItem('theme', newTheme)
+                    }}
+                    style={{ padding: '8px 16px', marginTop: '4px' }}
+                  >
+                    {theme === 'dark' ? '🌙 Dark Mode' : '☀️ Light Mode'}
+                  </button>
                 </div>
               </div>
 

@@ -464,6 +464,29 @@ th {
   }
 }
 
+/* ============ THEME TOGGLE ============ */
+.theme-toggle-button {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, var(--color-gradient-start), var(--color-gradient-end));
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 0.95rem;
+}
+
+.theme-toggle-button:hover {
+  opacity: 0.9;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.theme-toggle-button:active {
+  transform: translateY(0);
+}
+
 /* ============ MEDIA QUERIES ============ */
 @media (max-width: 820px) {
   .content-shell {
