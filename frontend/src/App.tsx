@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import './App.css'
-// import { compressImage } from './imageCompression'
+import { compressImage } from './imageCompression'
 
 type ThemeMode = 'dark' | 'light'
 type PageKey = 'dashboard' | 'audits' | 'standorte' | 'vorlagen' | 'raume' | 'admin' | 'profil'
@@ -639,8 +639,19 @@ function App() {
     setImageUploadLoading(true)
 
     try {
+      setError('')
+      
+      const compressedBlob = await compressImage(file, {
+        maxWidth: 1920,
+        maxHeight: 1920,
+        quality: 0.8,
+        maxSizeKB: 5000
+      })
+
+      const compressedFile = new File([compressedBlob], file.name, { type: 'image/jpeg' })
+
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('file', compressedFile)
 
       const response = await fetch(`http://localhost:5050/api/objects/${imageGalleryObject.id}/images`, {
         method: 'POST',
