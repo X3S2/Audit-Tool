@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0] - 2026-10-09
+
+### Hinzugefügt
+- Frontend-Image-Gallery-Modal für Objektbilder
+- Upload-Formular mit Datei-Input direkt im Modal
+- Responsive Bild-Grid (4 Bilder pro Zeile auf Desktop)
+- Bild-Metadaten-Anzeige (Dateigröße in KB, Upload-Datum)
+- Real-time Bildlisten-Abruf von Backend API
+- Upload-Status-Feedback mit visuellen Indikatoren
+- "Bilder verwalten"-Button in Objekttabelle
+- Styling: Border-Left-Highlight für aktives Galerie-Modal
+
+### Geändert
+- Objekttabelle um "Aktion"-Spalte erweitert
+- Frontend-Dateigrößen von ~248KB auf 250KB (+2KB für neue UI)
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Hinweis
+- Image-Komprimierung für v0.8.0 geplant (clientseitig vor Upload)
+- Bild-Delete-Funktionalität für v0.9.0 geplant
+
 ## [0.6.0] - 2026-10-09
 
 ### Hinzugefügt
@@ -14,12 +37,6 @@
 
 ### Behoben
 - Keine Fehler in dieser Version
-
-### Geplant für 0.7.0+
-- Frontend-Image-Gallery-UI für Objektbilder
-- Upload-Formular mit Komprimierung (imageCompression.ts Integration)
-- Bild-Preview vor Upload
-- Bild-Löschen-Funktionalität
 
 ## [0.5.0] - 2026-10-09
 
