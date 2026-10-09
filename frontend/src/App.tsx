@@ -853,7 +853,6 @@ function App() {
             <input
               value={loginForm.username}
               onChange={(event) => setLoginForm((previous) => ({ ...previous, username: event.target.value }))}
-              placeholder="superadmin"
             />
           </label>
 
@@ -863,7 +862,6 @@ function App() {
               type="password"
               value={loginForm.password}
               onChange={(event) => setLoginForm((previous) => ({ ...previous, password: event.target.value }))}
-              placeholder="Password123!"
             />
           </label>
 
