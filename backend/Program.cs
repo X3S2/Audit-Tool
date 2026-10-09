@@ -108,6 +108,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseRouting();
 app.UseCors("FrontendPolicy");
+app.UseMiddleware<CircuitBreakerMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
