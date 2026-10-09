@@ -311,6 +311,39 @@
   border-color: rgba(96, 165, 250, 0.35);
 }
 
+.nav-subpages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  margin-left: 6px;
+}
+
+.nav-subpage {
+  text-align: left;
+  padding: 9px 10px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.nav-subpage:hover {
+  color: var(--text-h);
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.nav-subpage.active {
+  color: var(--color-gradient-end);
+  background: rgba(37, 99, 235, 0.12);
+  border-color: transparent;
+  font-weight: 500;
+}
+
 .main-panel {
   padding: 24px;
 }

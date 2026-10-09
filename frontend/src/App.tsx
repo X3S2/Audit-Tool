@@ -145,6 +145,7 @@ function App() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showProfileDropdown, setShowProfileDropdown] = useState(false)
+  const [expandedNavItems, setExpandedNavItems] = useState<Set<string>>(new Set())
   const [profile, setProfile] = useState<User | null>(null)
   const [adminTab, setAdminTab] = useState<'benutzer' | 'backup' | 'export' | 'logs'>('benutzer')
   const [categories, setCategories] = useState<Category[]>([])
@@ -839,12 +840,19 @@ function App() {
       .slice(0, 2)
   }
 
-  const navItems: Array<{ key: PageKey; label: string; visible: boolean }> = [
+  const navItems: Array<{ key: PageKey; label: string; visible: boolean; subpages?: Array<{ key: PageKey; label: string }> }> = [
     { key: 'dashboard', label: 'Dashboard', visible: true },
-    { key: 'audits', label: 'Audits', visible: true },
-    { key: 'standorte', label: 'Standorte', visible: true },
-    { key: 'vorlagen', label: 'Vorlagen', visible: true },
-    { key: 'raume', label: 'Räume & Objekte', visible: true },
+    { 
+      key: 'audits', 
+      label: 'Audits', 
+      visible: true,
+      subpages: [
+        { key: 'audits', label: 'Audits Overview' },
+        { key: 'raume', label: 'Räume & Objekte' },
+        { key: 'standorte', label: 'Standorte' },
+        { key: 'vorlagen', label: 'Vorlagen' }
+      ]
+    },
     { key: 'admin', label: 'Admin Page', visible: session ? canManageUsers(session.user.role) : false },
     { key: 'profil', label: 'Profil', visible: true }
   ]
@@ -955,16 +963,51 @@ function App() {
 
       <div className="content-shell">
         <aside className="sidebar">
-          {navItems.filter((item) => item.visible).map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={page === item.key ? 'nav-item active' : 'nav-item'}
-              onClick={() => setPage(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
+          {navItems.filter((item) => item.visible).map((item) => {
+            const isExpanded = expandedNavItems.has(item.key)
+            const hasSubpages = item.subpages && item.subpages.length > 0
+            
+            return (
+              <div key={item.key}>
+                <button
+                  type="button"
+                  className={page === item.key ? 'nav-item active' : 'nav-item'}
+                  onClick={() => {
+                    if (hasSubpages) {
+                      setExpandedNavItems((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(item.key)) {
+                          next.delete(item.key)
+                        } else {
+                          next.add(item.key)
+                        }
+                        return next
+                      })
+                    } else {
+                      setPage(item.key)
+                    }
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {hasSubpages && <span style={{ marginLeft: 'auto' }}>{isExpanded ? '▼' : '▶'}</span>}
+                </button>
+                {hasSubpages && isExpanded && item.subpages && (
+                  <div className="nav-subpages">
+                    {item.subpages.map((subpage) => (
+                      <button
+                        key={subpage.key}
+                        type="button"
+                        className={page === subpage.key ? 'nav-subpage active' : 'nav-subpage'}
+                        onClick={() => setPage(subpage.key)}
+                      >
+                        {subpage.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </aside>
 
         <main className="main-panel">
