@@ -4,13 +4,13 @@ Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checkl
 
 ## Projektstatus
 - **Stack**: React + TypeScript + ASP.NET Core + SQLite + iText7 für PDF-Export
-- **Status**: ✅ Kernfunktionen produktionsreif (v0.9.0+)
+- **Status**: ✅ **PRODUKTIONSREIF v1.0.0** - Alle Kernfunktionen komplett
 - **Login-Timeout**: 8 Stunden mit automatischer Abmeldung
 - **Ports**: 4714 Produktiv, 5050 API (Lokal), 5173/5174 Frontend (Lokal mit Fallback)
 - **Datenbank**: SQLite mit persistenter JSON-Serialisierung
-- **Aktuelle Version**: 0.9.0 (Bild-Delete, Theme-Toggle, Komprimierung, Galerie)
+- **Aktuelle Version**: 1.0.0 (Backup-Zeitplanung, komplett produktiv)
 - **Docker**: ✅ Build erfolgreich (Frontend, Backend, PostgreSQL)
-- **Container Status**: ✅ Alle Container (audit-frontend-ui:4714, audit-backend-api:5050, audit-postgres-db:5432) funktionieren
+- **Container Status**: ✅ Alle Container funktionieren (audit-frontend-ui:4714, audit-backend-api:5050, audit-postgres-db:5432)
 
 ## Schnellstart
 
@@ -105,6 +105,7 @@ Produktions-URL: http://localhost:4714
 
 | Version | Datum | Features |
 |---------|-------|----------|
+| **1.0.0** | 2026-10-09 | **PRODUKTIV** - Backup-Zeitplanung mit Admin-UI komplett |
 | 0.9.0   | 2026-10-09 | Image-Delete-Funktionalität (Bestätigung, sofortige UI-Refresh) |
 | 0.8.1   | 2026-10-09 | Dark/Light Mode mit CSS-Variablen-System |
 | 0.8.0   | 2026-10-09 | Clientseitige Bild-Komprimierung (Canvas, adaptive Qualität) |

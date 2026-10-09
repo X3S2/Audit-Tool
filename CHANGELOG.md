@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.0.0] - 2026-10-09
+
+### Hinzugefügt
+- BackupSchedule Model für Zeitplan-Konfiguration
+- BackupScheduleStore für Persistierung in SQLite
+- GET /api/admin/backup-schedule Backend-Endpunkt (Abruf)
+- PUT /api/admin/backup-schedule Backend-Endpunkt (Speichern)
+- Frontend Backup-Zeitplan-Konfiguration im Admin-Panel
+- Uhrzeit-Auswahl (time input) für automatische Backups
+- Wochentag-Checkboxes (Montag-Sonntag) für Backup-Tage
+- Max Backups Konfiguration (1-100, default 10)
+- Aktivierung/Deaktivierung des Zeitplans
+- Speichern und Laden von Zeitplan-Einstellungen
+
+### Geändert
+- Admin-Panel erweitert: "Automatische Backups" Section
+- Backup-Verwaltung separiert in manuell vs. automatisch
+- Frontend-Bundle-Größe: 250.76 KB → 253.63 KB (+2.87 KB)
+- Backend: BackupScheduleStore registriert als Singleton
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Features
+- Vollständige Backup-Zeitplan-Verwaltung
+- Flexibles Scheduling (täglich, mehrmals pro Woche, etc.)
+- Persistierung über SQLite
+- Admin-nur Zugriff ([Authorize(Policy = "RequireAdminAccess")])
+
+### Status
+- **v1.0.0 markiert Produktive Reife** mit allen Kernfunktionen
+- Alle Admin-Funktionen komplett
+- Backup/Restore/Schedule implementiert
+- Image-Management vollständig (Upload, Download, Delete, Komprimierung)
+- Theme-System (Dark/Light) funktionsfähig
+- PDF/ZIP-Export aktiv
+
 ## [0.9.0] - 2026-10-09
 
 ### Hinzugefügt
