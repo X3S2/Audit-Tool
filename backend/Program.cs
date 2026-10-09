@@ -90,6 +90,7 @@ builder.Services.AddSingleton(appDatabase);
 builder.Services.AddSingleton(userStore);
 builder.Services.AddSingleton(auditStore);
 builder.Services.AddSingleton(new BackupStore(backupDirectory, userStore));
+builder.Services.AddSingleton<BackupScheduleStore>();
 
 var app = builder.Build();
 
@@ -597,6 +598,23 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
     }
 
     return Results.File(path, "application/zip", fileName);
+});
+
+app.MapGet("/api/admin/backup-schedule", [Authorize(Policy = "RequireAdminAccess")] (BackupScheduleStore scheduleStore) =>
+{
+    var schedule = scheduleStore.GetSchedule();
+    return Results.Ok(schedule);
+});
+
+app.MapPut("/api/admin/backup-schedule", [Authorize(Policy = "RequireAdminAccess")] (BackupSchedule newSchedule, BackupScheduleStore scheduleStore) =>
+{
+    if (newSchedule.Days == null || newSchedule.Days.Length == 0)
+    {
+        newSchedule.Days = Array.Empty<DayOfWeek>();
+    }
+
+    scheduleStore.UpdateSchedule(newSchedule);
+    return Results.Ok(new { message = "Backup-Zeitplan aktualisiert.", schedule = scheduleStore.GetSchedule() });
 });
 
 app.Run();

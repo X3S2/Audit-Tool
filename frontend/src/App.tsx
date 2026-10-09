@@ -153,6 +153,7 @@ function App() {
   const [audits, setAudits] = useState<AuditInstance[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [backups, setBackups] = useState<BackupRecord[]>([])
+  const [backupSchedule, setBackupSchedule] = useState<{ enabled: boolean; time: string; days: string[]; maxBackups: number }>({ enabled: false, time: '02:00', days: [], maxBackups: 10 })
   const [exportSiteId, setExportSiteId] = useState('1')
   const [imageGalleryObject, setImageGalleryObject] = useState<AuditObject | null>(null)
   const [galleryImages, setGalleryImages] = useState<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>([])
@@ -276,13 +277,15 @@ function App() {
 
     const loadUsers = async () => {
       try {
-        const [userData, backupData] = await Promise.all([
+        const [userData, backupData, scheduleData] = await Promise.all([
           apiRequest<User[]>('/api/users', session),
-          apiRequest<BackupRecord[]>('/api/admin/backups', session)
+          apiRequest<BackupRecord[]>('/api/admin/backups', session),
+          apiRequest<{ enabled: boolean; time: string; days: string[]; maxBackups: number }>('/api/admin/backup-schedule', session)
         ])
 
         setUsers(userData)
         setBackups(backupData)
+        setBackupSchedule(scheduleData)
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Admin-Daten konnten nicht geladen werden.')
       }
@@ -732,6 +735,23 @@ function App() {
       setError('')
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Bild konnte nicht gel?scht werden.')
+    }
+  }
+
+  const saveBackupSchedule = async () => {
+    if (!session || !canManageUsers(session.user.role)) {
+      return
+    }
+
+    try {
+      await apiRequest<{ message: string; schedule: object }>('/api/admin/backup-schedule', session, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(backupSchedule)
+      })
+      setError('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Backup-Zeitplan konnte nicht gespeichert werden.')
     }
   }
 
@@ -1442,6 +1462,72 @@ function App() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="form-card">
+                <h4>Automatische Backups</h4>
+                <div className="form-grid">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={backupSchedule.enabled}
+                      onChange={(event) => setBackupSchedule((prev) => ({ ...prev, enabled: event.target.checked }))}
+                    />
+                    Zeitplan aktivieren
+                  </label>
+                </div>
+
+                {backupSchedule.enabled && (
+                  <>
+                    <div className="form-grid">
+                      <label>
+                        Uhrzeit
+                        <input
+                          type="time"
+                          value={backupSchedule.time}
+                          onChange={(event) => setBackupSchedule((prev) => ({ ...prev, time: event.target.value }))}
+                        />
+                      </label>
+
+                      <label>
+                        Max. Backups
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={backupSchedule.maxBackups}
+                          onChange={(event) => setBackupSchedule((prev) => ({ ...prev, maxBackups: parseInt(event.target.value) || 10 }))}
+                        />
+                      </label>
+                    </div>
+
+                    <div style={{ marginTop: '1rem' }}>
+                      <p style={{ marginBottom: '0.5rem', fontWeight: '500' }}>Wochentage ausw?hlen:</p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.5rem' }}>
+                        {['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'].map((day) => (
+                          <label key={day} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <input
+                              type="checkbox"
+                              checked={backupSchedule.days.includes(day)}
+                              onChange={(event) => {
+                                if (event.target.checked) {
+                                  setBackupSchedule((prev) => ({ ...prev, days: [...prev.days, day] }))
+                                } else {
+                                  setBackupSchedule((prev) => ({ ...prev, days: prev.days.filter((d) => d !== day) }))
+                                }
+                              }}
+                            />
+                            {day}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button type="button" className="primary-button" onClick={saveBackupSchedule} style={{ marginTop: '1rem' }}>
+                      Zeitplan speichern
+                    </button>
+                  </>
+                )}
               </div>
 
               <div className="form-card">
