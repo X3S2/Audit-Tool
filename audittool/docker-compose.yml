@@ -1,7 +1,7 @@
-version: '3.9'
+﻿version: '3.9'
 
 services:
-  audit-postgres:
+  audittool-postgres-db:
     image: postgres:16-alpine
     container_name: audittool-postgres-db
     restart: unless-stopped
@@ -13,8 +13,10 @@ services:
       - "5432:5432"
     volumes:
       - audit_postgres_data:/var/lib/postgresql/data
+    networks:
+      - audittool-network
 
-  audit-backend:
+  audittool-backend-api:
     build:
       context: ..
       dockerfile: audittool/Dockerfile.backend
@@ -22,16 +24,18 @@ services:
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: Host=audit-postgres;Database=${POSTGRES_DB:-audittool};Username=${POSTGRES_USER:-audittool};Password=${POSTGRES_PASSWORD:-AuditTool!2026}
+      ConnectionStrings__DefaultConnection: Host=audittool-postgres-db;Database=${POSTGRES_DB:-audittool};Username=${POSTGRES_USER:-audittool};Password=${POSTGRES_PASSWORD:-AuditTool!2026}
       Jwt__Key: ${JWT_KEY:-AuditTool-Dev-Key-Change-me-in-production-1234567890}
       Jwt__Issuer: ${JWT_ISSUER:-audit-tool}
       Jwt__Audience: ${JWT_AUDIENCE:-audit-tool-clients}
     ports:
       - "5050:8080"
     depends_on:
-      - audit-postgres
+      - audittool-postgres-db
+    networks:
+      - audittool-network
 
-  audit-frontend:
+  audittool-frontend-ui:
     build:
       context: ..
       dockerfile: audittool/Dockerfile.frontend
@@ -40,8 +44,13 @@ services:
     ports:
       - "4714:80"
     depends_on:
-      - audit-backend
+      - audittool-backend-api
+    networks:
+      - audittool-network
 
 volumes:
   audit_postgres_data:
 
+networks:
+  audittool-network:
+    driver: bridge

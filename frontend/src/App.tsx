@@ -158,7 +158,7 @@ function App() {
   const [imageGalleryObject, setImageGalleryObject] = useState<AuditObject | null>(null)
   const [galleryImages, setGalleryImages] = useState<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>([])
   const [imageUploadLoading, setImageUploadLoading] = useState(false)
-  const [loginForm, setLoginForm] = useState({ username: 'superadmin', password: 'Password123!' })
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' })
   const [siteForm, setSiteForm] = useState({ categoryId: '1', name: '', address: '', phone: '', caretakerPhone: '' })
   const [roomForm, setRoomForm] = useState({ siteId: '1', name: '', description: '', capacity: '', area: '', notes: '' })

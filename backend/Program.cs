@@ -1118,8 +1118,8 @@ public sealed class UserStore
 
     private static List<AppUser> CreateDefaultUsers() => new()
     {
-        new AppUser(1, "superadmin", "Password123!", "Superadmin", "Superadmin"),
-        new AppUser(2, "admin", "Password123!", "Admin", "Administrator"),
+        new AppUser(1, "superadmin", "AuditTool!2026", "Superadmin", "Superadmin"),
+        new AppUser(2, "admin", "AuditTool!2026", "Admin", "Administrator"),
         new AppUser(3, "user", "Password123!", "Benutzer", "Standard Nutzer"),
         new AppUser(4, "azubi", "Password123!", "Azubi", "Auszubildender")
     };

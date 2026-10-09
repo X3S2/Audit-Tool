@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.6.2] - 2026-10-09
+
+### Bugfix
+- **Login-Fehler behoben**: Default-Passwörter korrigiert
+  - superadmin/admin: `Password123!` → `AuditTool!2026`
+  - user/azubi: `Password123!` (unverändert)
+- **docker-compose.yml fixes**:
+  - Service-Namen korrigiert: `audit-postgres` → `audittool-postgres-db`
+  - Connection String: Host und Passwort-Placeholder entfernt
+  - Explizites Docker-Netzwerk hinzugefügt (`audittool-network`)
+  - Bessere Service-Abhängigkeiten
+- **Frontend-Login-Form**: Standard-Werte geleert (waren: "superadmin" / "Password123!")
+- **README.md**: Test-Account-Tabelle hinzugefügt für alle 4 Standard-Benutzer
+
+### Status
+- ✅ Login funktioniert korrekt
+- ✅ Docker-Container-Kommunikation funktioniert
+- ✅ Alle Default-Benutzer erreichbar
+
 ## [1.6.1] - 2026-10-09
 
 ### Hinzugefügt

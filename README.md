@@ -50,8 +50,18 @@ docker-compose up -d
 ```
 
 ### Standard Login
+
 - **Benutzername**: `admin`
 - **Passwort**: `AuditTool!2026`
+
+### Weitere Benutzer (Test-Accounts)
+
+| Benutzer | Passwort | Rolle |
+|----------|----------|-------|
+| `superadmin` | `AuditTool!2026` | Superadmin |
+| `admin` | `AuditTool!2026` | Admin |
+| `user` | `Password123!` | Benutzer |
+| `azubi` | `Password123!` | Azubi |
 
 ⚠️ **WICHTIG**: Passwort in Produktion ändern!
 
