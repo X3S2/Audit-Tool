@@ -91,6 +91,7 @@ builder.Services.AddSingleton(userStore);
 builder.Services.AddSingleton(auditStore);
 builder.Services.AddSingleton(new BackupStore(backupDirectory, userStore));
 builder.Services.AddSingleton<BackupScheduleStore>();
+builder.Services.AddHostedService<BackupService>();
 
 var app = builder.Build();
 
