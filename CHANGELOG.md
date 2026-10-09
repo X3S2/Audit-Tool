@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.3] - 2026-10-09
+
+### Bugfix
+- **CORS Policy korrigiert**: `localhost:4714` hinzugefügt (Frontend-Port)
+  - OPTIONS requests werden jetzt korrekt antwortet
+  - Cross-Origin Requests vom Frontend funktionieren
+- **Login-Form**: Placeholders entfernt
+  - Benutzername-Feld: komplett leer
+  - Passwort-Feld: komplett leer
+
+### Status
+- ✅ CORS Preflight (OPTIONS) funktioniert
+- ✅ Login vom Browser funktioniert
+- ✅ POST /api/auth/login nicht mehr blockiert
+
 ## [1.6.2] - 2026-10-09
 
 ### Bugfix
