@@ -153,6 +153,9 @@ function App() {
   const [users, setUsers] = useState<User[]>([])
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [exportSiteId, setExportSiteId] = useState('1')
+  const [imageGalleryObject, setImageGalleryObject] = useState<AuditObject | null>(null)
+  const [galleryImages, setGalleryImages] = useState<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>([])
+  const [imageUploadLoading, setImageUploadLoading] = useState(false)
   const [loginForm, setLoginForm] = useState({ username: 'superadmin', password: 'Password123!' })
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' })
   const [siteForm, setSiteForm] = useState({ categoryId: '1', name: '', address: '', phone: '', caretakerPhone: '' })
@@ -175,6 +178,23 @@ function App() {
     document.body.dataset.theme = theme
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    if (!session || !imageGalleryObject) {
+      return
+    }
+
+    const loadGalleryImages = async () => {
+      try {
+        const images = await apiRequest<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>(`/api/objects/${imageGalleryObject.id}/images`, session)
+        setGalleryImages(images)
+      } catch (apiError) {
+        setError(apiError instanceof Error ? apiError.message : 'Bilder konnten nicht geladen werden.')
+      }
+    }
+
+    void loadGalleryImages()
+  }, [session, imageGalleryObject])
 
   useEffect(() => {
     if (!session) {
@@ -607,6 +627,40 @@ function App() {
       setChecklistForm({ auditId: '', question: '', answer: '', status: 'offen' })
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Checklistenpunkt konnte nicht gespeichert werden.')
+    }
+  }
+
+  const handleImageGalleryUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!session || !imageGalleryObject || !event.target.files || event.target.files.length === 0) {
+      return
+    }
+
+    const file = event.target.files[0]
+    setImageUploadLoading(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch(`http://localhost:5050/api/objects/${imageGalleryObject.id}/images`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.token}` },
+        body: formData
+      })
+
+      if (!response.ok) {
+        const errorData = (await response.json()) as { message?: string }
+        throw new Error(errorData.message || `Upload fehlgeschlagen: ${response.statusText}`)
+      }
+
+      const images = await apiRequest<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>(`/api/objects/${imageGalleryObject.id}/images`, session)
+      setGalleryImages(images)
+      setError('')
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Bild konnte nicht hochgeladen werden.')
+    } finally {
+      setImageUploadLoading(false)
+      event.target.value = ''
     }
   }
 
@@ -1103,6 +1157,7 @@ function App() {
                     <th>Raum</th>
                     <th>Typ</th>
                     <th>Status</th>
+                    <th>Aktion</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1112,10 +1167,80 @@ function App() {
                       <td>{roomNameById[objectEntry.roomId] ?? 'Unbekannt'}</td>
                       <td>{objectEntry.objectType}</td>
                       <td>{objectEntry.status}</td>
+                      <td>
+                        <button className="secondary-button" onClick={() => setImageGalleryObject(objectEntry)}>
+                          Bilder verwalten
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+
+              {imageGalleryObject && (
+                <div className="form-card" style={{ marginTop: '2rem', borderLeft: '4px solid #2196F3' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                    <h4>Bilder: {imageGalleryObject.name}</h4>
+                    <button className="secondary-button" onClick={() => setImageGalleryObject(null)}>
+                      Schließen
+                    </button>
+                  </div>
+
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label>
+                      Neues Bild hochladen:
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageGalleryUpload}
+                        disabled={imageUploadLoading}
+                        style={{ display: 'block', marginTop: '0.5rem' }}
+                      />
+                    </label>
+                    {imageUploadLoading && <p style={{ color: '#FFC107', marginTop: '0.5rem' }}>⏳ Bild wird komprimiert und hochgeladen...</p>}
+                  </div>
+
+                  <div>
+                    <h5>Hochgeladene Bilder ({galleryImages.length})</h5>
+                    {galleryImages.length === 0 ? (
+                      <p style={{ color: '#999' }}>Keine Bilder vorhanden. Laden Sie eines hoch, um zu beginnen.</p>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
+                        {galleryImages.map((image) => (
+                          <div
+                            key={image.name}
+                            style={{
+                              border: '1px solid #ddd',
+                              borderRadius: '4px',
+                              overflow: 'hidden',
+                              backgroundColor: '#f9f9f9'
+                            }}
+                          >
+                            <img
+                              src={`http://localhost:5050/api/objects/${imageGalleryObject.id}/images/${image.name}`}
+                              alt={image.name}
+                              style={{
+                                width: '100%',
+                                height: '180px',
+                                objectFit: 'cover',
+                                display: 'block'
+                              }}
+                            />
+                            <div style={{ padding: '0.75rem' }}>
+                              <p style={{ fontSize: '0.85rem', margin: '0 0 0.25rem 0', wordBreak: 'break-all', fontWeight: '500' }}>
+                                {image.name}
+                              </p>
+                              <p style={{ fontSize: '0.75rem', color: '#666', margin: 0 }}>
+                                {(image.sizeBytes / 1024).toFixed(1)} KB • {new Date(image.createdAtUtc).toLocaleDateString('de-DE')}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <form className="form-card" onSubmit={createObject}>
                 <h4>Neues Objekt anlegen</h4>
