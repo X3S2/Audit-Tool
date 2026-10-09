@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Data.Sqlite;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +16,7 @@ var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "audit-tool-clients";
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
+builder.Services.AddAntiforgery();
 
 builder.Services.AddCors(options =>
 {
@@ -69,12 +71,21 @@ builder.Services.AddAuthorization(options =>
         policy.RequireRole("Superadmin"));
 });
 
-var backupDirectory = Path.Combine(builder.Environment.ContentRootPath, "..", "storage", "backups");
+var storageDirectory = Path.Combine(builder.Environment.ContentRootPath, "..", "storage");
+var backupDirectory = Path.Combine(storageDirectory, "backups");
+var uploadDirectory = Path.Combine(storageDirectory, "uploads");
+Directory.CreateDirectory(storageDirectory);
 Directory.CreateDirectory(backupDirectory);
+Directory.CreateDirectory(uploadDirectory);
 
-builder.Services.AddSingleton(new UserStore());
-builder.Services.AddSingleton(new AuditStore());
-builder.Services.AddSingleton(new BackupStore(backupDirectory));
+var appDatabase = new AppDatabase(Path.Combine(storageDirectory, "audit-tool.db"));
+var userStore = new UserStore(appDatabase);
+var auditStore = new AuditStore(appDatabase);
+
+builder.Services.AddSingleton(appDatabase);
+builder.Services.AddSingleton(userStore);
+builder.Services.AddSingleton(auditStore);
+builder.Services.AddSingleton(new BackupStore(backupDirectory, userStore));
 
 var app = builder.Build();
 
@@ -87,6 +98,7 @@ app.UseRouting();
 app.UseCors("FrontendPolicy");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 
 app.MapGet("/api/health", () => Results.Ok(new
 {
@@ -109,7 +121,7 @@ app.MapPost("/api/auth/login", (LoginRequest request, UserStore users) =>
         return Results.Unauthorized();
     }
 
-    var token = CreateJwtToken(user, jwtKey, jwtIssuer, jwtAudience);
+    var token = TokenHelper.CreateJwtToken(user, jwtKey, jwtIssuer, jwtAudience);
     return Results.Ok(new
     {
         token,
@@ -203,6 +215,60 @@ app.MapPost("/api/objects", [Authorize(Policy = "RequireAdminAccess")] (CreateOb
 
     var obj = store.CreateObject(request.RoomId, request.Name, request.ObjectType ?? "Objekt", request.Status ?? "Gut", request.Notes ?? string.Empty);
     return Results.Ok(obj);
+});
+
+app.MapGet("/api/objects/{objectId:int}/images", [Authorize] (int objectId) =>
+{
+    var directory = Path.Combine(uploadDirectory, objectId.ToString());
+    if (!Directory.Exists(directory))
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+
+    var files = Directory.GetFiles(directory)
+        .Select(file => new
+        {
+            name = Path.GetFileName(file),
+            sizeBytes = new FileInfo(file).Length,
+            createdAtUtc = File.GetCreationTimeUtc(file)
+        })
+        .OrderByDescending(item => item.createdAtUtc)
+        .ToList();
+
+    return Results.Ok(files);
+});
+
+app.MapPost("/api/objects/{objectId:int}/images", [Authorize] async (int objectId, HttpRequest request) =>
+{
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { message = "Bitte eine Bilddatei auswählen." });
+    }
+
+    var form = await request.ReadFormAsync();
+    var file = form.Files["file"];
+    if (file is null || file.Length <= 0)
+    {
+        return Results.BadRequest(new { message = "Bitte eine Bilddatei auswählen." });
+    }
+
+    if (file.Length > 5 * 1024 * 1024)
+    {
+        return Results.BadRequest(new { message = "Das Bild darf maximal 5 MB groß sein." });
+    }
+
+    var directory = Path.Combine(uploadDirectory, objectId.ToString());
+    Directory.CreateDirectory(directory);
+
+    var extension = Path.GetExtension(file.FileName);
+    var fileName = $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Path.GetFileNameWithoutExtension(file.FileName).Replace(' ', '_')}{extension}";
+    var fullPath = Path.Combine(directory, fileName);
+
+    await using var input = file.OpenReadStream();
+    await using var output = File.Create(fullPath);
+    await input.CopyToAsync(output);
+
+    return Results.Ok(new { fileName, sizeBytes = new FileInfo(fullPath).Length, createdAtUtc = DateTime.UtcNow });
 });
 
 app.MapGet("/api/audits", [Authorize] (AuditStore store) => Results.Ok(store.Audits.Select(audit => new AuditInstanceSummary(audit.Id, audit.SiteId, audit.Title, audit.TemplateId, audit.TemplateName, audit.CreatedBy, audit.CreatedAtUtc, audit.Status, audit.ChecklistEntries.Count())).ToList()));
@@ -343,96 +409,123 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
 
 app.Run();
 
-static string CreateJwtToken(AppUser user, string jwtKey, string jwtIssuer, string jwtAudience)
+public sealed class AppDatabase
 {
-    var claims = new[]
+    private readonly string _databasePath;
+
+    public AppDatabase(string databasePath)
     {
-        new Claim(JwtRegisteredClaimNames.Sub, user.UserName),
-        new Claim(ClaimTypes.Name, user.UserName),
-        new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-        new Claim(ClaimTypes.Role, user.Role)
-    };
+        _databasePath = databasePath;
+        var directory = Path.GetDirectoryName(databasePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
 
-    var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
-    var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-    var expiresAt = DateTime.UtcNow.AddHours(8);
+        EnsureCreated();
+    }
 
-    var token = new JwtSecurityToken(
-        issuer: jwtIssuer,
-        audience: jwtAudience,
-        claims: claims,
-        expires: expiresAt,
-        signingCredentials: credentials
-    );
+    public string ConnectionString => $"Data Source={_databasePath};";
 
-    return new JwtSecurityTokenHandler().WriteToken(token);
+    public T Load<T>(string key, T fallback)
+    {
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT payload FROM app_state WHERE key = @key";
+        command.Parameters.AddWithValue("@key", key);
+
+        var result = command.ExecuteScalar();
+        if (result is null || result is DBNull)
+        {
+            return fallback;
+        }
+
+        var payload = result.ToString();
+        return payload is null ? fallback : JsonSerializer.Deserialize<T>(payload) ?? fallback;
+    }
+
+    public void Save(string key, object value)
+    {
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            INSERT INTO app_state (key, payload)
+            VALUES (@key, @payload)
+            ON CONFLICT(key) DO UPDATE SET payload = excluded.payload;";
+        command.Parameters.AddWithValue("@key", key);
+        command.Parameters.AddWithValue("@payload", JsonSerializer.Serialize(value));
+        command.ExecuteNonQuery();
+    }
+
+    private void EnsureCreated()
+    {
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL
+            );";
+        command.ExecuteNonQuery();
+    }
+}
+
+public static class TokenHelper
+{
+    public static string CreateJwtToken(AppUser user, string jwtKey, string jwtIssuer, string jwtAudience)
+    {
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.UserName),
+            new Claim(ClaimTypes.Name, user.UserName),
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Role, user.Role)
+        };
+
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+        var expiresAt = DateTime.UtcNow.AddHours(8);
+
+        var token = new JwtSecurityToken(
+            issuer: jwtIssuer,
+            audience: jwtAudience,
+            claims: claims,
+            expires: expiresAt,
+            signingCredentials: credentials
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
 }
 
 public sealed class AuditStore
 {
-    private readonly List<AuditCategory> _categories = new()
-    {
-        new AuditCategory(1, "Grundschulen", "Standorte für Schuleinrichtungen"),
-        new AuditCategory(2, "Berufsschulen", "Berufliche Ausbildungsstätten"),
-        new AuditCategory(3, "Technik", "Technische Anlagen und Werkstätten")
-    };
+    private readonly AppDatabase _database;
+    private readonly List<AuditCategory> _categories;
+    private readonly List<AuditSite> _sites;
+    private readonly List<AuditTemplate> _templates;
+    private readonly List<AuditRoom> _rooms;
+    private readonly List<AuditObject> _objects;
+    private readonly List<AuditInstance> _audits;
+    private readonly List<AuditChecklistEntry> _checklistEntries;
 
-    private readonly List<AuditSite> _sites = new()
+    public AuditStore(AppDatabase database)
     {
-        new AuditSite(1, 1, "Goldberg HS", "Musterstraße 12, Berlin", "030 1234567", "030 7654321", true),
-        new AuditSite(2, 2, "Steinweg Berufsschule", "Industriestraße 7, Hamburg", "040 4445566", "040 9988776", true),
-        new AuditSite(3, 3, "Nordsee Werkstätten", "Küstenweg 3, Kiel", "0431 112233", "0431 445566", false)
-    };
-
-    private readonly List<AuditTemplate> _templates = new()
-    {
-        new AuditTemplate(1, "Gebäudebewertung", "Standardtemplate für Prüfungen und Einträge", new[]
-        {
-            new TemplateField(1, "Raumname", "text", 1, true),
-            new TemplateField(2, "Zustand", "dropdown", 2, true),
-            new TemplateField(3, "Kommentar", "textarea", 3, false)
-        }),
-        new AuditTemplate(2, "Räume & Objekte", "Raumbezogene Auditvorlage", new[]
-        {
-            new TemplateField(4, "Objektname", "text", 1, true),
-            new TemplateField(5, "Anzahl", "number", 2, true),
-            new TemplateField(6, "Prüfstatus", "checkbox", 3, true)
-        })
-    };
-
-    private readonly List<AuditRoom> _rooms = new()
-    {
-        new AuditRoom(1, 1, "Haupthalle", "Zentraler Prüfbereich", "240", "960", "A-07"),
-        new AuditRoom(2, 1, "Werkstatt 1", "Maschinen und Materiallager", "90", "320", "B-02"),
-        new AuditRoom(3, 2, "Lehrlabor 3", "Prüfbereich mit Geräten", "52", "180", "C-11")
-    };
-
-    private readonly List<AuditObject> _objects = new()
-    {
-        new AuditObject(1, 1, "Feuerlöscher", "Sicherheit", "Gut", "Regelmäßig geprüft"),
-        new AuditObject(2, 1, "Arbeitstisch", "Einrichtung", "Aktion erforderlich", "Schraube gelockert"),
-        new AuditObject(3, 3, "Messtechnik", "Gerät", "Gut", "Letzte Prüfung vor 2 Wochen")
-    };
-
-    private readonly List<AuditInstance> _audits = new()
-    {
-        new AuditInstance(1, 1, 1, "Jahresaudit Gebäude A", "Gebäudebewertung", "superadmin", DateTime.UtcNow.AddDays(-6), "In Bearbeitung", new[]
-        {
-            new AuditChecklistEntry(1, 1, 1, "Raumname", "Haupthalle", "ok"),
-            new AuditChecklistEntry(2, 1, 2, "Zustand", "Gut", "ok")
-        }),
-        new AuditInstance(2, 2, 2, "Audit Schulungsräume", "Räume & Objekte", "admin", DateTime.UtcNow.AddDays(-2), "Erfasst", new[]
-        {
-            new AuditChecklistEntry(3, 2, 4, "Objektname", "Messtechnik", "ok")
-        })
-    };
-
-    private readonly List<AuditChecklistEntry> _checklistEntries = new()
-    {
-        new AuditChecklistEntry(1, 1, 1, "Raumname", "Haupthalle", "ok"),
-        new AuditChecklistEntry(2, 1, 2, "Zustand", "Gut", "ok"),
-        new AuditChecklistEntry(3, 2, 4, "Objektname", "Messtechnik", "ok")
-    };
+        _database = database;
+        _categories = _database.Load("audit_categories", CreateInitialCategories());
+        _sites = _database.Load("audit_sites", CreateInitialSites());
+        _templates = _database.Load("audit_templates", CreateInitialTemplates());
+        _rooms = _database.Load("audit_rooms", CreateInitialRooms());
+        _objects = _database.Load("audit_objects", CreateInitialObjects());
+        _audits = _database.Load("audit_instances", CreateInitialAudits());
+        _checklistEntries = _database.Load("audit_checklist_entries", CreateInitialChecklistEntries());
+    }
 
     public IReadOnlyList<AuditCategory> Categories => _categories;
     public IReadOnlyList<AuditSite> Sites => _sites;
@@ -441,11 +534,23 @@ public sealed class AuditStore
     public IReadOnlyList<AuditObject> Objects => _objects;
     public IReadOnlyList<AuditInstance> Audits => _audits;
 
+    private void Persist()
+    {
+        _database.Save("audit_categories", _categories);
+        _database.Save("audit_sites", _sites);
+        _database.Save("audit_templates", _templates);
+        _database.Save("audit_rooms", _rooms);
+        _database.Save("audit_objects", _objects);
+        _database.Save("audit_instances", _audits);
+        _database.Save("audit_checklist_entries", _checklistEntries);
+    }
+
     public AuditCategory CreateCategory(string name, string description)
     {
         var id = _categories.Count == 0 ? 1 : _categories.Max(x => x.Id) + 1;
         var category = new AuditCategory(id, name, description);
         _categories.Add(category);
+        Persist();
         return category;
     }
 
@@ -454,6 +559,7 @@ public sealed class AuditStore
         var id = _sites.Count == 0 ? 1 : _sites.Max(x => x.Id) + 1;
         var site = new AuditSite(id, categoryId, name, address, phone, caretakerPhone, true);
         _sites.Add(site);
+        Persist();
         return site;
     }
 
@@ -467,6 +573,7 @@ public sealed class AuditStore
 
         var template = new AuditTemplate(id, name, description, templateFields);
         _templates.Add(template);
+        Persist();
         return template;
     }
 
@@ -475,6 +582,7 @@ public sealed class AuditStore
         var id = _rooms.Count == 0 ? 1 : _rooms.Max(x => x.Id) + 1;
         var room = new AuditRoom(id, siteId, name, description, capacity, area, notes);
         _rooms.Add(room);
+        Persist();
         return room;
     }
 
@@ -483,6 +591,7 @@ public sealed class AuditStore
         var id = _objects.Count == 0 ? 1 : _objects.Max(x => x.Id) + 1;
         var obj = new AuditObject(id, roomId, name, objectType, status, notes);
         _objects.Add(obj);
+        Persist();
         return obj;
     }
 
@@ -491,6 +600,7 @@ public sealed class AuditStore
         var id = _audits.Count == 0 ? 1 : _audits.Max(x => x.Id) + 1;
         var audit = new AuditInstance(id, siteId, templateId, title, templateName, createdBy, DateTime.UtcNow, "In Bearbeitung", Array.Empty<AuditChecklistEntry>());
         _audits.Add(audit);
+        Persist();
         return audit;
     }
 
@@ -509,17 +619,84 @@ public sealed class AuditStore
             _audits[index] = replaced;
         }
 
+        Persist();
         return entry;
     }
+
+    private static List<AuditCategory> CreateInitialCategories() => new()
+    {
+        new AuditCategory(1, "Grundschulen", "Standorte für Schuleinrichtungen"),
+        new AuditCategory(2, "Berufsschulen", "Berufliche Ausbildungsstätten"),
+        new AuditCategory(3, "Technik", "Technische Anlagen und Werkstätten")
+    };
+
+    private static List<AuditSite> CreateInitialSites() => new()
+    {
+        new AuditSite(1, 1, "Goldberg HS", "Musterstraße 12, Berlin", "030 1234567", "030 7654321", true),
+        new AuditSite(2, 2, "Steinweg Berufsschule", "Industriestraße 7, Hamburg", "040 4445566", "040 9988776", true),
+        new AuditSite(3, 3, "Nordsee Werkstätten", "Küstenweg 3, Kiel", "0431 112233", "0431 445566", false)
+    };
+
+    private static List<AuditTemplate> CreateInitialTemplates() => new()
+    {
+        new AuditTemplate(1, "Gebäudebewertung", "Standardtemplate für Prüfungen und Einträge", new[]
+        {
+            new TemplateField(1, "Raumname", "text", 1, true),
+            new TemplateField(2, "Zustand", "dropdown", 2, true),
+            new TemplateField(3, "Kommentar", "textarea", 3, false)
+        }),
+        new AuditTemplate(2, "Räume & Objekte", "Raumbezogene Auditvorlage", new[]
+        {
+            new TemplateField(4, "Objektname", "text", 1, true),
+            new TemplateField(5, "Anzahl", "number", 2, true),
+            new TemplateField(6, "Prüfstatus", "checkbox", 3, true)
+        })
+    };
+
+    private static List<AuditRoom> CreateInitialRooms() => new()
+    {
+        new AuditRoom(1, 1, "Haupthalle", "Zentraler Prüfbereich", "240", "960", "A-07"),
+        new AuditRoom(2, 1, "Werkstatt 1", "Maschinen und Materiallager", "90", "320", "B-02"),
+        new AuditRoom(3, 2, "Lehrlabor 3", "Prüfbereich mit Geräten", "52", "180", "C-11")
+    };
+
+    private static List<AuditObject> CreateInitialObjects() => new()
+    {
+        new AuditObject(1, 1, "Feuerlöscher", "Sicherheit", "Gut", "Regelmäßig geprüft"),
+        new AuditObject(2, 1, "Arbeitstisch", "Einrichtung", "Aktion erforderlich", "Schraube gelockert"),
+        new AuditObject(3, 3, "Messtechnik", "Gerät", "Gut", "Letzte Prüfung vor 2 Wochen")
+    };
+
+    private static List<AuditInstance> CreateInitialAudits() => new()
+    {
+        new AuditInstance(1, 1, 1, "Jahresaudit Gebäude A", "Gebäudebewertung", "superadmin", DateTime.UtcNow.AddDays(-6), "In Bearbeitung", new[]
+        {
+            new AuditChecklistEntry(1, 1, 1, "Raumname", "Haupthalle", "ok"),
+            new AuditChecklistEntry(2, 1, 2, "Zustand", "Gut", "ok")
+        }),
+        new AuditInstance(2, 2, 2, "Audit Schulungsräume", "Räume & Objekte", "admin", DateTime.UtcNow.AddDays(-2), "Erfasst", new[]
+        {
+            new AuditChecklistEntry(3, 2, 4, "Objektname", "Messtechnik", "ok")
+        })
+    };
+
+    private static List<AuditChecklistEntry> CreateInitialChecklistEntries() => new()
+    {
+        new AuditChecklistEntry(1, 1, 1, "Raumname", "Haupthalle", "ok"),
+        new AuditChecklistEntry(2, 1, 2, "Zustand", "Gut", "ok"),
+        new AuditChecklistEntry(3, 2, 4, "Objektname", "Messtechnik", "ok")
+    };
 }
 
 public sealed class BackupStore
 {
     private readonly string _folderPath;
+    private readonly UserStore _userStore;
 
-    public BackupStore(string folderPath)
+    public BackupStore(string folderPath, UserStore userStore)
     {
         _folderPath = folderPath;
+        _userStore = userStore;
         Directory.CreateDirectory(_folderPath);
     }
 
@@ -556,8 +733,7 @@ public sealed class BackupStore
             rooms = store.Rooms,
             objects = store.Objects,
             audits = store.Audits,
-            users = new UserStore().All.Select(user => new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive })
-        };
+            users = _userStore.All.Select(user => new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive })        };
 
         var entry = archive.CreateEntry("backup/manifest.json");
         using var stream = new StreamWriter(entry.Open(), Encoding.UTF8);
@@ -603,13 +779,14 @@ public sealed class BackupStore
 
 public sealed class UserStore
 {
-    private readonly List<AppUser> _users = new()
+    private readonly AppDatabase _database;
+    private readonly List<AppUser> _users;
+
+    public UserStore(AppDatabase database)
     {
-        new AppUser(1, "superadmin", "Password123!", "Superadmin", "Superadmin"),
-        new AppUser(2, "admin", "Password123!", "Admin", "Administrator"),
-        new AppUser(3, "user", "Password123!", "Benutzer", "Standard Nutzer"),
-        new AppUser(4, "azubi", "Password123!", "Azubi", "Auszubildender")
-    };
+        _database = database;
+        _users = _database.Load("app_users", CreateDefaultUsers());
+    }
 
     public IEnumerable<AppUser> All => _users;
 
@@ -631,8 +808,17 @@ public sealed class UserStore
         var nextId = _users.Count == 0 ? 1 : _users.Max(x => x.Id) + 1;
         var user = new AppUser(nextId, userName, password, role, displayName ?? userName);
         _users.Add(user);
+        _database.Save("app_users", _users);
         return user;
     }
+
+    private static List<AppUser> CreateDefaultUsers() => new()
+    {
+        new AppUser(1, "superadmin", "Password123!", "Superadmin", "Superadmin"),
+        new AppUser(2, "admin", "Password123!", "Admin", "Administrator"),
+        new AppUser(3, "user", "Password123!", "Benutzer", "Standard Nutzer"),
+        new AppUser(4, "azubi", "Password123!", "Azubi", "Auszubildender")
+    };
 }
 
 public sealed record AppUser(int Id, string UserName, string Password, string Role, string DisplayName)

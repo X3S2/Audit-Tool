@@ -9,5 +9,6 @@ backend/obj/
 .DS_Store
 storage/backups/*
 storage/exports/*
+storage/*.db
 !storage/backups/.gitkeep
 !storage/exports/.gitkeep

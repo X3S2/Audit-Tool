@@ -6,8 +6,8 @@ Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checkl
 - Stack: React + TypeScript + ASP.NET Core + PostgreSQL
 - Ziel: produktive erste Version mit allen Kernfunktionen
 - Login-Timeout: 8 Stunden; nach Ablauf erfolgt automatische Abmeldung
-- Port: 4714 für die Produktiv-URL, lokale Entwicklung nutzt 5050 API und 5173 Frontend
-- Status: Kernfunktionen für Standorte, Räume, Objekte, Audits, Backup und ZIP-Export erweitert
+- Port: 4714 für die Produktiv-URL, lokale Entwicklung nutzt 5050 API und 5173/5174 Frontend (5173 falls frei, sonst Vite fallback 5174)
+- Status: Kernfunktionen für Standorte, Räume, Objekte, Audits, Backup, ZIP-Export, Bild-Uploads und echte SQLite-Persistenz erweitert
 
 ## Schnellstart
 
@@ -29,7 +29,7 @@ Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checkl
    npm run dev -- --host 0.0.0.0
    ```
 3. Browser öffnen:
-   - Frontend: http://localhost:5173
+   - Frontend: http://localhost:5173 (falls belegt: http://localhost:5174)
    - Backend Swagger: http://localhost:5050/swagger
 
 ### Docker-Start
@@ -51,6 +51,7 @@ Vor jedem GitPush muss die folgende Liste abgearbeitet sein:
 - [ ] Changelog aktualisiert
 - [ ] Versionierung angepasst
 - [ ] Backend kompiliert ohne Fehler
+- [ ] SQLite-Persistenz für Kernfunktionen validiert
 - [ ] Frontend buildet ohne Fehler
 - [ ] Docker Compose validiert
 - [ ] Auth/Rollen geprüft

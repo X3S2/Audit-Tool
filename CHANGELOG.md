@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.1.2] - 2026-10-09
+
+### Hinzugefügt
+- Echte SQLite-Persistenz für Nutzer- und Auditdaten
+- Datenbankbasierte Speicherung von Kategorien, Standorten, Templates, Räumen, Objekten und Audits
+- Persistenter Seed- und Wiederherstellungszustand für Kernfunktionen
+
+### Geändert
+- UserStore und AuditStore von in-memory auf SQLite-Backed Store umgestellt
+- README und Projektstatus um persistente Datenbasis erweitert
+
+### Behoben
+- Datenverlust beim Neustart bzw. Prozessrestart verhindert
+- Admin-/Audit-Flows bleiben nach Server-Neustarts konsistent nutzbar
+
+## [0.1.1] - 2026-10-09
+
+### Hinzugefügt
+- Stabilisierung der Upload- und Bild-Workflow-API für Objektbilder
+- Laufzeit- und Smoke-Check für Health-Endpoint und Login-Flow dokumentiert
+
+### Geändert
+- Frontend- und Backend-Startpunkte für lokale Nutzung auf die aktuelle Laufzeitumgebung angepasst
+- README-Status mit aktuellen Laufzeit- und Produktivhinweisen ergänzt
+
+### Behoben
+- Objektbild-Upload via multipart form-data stabilisiert, damit Bild-Uploads nicht mehr mit 400 Bad Request abbricht
+- Builder-/Runtime-Blocker durch alte Backend-Prozesse beseitigt
+
 ## [0.1.0] - 2026-10-09
 
 ### Hinzugefügt
