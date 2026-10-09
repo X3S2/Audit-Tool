@@ -33,7 +33,7 @@
 - ✅ Audit Logging & Diagnostics
 - ✅ Input Validation & XSS Protection
 
-### Phase 4: UI/UX Modernisierung (v1.6.2 - v1.7.0)
+### Phase 4: UI/UX Modernisierung & Bugfixes (v1.6.2 - v1.7.1)
 - ✅ v1.6.2: Login-Fehler behoben, Docker-Compose korrigiert
 - ✅ v1.6.3: CORS-Policy erweitert, Formular-Placeholders entfernt
 - ✅ v1.7.0: Komponenten-basierte Architektur
@@ -46,4 +46,13 @@
   - ✅ Admin-Seite mit 4 Tabs (Benutzer, Backup, Export, Logs)
   - ✅ Error-Banner nur bei echten Fehlern (nicht on fresh load)
 
-## ✅ Alle Core-Features komplett implementiert und produktionsreif!
+- ✅ v1.7.1: Kritische Bugfixes & UI-Improvements
+  - ✅ Navigation: Admin-Subpages persistent klickbar (Expand/Collapse State)
+  - ✅ Dashboard: 72%-Bug behoben (zeigt jetzt Audit-Count)
+  - ✅ API: GET /api/objects entfernt (405-Fehler behoben)
+  - ⏳ Buttons & Design: Modernisierung geplant für v1.7.2
+  - ⏳ Header: Seitentitel & Menu-Toggle geplant für v1.7.2
+  - ⏳ Passwort-Button: Funktionalität vorhanden, Design-Improvements geplant
+
+## ✅ Alle Core-Features komplett & produktionsreif v1.7.1!
+### 🎯 Nächste Phase: v1.7.2 - Button/Design Modernisierung (noch zu tun)

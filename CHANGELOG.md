@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.7.1] - 2026-10-09
+
+### Bugfix & Navigation Improvements
+
+#### Navigation Fixes
+- **Admin-Subpages jetzt persistent klickbar**
+  - Navigation State: `Set<string>` statt `string | null`
+  - Expand/Collapse für alle Seiten erhaltbar
+  - Subpage-Wechsel ohne Collapse
+  - Benutzer, Backup, Export, Logs im Admin-Menü korrekt navigierbar
+
+#### Dashboard Fixes
+- **72%-Bug behoben**: Hardcodierter Wert entfernt
+  - Dashboard zeigt jetzt: Standorte, Kategorien, Vorlagen, Audits (Count)
+  - Dynamische Daten statt Placeholder-Prozentsatz
+
+#### API Fixes
+- **GET /api/objects entfernt**: 405-Fehler behoben
+  - Frontend: Unnötige GET-Anfrage entfernt
+  - Backend: Nur POST /api/objects wird verwendet
+  - Brauchte objects nicht für die Anzeige
+
+#### Geplant für v1.7.2
+- ⏳ Buttons & Form-Controls: Modernes Design
+- ⏳ Header mit Seitentitel & Menu-Toggle
+- ⏳ CSS Overhaul für alle Seiten
+- ⏳ Passwort-Button: Design & UX Verbesserungen
+
+### Status
+- ✅ Navigation vollständig funktionsfähig
+- ✅ Alle Subpages klickbar
+- ✅ Dashboard zeigt korrekte Stats
+- ✅ API: Keine 405-Fehler mehr
+- ✅ Frontend Build: Successful (23 modules)
+- ✅ Docker Rebuild: Successful
+
 ## [1.7.0] - 2026-11-10
 
 ### Component Integration & UI Architecture Refactoring
@@ -71,7 +107,6 @@
 - ✅ Ready for Docker rebuild and testing
 - ✅ Toast CSS vorbereitet
 - ✅ Alle Build-Fehler behoben
-- ⏳ Error-Banner Toast-Migration (geplant für v1.7.1)
 
 ## [1.6.3] - 2026-10-09
 
