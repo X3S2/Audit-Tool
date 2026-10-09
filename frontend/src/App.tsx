@@ -164,6 +164,7 @@ function App() {
   })
   const [auditForm, setAuditForm] = useState({ siteId: '1', templateId: '1', title: '' })
   const [checklistForm, setChecklistForm] = useState({ auditId: '', question: '', answer: '', status: 'offen' })
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
 
   const categoryNameById = Object.fromEntries(categories.map((category) => [category.id, category.name]))
   const siteNameById = Object.fromEntries(sites.map((site) => [site.id, site.name]))
@@ -634,6 +635,42 @@ function App() {
       window.URL.revokeObjectURL(url)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'PDF konnte nicht exportiert werden.')
+    }
+  }
+
+  const changePassword = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!session) {
+      return
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setError('Die neuen Passwörter stimmen nicht überein.')
+      return
+    }
+
+    if (passwordForm.newPassword.length < 8) {
+      setError('Das Passwort muss mindestens 8 Zeichen lang sein.')
+      return
+    }
+
+    try {
+      const result = await apiRequest<{ success: boolean }>(`/api/users/${session.user.id}/change-password`, session, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword
+        })
+      })
+
+      if (result.success) {
+        setError('')
+        setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
+        alert('Passwort erfolgreich geändert.')
+      }
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Passwortänderung fehlgeschlagen.')
     }
   }
 
@@ -1265,6 +1302,10 @@ function App() {
                   <div className="value-box">{profile?.userName ?? activeSession.user.userName}</div>
                 </div>
                 <div>
+                  <label>Displayname</label>
+                  <div className="value-box">{profile?.displayName ?? activeSession.user.displayName}</div>
+                </div>
+                <div>
                   <label>Rolle</label>
                   <div className="value-box">{profile?.role ?? activeSession.user.role}</div>
                 </div>
@@ -1272,11 +1313,43 @@ function App() {
                   <label>Theme</label>
                   <div className="value-box">{theme === 'dark' ? 'Darkmode' : 'Whitemode'}</div>
                 </div>
-                <div>
-                  <label>Passwort</label>
-                  <div className="value-box">••••••••</div>
-                </div>
               </div>
+
+              <form className="form-card" onSubmit={changePassword}>
+                <h4>Passwort ändern</h4>
+                <div className="form-grid">
+                  <label className="full-width">
+                    Aktuelles Passwort
+                    <input
+                      type="password"
+                      value={passwordForm.currentPassword}
+                      onChange={(event) => setPasswordForm((previous) => ({ ...previous, currentPassword: event.target.value }))}
+                      required
+                    />
+                  </label>
+
+                  <label className="full-width">
+                    Neues Passwort
+                    <input
+                      type="password"
+                      value={passwordForm.newPassword}
+                      onChange={(event) => setPasswordForm((previous) => ({ ...previous, newPassword: event.target.value }))}
+                      required
+                    />
+                  </label>
+
+                  <label className="full-width">
+                    Neues Passwort bestätigen
+                    <input
+                      type="password"
+                      value={passwordForm.confirmPassword}
+                      onChange={(event) => setPasswordForm((previous) => ({ ...previous, confirmPassword: event.target.value }))}
+                      required
+                    />
+                  </label>
+                </div>
+                <button type="submit" className="primary-button">Passwort aktualisieren</button>
+              </form>
             </section>
           ) : null}
         </main>

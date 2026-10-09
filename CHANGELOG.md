@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-10-09
+
+### Hinzugefügt
+- Profil-Seite mit Passwortänderung für angemeldete Benutzer
+- Backend-Endpunkt PUT /api/users/{id}/change-password für Passwortänderung mit aktuellem Passwort-Verifizierung
+- Frontend-Formular für sichere Passwortänderung (Bestätigung, Mindestlänge 8 Zeichen)
+- Erweiterte Profil-Anzeige mit Displayname, Rolle und Theme-Status
+
+### Geändert
+- Admin-Passwort-Reset-Endpunkt um Success-Flag erweitert
+- Profil-Panel mit neuer Passwort-Änderungs-UI aktualisiert
+
+### Behoben
+- Keine bisher dokumentierten Fehler
+
 ## [0.2.1] - 2026-10-09
 
 ### Hinzugefügt

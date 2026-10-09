@@ -394,7 +394,36 @@ app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdmin
     }
 
     users.UpdatePassword(userId, request.NewPassword);
-    return Results.Ok(new { message = "Passwort erfolgreich zurückgesetzt." });
+    return Results.Ok(new { message = "Passwort erfolgreich zurückgesetzt.", success = true });
+});
+
+app.MapPut("/api/users/{userId:int}/change-password", [Authorize] (int userId, ChangePasswordRequest request, UserStore users, HttpContext httpContext) =>
+{
+    if (string.IsNullOrWhiteSpace(request.CurrentPassword) || string.IsNullOrWhiteSpace(request.NewPassword))
+    {
+        return Results.BadRequest(new { message = "Aktuelles und neues Passwort sind erforderlich." });
+    }
+
+    var username = httpContext.User.FindFirstValue(ClaimTypes.Name) ?? httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+    var user = users.GetByUsername(username);
+    
+    if (user is null || user.Id != userId)
+    {
+        return Results.Forbid();
+    }
+
+    if (!string.Equals(user.Password, request.CurrentPassword, StringComparison.Ordinal))
+    {
+        return Results.BadRequest(new { message = "Aktuelles Passwort ist nicht korrekt." });
+    }
+
+    if (request.NewPassword.Length < 8)
+    {
+        return Results.BadRequest(new { message = "Das neue Passwort muss mindestens 8 Zeichen lang sein." });
+    }
+
+    users.UpdatePassword(userId, request.NewPassword);
+    return Results.Ok(new { message = "Passwort erfolgreich geändert.", success = true });
 });
 
 app.MapPut("/api/users/{userId:int}/toggle", [Authorize(Policy = "RequireAdminAccess")] (int userId, UserStore users, HttpContext httpContext) =>
@@ -994,6 +1023,7 @@ public sealed record BackupRecord(string Id, string FileName, DateTime CreatedAt
 public sealed record LoginRequest(string Username, string Password);
 public sealed record CreateUserRequest(string UserName, string Password, string Role, string DisplayName);
 public sealed record ResetPasswordRequest(string NewPassword);
+public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateCategoryRequest(string Name, string Description);
 public sealed record CreateSiteRequest(int CategoryId, string Name, string Address, string Phone, string CaretakerPhone);
 public sealed record CreateRoomRequest(int SiteId, string Name, string Description, string? Capacity, string? Area, string? Notes);
