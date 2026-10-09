@@ -144,6 +144,7 @@ function App() {
   const [page, setPage] = useState<PageKey>('dashboard')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false)
   const [profile, setProfile] = useState<User | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [sites, setSites] = useState<Site[]>([])
@@ -828,6 +829,15 @@ function App() {
     }
   }
 
+  const getInitials = (displayName: string): string => {
+    return displayName
+      .split(' ')
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2)
+  }
+
   const navItems: Array<{ key: PageKey; label: string; visible: boolean }> = [
     { key: 'dashboard', label: 'Dashboard', visible: true },
     { key: 'audits', label: 'Audits', visible: true },
@@ -894,11 +904,51 @@ function App() {
           <button className="theme-toggle" type="button" onClick={() => setTheme((previous) => (previous === 'dark' ? 'light' : 'dark'))}>
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
-          <div className="user-pill">
-            <span>{profile?.displayName ?? activeSession.user.displayName}</span>
-            <em>{profile?.role ?? activeSession.user.role}</em>
+          
+          <div className="profile-dropdown-wrapper">
+            <button 
+              className="profile-button" 
+              type="button" 
+              onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+              aria-expanded={showProfileDropdown}
+            >
+              <span className="profile-avatar" title={profile?.displayName ?? activeSession.user.displayName}>
+                {getInitials(profile?.displayName ?? activeSession.user.displayName)}
+              </span>
+              <span className="profile-info">
+                <span className="profile-name">{profile?.displayName ?? activeSession.user.displayName}</span>
+                <span className="profile-role">{profile?.role ?? activeSession.user.role}</span>
+              </span>
+              <span className="dropdown-arrow">▼</span>
+            </button>
+            
+            {showProfileDropdown && (
+              <div className="profile-dropdown-menu">
+                <button 
+                  type="button" 
+                  className="dropdown-item"
+                  onClick={() => { setPage('profil'); setShowProfileDropdown(false); }}
+                >
+                  👤 Mein Profil
+                </button>
+                <button 
+                  type="button" 
+                  className="dropdown-item"
+                  onClick={() => setShowProfileDropdown(false)}
+                >
+                  🔑 Passwort ändern
+                </button>
+                <div className="dropdown-divider"></div>
+                <button 
+                  type="button" 
+                  className="dropdown-item logout"
+                  onClick={() => { setShowProfileDropdown(false); logout(); }}
+                >
+                  🚪 Abmelden
+                </button>
+              </div>
+            )}
           </div>
-          <button type="button" className="ghost-button" onClick={logout}>Abmelden</button>
         </div>
       </header>
 
