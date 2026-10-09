@@ -242,6 +242,31 @@ app.MapGet("/api/objects/{objectId:int}/images", [Authorize] (int objectId) =>
     return Results.Ok(files);
 });
 
+app.MapGet("/api/objects/{objectId:int}/images/{imageName}", [Authorize] (int objectId, string imageName) =>
+{
+    var directory = Path.Combine(uploadDirectory, objectId.ToString());
+    var filePath = Path.Combine(directory, imageName);
+
+    if (!File.Exists(filePath))
+    {
+        return Results.NotFound(new { message = "Bild nicht gefunden." });
+    }
+
+    var fileInfo = new FileInfo(filePath);
+    var fileStream = File.OpenRead(filePath);
+    var mimeType = imageName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || imageName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+        ? "image/jpeg"
+        : imageName.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+        ? "image/png"
+        : imageName.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+        ? "image/gif"
+        : imageName.EndsWith(".webp", StringComparison.OrdinalIgnoreCase)
+        ? "image/webp"
+        : "application/octet-stream";
+
+    return Results.File(fileStream, mimeType, imageName);
+});
+
 app.MapPost("/api/objects/{objectId:int}/images", [Authorize] async (int objectId, HttpRequest request) =>
 {
     if (!request.HasFormContentType)
