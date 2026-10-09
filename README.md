@@ -4,12 +4,11 @@ Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checkl
 
 ## Projektstatus
 - **Stack**: React + TypeScript + ASP.NET Core + SQLite + iText7 für PDF-Export
-- **Status**: ✅ Kernfunktionen produktionsreif (v0.8.1+)
+- **Status**: ✅ Kernfunktionen produktionsreif (v0.9.0+)
 - **Login-Timeout**: 8 Stunden mit automatischer Abmeldung
 - **Ports**: 4714 Produktiv, 5050 API (Lokal), 5173/5174 Frontend (Lokal mit Fallback)
 - **Datenbank**: SQLite mit persistenter JSON-Serialisierung
-- **Aktuelle Version**: 0.8.1 (Dark/Light Mode mit CSS-Variablen)
-- **Themes**: Dark-Mode (Standard) + Light-Mode mit voller CSS-Variable-Unterstützung
+- **Aktuelle Version**: 0.9.0 (Bild-Delete, Theme-Toggle, Komprimierung, Galerie)
 
 ## Schnellstart
 
@@ -104,6 +103,7 @@ Produktions-URL: http://localhost:4714
 
 | Version | Datum | Features |
 |---------|-------|----------|
+| 0.9.0   | 2026-10-09 | Image-Delete-Funktionalität (Bestätigung, sofortige UI-Refresh) |
 | 0.8.1   | 2026-10-09 | Dark/Light Mode mit CSS-Variablen-System |
 | 0.8.0   | 2026-10-09 | Clientseitige Bild-Komprimierung (Canvas, adaptive Qualität) |
 | 0.7.0   | 2026-10-09 | Frontend-Image-Gallery für Objektbilder |

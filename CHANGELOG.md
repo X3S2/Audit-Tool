@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.9.0] - 2026-10-09
+
+### Hinzugefügt
+- DELETE /api/objects/{objectId}/images/{imageName} Backend-Endpunkt
+- deleteGalleryImage() Frontend-Handler mit Bestätigungsdialog
+- Rot gefärbter "Löschen"-Button in jeder Bild-Galerie
+- Automatische Galerie-Aktualisierung nach Bild-Löschung
+- Error-Handling und Benutzer-Feedback für Fehlschläge
+
+### Geändert
+- Bild-Galerie erweitert: Löschen-Button unter jedem Bild
+- Bild-Metadaten-Spacing angepasst für Button-Platz
+- Frontend-Bundle-Größe unverändert (251.72 KB)
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Features
+- Benutzerbestätigung vor Löschung (Sicherheit)
+- Sofortige Galerie-Aktualisierung nach erfolgreicher Löschung
+- Fehlerbehandlung mit aussagekräftigen Meldungen
+- Autorisierung erforderlich ([Authorize] im Backend)
+
 ## [0.8.1] - 2026-10-09
 
 ### Hinzugefügt
