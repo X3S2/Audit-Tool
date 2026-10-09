@@ -22,6 +22,8 @@ var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "audit-tool-clients";
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 builder.Services.AddAntiforgery();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 builder.Services.AddCors(options =>
 {
@@ -96,6 +98,8 @@ builder.Services.AddSingleton(new RefreshTokenStore(storageDirectory));
 builder.Services.AddHostedService<BackupService>();
 
 var app = builder.Build();
+
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
