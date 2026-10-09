@@ -3,14 +3,44 @@
 Ein deutschsprachiges Audit-Tool für Standorte, Räume, Objekte, Bilder, Checklisten und PDF-Exporte.
 
 ## Projektstatus
-- **Stack**: React + TypeScript + ASP.NET Core + SQLite + iText7 für PDF-Export
-- **Status**: ✅ **PRODUKTIONSREIF v1.0.0** - Alle Kernfunktionen komplett
-- **Login-Timeout**: 8 Stunden mit automatischer Abmeldung
-- **Ports**: 4714 Produktiv, 5050 API (Lokal), 5173/5174 Frontend (Lokal mit Fallback)
-- **Datenbank**: SQLite mit persistenter JSON-Serialisierung
-- **Aktuelle Version**: 1.0.0 (Backup-Zeitplanung, komplett produktiv)
+- **Stack**: React + TypeScript + ASP.NET Core + SQLite/PostgreSQL + iText7
+- **Status**: ✅ **HOCHPERFORMANT & PRODUKTIONSREIF v1.6.0** - Enterprise-Ready Features komplett
+- **Login-Timeout**: 8 Stunden mit Token-Refresh-Sliding-Window
+- **Ports**: 4714 Produktiv, 5050 API (Lokal), 5173/5174 Frontend (Lokal)
+- **Datenbank**: SQLite primary, PostgreSQL optional (Migration verfügbar)
+- **Aktuelle Version**: 1.6.0 (Validierung, Input-Sanitization, Enterprise-Features)
 - **Docker**: ✅ Build erfolgreich (Frontend, Backend, PostgreSQL)
-- **Container Status**: ✅ Alle Container funktionieren (audit-frontend-ui:4714, audit-backend-api:5050, audit-postgres-db:5432)
+- **Container**: ✅ Alle Container funktionieren (audit-frontend-ui:4714, audit-backend-api:5050, audit-postgres-db:5432)
+
+## Implementierte Kernfunktionen (v1.0.0 - v1.6.0)
+
+### Backup & Scheduling (v1.0.0 - v1.0.1)
+- Automatische Backup-Zeitplan-Verwaltung
+- Hintergrund-Backup-Ausführung
+- Automatische Cleanup (Max Backups)
+
+### Sicherheit & Authentifizierung (v1.2.0)
+- Token-Refresh mit 7-Tage TTL
+- Sliding-Window Token-Rotation
+- Token-Revocation bei Logout
+
+### Fehlerbehandlung (v1.3.0 - v1.4.0)
+- React Error-Boundaries
+- Global Exception Handler
+- Retry-Logic mit Exponential Backoff
+- Circuit-Breaker Pattern
+
+### Observabilität (v1.5.0)
+- Audit-Logging (JSONL format)
+- Error-Logging mit Stack-Traces
+- Request-Tracking mit Timing
+- IP-Adresse Tracking
+
+### Validierung & Sicherheit (v1.6.0)
+- Input-Sanitization gegen XSS
+- Passwort-Anforderungen (8+ Zeichen, Groß/Klein/Ziffer)
+- Payload-Größenlimits (10MB max)
+- Benutzername-Format-Validierung
 
 ## Schnellstart
 
@@ -105,17 +135,24 @@ Produktions-URL: http://localhost:4714
 
 | Version | Datum | Features |
 |---------|-------|----------|
-| **1.0.0** | 2026-10-09 | **PRODUKTIV** - Backup-Zeitplanung mit Admin-UI komplett |
-| 0.9.0   | 2026-10-09 | Image-Delete-Funktionalität (Bestätigung, sofortige UI-Refresh) |
-| 0.8.1   | 2026-10-09 | Dark/Light Mode mit CSS-Variablen-System |
-| 0.8.0   | 2026-10-09 | Clientseitige Bild-Komprimierung (Canvas, adaptive Qualität) |
-| 0.7.0   | 2026-10-09 | Frontend-Image-Gallery für Objektbilder |
-| 0.6.0   | 2026-10-09 | Image-Download-Endpunkt, Backend-APIs für Bildverwaltung |
-| 0.5.0   | 2026-10-09 | Bild-Komprimierungs-Module, Image-Foundation |
-| 0.4.0   | 2026-10-09 | Automatische Backup-Rotation (Max. 10 Backups) |
-| 0.3.0   | 2026-10-09 | Profil-Seite, User-Passwortänderung |
-| 0.2.1   | 2026-10-09 | PDF-Export für Audits (iText7 + Bouncy Castle) |
-| 0.2.0   | 2026-10-09 | Admin-User-Management (Reset, Toggle, Delete) |
+| **1.6.0** | 2026-10-09 | Input-Sanitization, XSS-Protection, Validierung |
+| **1.5.0** | 2026-10-09 | Audit-Logging, Error-Logging, Request-Tracking |
+| **1.4.0** | 2026-10-09 | Circuit-Breaker, Retry-Logic, Exponential Backoff |
+| **1.3.0** | 2026-10-09 | Error-Boundaries, Global Exception Handler |
+| **1.2.0** | 2026-10-09 | Token-Refresh, Sliding-Window, Token-Revocation |
+| **1.1.0** | 2026-10-09 | PostgreSQL-Migration (DatabaseMigrationService) |
+| **1.0.1** | 2026-10-09 | Automatische Backup-Ausführung (BackupService) |
+| **1.0.0** | 2026-10-09 | **PRODUKTIV** - Backup-Zeitplanung, Admin-UI |
+| 0.9.0   | 2026-10-09 | Image-Delete-Funktionalität |
+| 0.8.1   | 2026-10-09 | Dark/Light Mode mit CSS-Variablen |
+| 0.8.0   | 2026-10-09 | Clientseitige Bild-Komprimierung |
+| 0.7.0   | 2026-10-09 | Frontend-Image-Gallery |
+| 0.6.0   | 2026-10-09 | Image-Download-Endpunkt |
+| 0.5.0   | 2026-10-09 | Bild-Komprimierungs-Module |
+| 0.4.0   | 2026-10-09 | Automatische Backup-Rotation |
+| 0.3.0   | 2026-10-09 | Profil-Seite, Passwortänderung |
+| 0.2.1   | 2026-10-09 | PDF-Export für Audits |
+| 0.2.0   | 2026-10-09 | Admin-User-Management |
 | 0.1.2   | 2026-10-09 | SQLite-Persistierung für alle Datenmodelle |
 | 0.1.1   | 2026-10-09 | Stabilisierung Bild-Upload-API |
 | 0.1.0   | 2026-10-09 | Backup-Management, ZIP-Export, Admin-Panel |

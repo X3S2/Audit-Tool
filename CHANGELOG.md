@@ -1,41 +1,101 @@
 # Changelog
 
+## [1.6.0] - 2026-10-09
+
+### Hinzugefügt
+- InputValidator für Frontend & Backend (Username, Password, Name, Description)
+- Input-Sanitization gegen XSS-Payloads
+- Payload-Größenlimitierungen (10MB max)
+- Validierungsregeln: Passwort mindestens 8 Zeichen, Großbuchstaben, Kleinbuchstaben, Ziffer
+
+### Status
+- 6 Sicherheitsfeatures hinzugefügt
+
+## [1.5.0] - 2026-10-09
+
+### Hinzugefügt
+- AuditLogger für Aktions- und Error-Logging
+- RequestLoggingMiddleware für Request-Tracking
+- JSONL-basierte Audit-Logs (audit_logs.jsonl)
+- Error-Logs mit Stack-Traces (error_logs.jsonl)
+- Auditierbar: POST, PUT, DELETE Requests
+
+### Status
+- Logging- und Diagnostics-System vollständig
+
+## [1.4.0] - 2026-10-09
+
+### Hinzugefügt
+- RetryableHttpClient für Frontend (exponential backoff)
+- CircuitBreakerMiddleware im Backend
+- Circuit-Breaker Pattern: Closed → Open → Half-Open
+- Retry-Logik mit konfigurierbarem Backoff (1s, 2s, 4s, 8s, 10s max)
+- Automatische 30s Wartezeit vor Half-Open-Transition
+
+### Status
+- Robustes Error-Recovery implementiert
+
+## [1.3.0] - 2026-10-09
+
+### Hinzugefügt
+- ErrorBoundary React-Komponente für Frontend
+- GlobalExceptionHandler im Backend
+- Strukturierte Error-Responses (StatusCode, Message, Timestamp)
+- Fehlerdetails mit Stack-Traces (Development mode)
+- Automatische Error-Klassifizierung (400, 403, 404, 500)
+
+### Status
+- Fehlerbehandlung auf beiden Seiten komplett
+
+## [1.2.0] - 2026-10-09
+
+### Hinzugefügt
+- Token-Refresh-Endpunkt (POST /api/auth/refresh)
+- RefreshTokenStore für Token-Persistierung
+- Sliding-Window Token-Rotation (7-Tage Refresh-Token TTL)
+- Token-Revocation bei Logout
+- Automatische Token-Erneuerung ohne Re-Login
+
+### Status
+- Session-Management erweitert auf Token-Level
+
+## [1.1.0] - 2026-10-09
+
+### Hinzugefügt
+- DatabaseMigrationService für SQLite→PostgreSQL Migration
+- Schema-Erstellung in PostgreSQL
+- Datenmigration aller 7 Haupttabellen
+- Foreign-Key-Beziehungen
+- JSONB-Support für komplexe Datentypen
+
+### Status
+- PostgreSQL-Produktion vorbereitet (optional)
+
+## [1.0.1] - 2026-10-09
+
+### Hinzugefügt
+- BackupService als BackgroundService
+- Automatische Backup-Ausführung nach Zeitplan
+- Automatische Cleanup: Max Backups bewahren
+- Logging von Backup-Operationen
+
+### Status
+- Automatische Backup-Ausführung aktiv
+
 ## [1.0.0] - 2026-10-09
 
 ### Hinzugefügt
 - BackupSchedule Model für Zeitplan-Konfiguration
-- BackupScheduleStore für Persistierung in SQLite
-- GET /api/admin/backup-schedule Backend-Endpunkt (Abruf)
-- PUT /api/admin/backup-schedule Backend-Endpunkt (Speichern)
-- Frontend Backup-Zeitplan-Konfiguration im Admin-Panel
-- Uhrzeit-Auswahl (time input) für automatische Backups
-- Wochentag-Checkboxes (Montag-Sonntag) für Backup-Tage
+- BackupScheduleStore für SQLite-Persistierung
+- GET /api/admin/backup-schedule Backend-Endpunkt
+- PUT /api/admin/backup-schedule Backend-Endpunkt
+- Frontend Backup-Zeitplan-UI im Admin-Panel
+- Uhrzeit-Auswahl (time input)
+- Wochentag-Checkboxes (Montag-Sonntag)
 - Max Backups Konfiguration (1-100, default 10)
-- Aktivierung/Deaktivierung des Zeitplans
-- Speichern und Laden von Zeitplan-Einstellungen
-
-### Geändert
-- Admin-Panel erweitert: "Automatische Backups" Section
-- Backup-Verwaltung separiert in manuell vs. automatisch
-- Frontend-Bundle-Größe: 250.76 KB → 253.63 KB (+2.87 KB)
-- Backend: BackupScheduleStore registriert als Singleton
-
-### Behoben
-- Keine Fehler in dieser Version
-
-### Features
-- Vollständige Backup-Zeitplan-Verwaltung
-- Flexibles Scheduling (täglich, mehrmals pro Woche, etc.)
-- Persistierung über SQLite
-- Admin-nur Zugriff ([Authorize(Policy = "RequireAdminAccess")])
 
 ### Status
-- **v1.0.0 markiert Produktive Reife** mit allen Kernfunktionen
-- Alle Admin-Funktionen komplett
-- Backup/Restore/Schedule implementiert
-- Image-Management vollständig (Upload, Download, Delete, Komprimierung)
-- Theme-System (Dark/Light) funktionsfähig
-- PDF/ZIP-Export aktiv
+- **v1.0.0 markiert Produktive Reife** mit allen Kernfunktionen komplett
 
 ## [0.9.0] - 2026-10-09
 
