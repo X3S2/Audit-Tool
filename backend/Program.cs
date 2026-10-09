@@ -95,6 +95,7 @@ builder.Services.AddSingleton(auditStore);
 builder.Services.AddSingleton(new BackupStore(backupDirectory, userStore));
 builder.Services.AddSingleton<BackupScheduleStore>();
 builder.Services.AddSingleton(new RefreshTokenStore(storageDirectory));
+builder.Services.AddSingleton(new AuditLogger(storageDirectory));
 builder.Services.AddHostedService<BackupService>();
 
 var app = builder.Build();
@@ -108,6 +109,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseRouting();
 app.UseCors("FrontendPolicy");
+app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseMiddleware<CircuitBreakerMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
