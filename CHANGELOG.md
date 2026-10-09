@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0] - 2026-10-09
+
+### Hinzugefügt
+- Automatische Backup-Rotation mit konfigurierbarem Limit (Standard: 10 Backups)
+- ApplyBackupRotation-Methode für BackupStore zur Begrenzung alter Backups
+- Älteste Backups werden automatisch gelöscht, wenn Maximallänge erreicht wird (rotierendes Backup-Modell wie bei Dashcams)
+- Backup-Rotation wird automatisch nach jedem neuen Backup durchgeführt
+
+### Geändert
+- BackupStore Create-Methode um automatische Rotation erweitert
+- Backup-Management nun rotierend für Speicherplatz-Kontrolle
+
+### Behoben
+- Unbegrenzte Backup-Speicherung verhindert durch automatische Rotation
+
 ## [0.3.0] - 2026-10-09
 
 ### Hinzugefügt

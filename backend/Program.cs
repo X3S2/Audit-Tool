@@ -838,6 +838,7 @@ public sealed class BackupStore
 {
     private readonly string _folderPath;
     private readonly UserStore _userStore;
+    private const int DEFAULT_MAX_BACKUPS = 10;
 
     public BackupStore(string folderPath, UserStore userStore)
     {
@@ -879,14 +880,32 @@ public sealed class BackupStore
             rooms = store.Rooms,
             objects = store.Objects,
             audits = store.Audits,
-            users = _userStore.All.Select(user => new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive })        };
+            users = _userStore.All.Select(user => new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive })        };
 
         var entry = archive.CreateEntry("backup/manifest.json");
         using var stream = new StreamWriter(entry.Open(), Encoding.UTF8);
         stream.Write(JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
 
         var info = new FileInfo(fullPath);
+        
+        ApplyBackupRotation(DEFAULT_MAX_BACKUPS);
+        
         return new BackupRecord(Path.GetFileNameWithoutExtension(info.Name), info.Name, info.LastWriteTimeUtc, info.Length, "Vollbackup");
+    }
+
+    public void ApplyBackupRotation(int maxBackups = DEFAULT_MAX_BACKUPS)
+    {
+        var backups = List();
+        if (backups.Count <= maxBackups)
+        {
+            return;
+        }
+
+        var backupsToDelete = backups.Skip(maxBackups).ToList();
+        foreach (var backup in backupsToDelete)
+        {
+            Delete(backup.Id);
+        }
     }
 
     public bool Restore(string backupId, AuditStore store)
