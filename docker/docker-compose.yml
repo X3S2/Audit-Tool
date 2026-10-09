@@ -1,0 +1,46 @@
+version: '3.9'
+
+services:
+  audit-postgres:
+    image: postgres:16-alpine
+    container_name: audit-postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-audittool}
+      POSTGRES_USER: ${POSTGRES_USER:-audittool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-AuditTool!2026}
+    ports:
+      - "5432:5432"
+    volumes:
+      - audit_postgres_data:/var/lib/postgresql/data
+
+  audit-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: audit-backend-api
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Host=audit-postgres;Database=${POSTGRES_DB:-audittool};Username=${POSTGRES_USER:-audittool};Password=${POSTGRES_PASSWORD:-AuditTool!2026}
+      Jwt__Key: ${JWT_KEY:-AuditTool-Dev-Key-Change-me-in-production-1234567890}
+      Jwt__Issuer: ${JWT_ISSUER:-audit-tool}
+      Jwt__Audience: ${JWT_AUDIENCE:-audit-tool-clients}
+    ports:
+      - "5050:8080"
+    depends_on:
+      - audit-postgres
+
+  audit-frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: audit-frontend-ui
+    restart: unless-stopped
+    ports:
+      - "4714:80"
+    depends_on:
+      - audit-backend
+
+volumes:
+  audit_postgres_data:
