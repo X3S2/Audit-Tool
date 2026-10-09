@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0] - 2026-10-09
+
+### Hinzugefügt
+- Bild-Download-Endpunkt GET /api/objects/{objectId}/images/{imageName} im Backend
+- MIME-Type-Automatik-Erkennung (JPEG, PNG, GIF, WebP)
+- Bild-Upload-Endpunkt POST /api/objects/{objectId}/images (bereits vorhanden, jetzt dokumentiert)
+- Bild-Metadaten-Endpunkt GET /api/objects/{objectId}/images für Bildlisten-Abruf
+
+### Geändert
+- Backend-Architektur mit vollständigen Image-Management-Endpunkten erweitert
+- Storage-Struktur: /storage/uploads/{objectId}/ für objektbasierte Bildverwaltung
+
+### Behoben
+- Keine Fehler in dieser Version
+
+### Geplant für 0.7.0+
+- Frontend-Image-Gallery-UI für Objektbilder
+- Upload-Formular mit Komprimierung (imageCompression.ts Integration)
+- Bild-Preview vor Upload
+- Bild-Löschen-Funktionalität
+
 ## [0.5.0] - 2026-10-09
 
 ### Hinzugefügt
@@ -15,11 +36,6 @@
 
 ### Behoben
 - Keine Fehler in dieser Version
-
-### Geplant für 0.6.0+
-- Integration in Frontend-Upload-Formulare
-- Backend-Endpunkte für Bild-Upload (POST /api/objects/{id}/images)
-- Frontend-Bild-Preview vor Upload
 
 ## [0.4.0] - 2026-10-09
 
