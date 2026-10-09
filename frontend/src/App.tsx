@@ -146,6 +146,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [showProfileDropdown, setShowProfileDropdown] = useState(false)
   const [profile, setProfile] = useState<User | null>(null)
+  const [adminTab, setAdminTab] = useState<'benutzer' | 'backup' | 'export' | 'logs'>('benutzer')
   const [categories, setCategories] = useState<Category[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
@@ -1395,7 +1396,40 @@ function App() {
 
           {page === 'admin' && canManageUsers(activeSession.user.role) ? (
             <section className="panel">
-              <h3>Benutzerverwaltung</h3>
+              <h3>Admin Bereich</h3>
+              
+              <div className="tabs-container" style={{ marginBottom: '24px' }}>
+                <div className="tabs-header">
+                  <button 
+                    className={`tab-button ${adminTab === 'benutzer' ? 'active' : ''}`}
+                    onClick={() => setAdminTab('benutzer')}
+                  >
+                    👥 Benutzer
+                  </button>
+                  <button 
+                    className={`tab-button ${adminTab === 'backup' ? 'active' : ''}`}
+                    onClick={() => setAdminTab('backup')}
+                  >
+                    💾 Backup
+                  </button>
+                  <button 
+                    className={`tab-button ${adminTab === 'export' ? 'active' : ''}`}
+                    onClick={() => setAdminTab('export')}
+                  >
+                    📦 Export
+                  </button>
+                  <button 
+                    className={`tab-button ${adminTab === 'logs' ? 'active' : ''}`}
+                    onClick={() => setAdminTab('logs')}
+                  >
+                    📋 Logs
+                  </button>
+                </div>
+              </div>
+
+              {adminTab === 'benutzer' && (
+              <>
+              <h4>Benutzerverwaltung</h4>
               <table>
                 <thead>
                   <tr>
@@ -1465,7 +1499,11 @@ function App() {
                 </div>
                 <button type="submit" className="primary-button">Benutzer erstellen</button>
               </form>
+              </>
+              )}
 
+              {adminTab === 'backup' && (
+              <>
               <form className="form-card" onSubmit={createCategory}>
                 <h4>Kategorie anlegen</h4>
                 <div className="form-grid">
@@ -1577,7 +1615,11 @@ function App() {
                   </>
                 )}
               </div>
+              </>
+              )}
 
+              {adminTab === 'export' && (
+              <>
               <div className="form-card">
                 <h4>Datenexport</h4>
                 <div className="form-grid">
@@ -1592,6 +1634,17 @@ function App() {
                 </div>
                 <button type="button" className="primary-button" onClick={exportAuditZip}>ZIP exportieren</button>
               </div>
+              </>
+              )}
+
+              {adminTab === 'logs' && (
+              <>
+              <div className="form-card">
+                <h4>System-Logs</h4>
+                <p>Logs werden hier angezeigt.</p>
+              </div>
+              </>
+              )}
             </section>
           ) : null}
 
