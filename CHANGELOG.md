@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.6.1] - 2026-10-09
+
+### Hinzugefügt
+- Docker-Ordner umbenannt: `docker/` → `audittool/` (proper naming)
+- Container-Namen aktualisiert: `audittool-frontend-ui`, `audittool-backend-api`, `audittool-postgres-db`
+- Frontend Browser-Tab Title: "frontend" → "Audit-Tool"
+- Frontend HTML lang Attribut: "en" → "de"
+- Meta Description in Frontend index.html
+
+### Geändert
+- README.md komplett überarbeitet (von 2KB auf 13KB)
+  - Detaillierte Architektur-Übersicht
+  - Quick Start Anleitung
+  - Security Best Practices
+  - API Endpunkte Referenz
+  - Docker Services Dokumentation
+  - Troubleshooting Guide
+  - Performance Metriken
+- docker-compose.yml: Pfade aktualisiert auf `audittool/`
+
+### Status
+- **v1.6.1 Housekeeping Release** - Naming & Documentation überarbeitet
+- Alle Container mit proper Namen: audittool-*
+- Browser Tab zeigt jetzt "Audit-Tool" statt "frontend"
+- README ist jetzt durchgehend gepflegt & aktuell
+
 ## [1.6.0] - 2026-10-09
 
 ### Hinzugefügt

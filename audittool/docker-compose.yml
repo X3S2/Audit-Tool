@@ -3,7 +3,7 @@ version: '3.9'
 services:
   audit-postgres:
     image: postgres:16-alpine
-    container_name: audit-postgres-db
+    container_name: audittool-postgres-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-audittool}
@@ -17,8 +17,8 @@ services:
   audit-backend:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.backend
-    container_name: audit-backend-api
+      dockerfile: audittool/Dockerfile.backend
+    container_name: audittool-backend-api
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080
@@ -34,8 +34,8 @@ services:
   audit-frontend:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.frontend
-    container_name: audit-frontend-ui
+      dockerfile: audittool/Dockerfile.frontend
+    container_name: audittool-frontend-ui
     restart: unless-stopped
     ports:
       - "4714:80"
@@ -44,3 +44,4 @@ services:
 
 volumes:
   audit_postgres_data:
+
