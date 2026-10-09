@@ -1,5 +1,6 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
+// import { compressImage } from './imageCompression'
 
 type ThemeMode = 'dark' | 'light'
 type PageKey = 'dashboard' | 'audits' | 'standorte' | 'vorlagen' | 'raume' | 'admin' | 'profil'
