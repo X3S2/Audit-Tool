@@ -610,7 +610,7 @@ app.MapPut("/api/admin/backup-schedule", [Authorize(Policy = "RequireAdminAccess
 {
     if (newSchedule.Days == null || newSchedule.Days.Length == 0)
     {
-        newSchedule.Days = Array.Empty<DayOfWeek>();
+        newSchedule.Days = Array.Empty<string>();
     }
 
     scheduleStore.UpdateSchedule(newSchedule);

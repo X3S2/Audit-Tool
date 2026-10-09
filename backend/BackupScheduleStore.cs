@@ -14,7 +14,7 @@ public class BackupScheduleStore
     {
         if (!File.Exists(dbPath))
         {
-            schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<DayOfWeek>(), MaxBackups = 10 };
+            schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
             return;
         }
 
@@ -34,14 +34,14 @@ public class BackupScheduleStore
             }
             else
             {
-                schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<DayOfWeek>(), MaxBackups = 10 };
+                schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
             }
 
             connection.Close();
         }
         catch
         {
-            schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<DayOfWeek>(), MaxBackups = 10 };
+            schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
         }
     }
 
