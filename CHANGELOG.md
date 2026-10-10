@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.7.4] - 2026-10-10
+
+### PDF-Designer, Checklisten & UX-Fixes
+
+#### Mobile NAV
+- **Sidebar standardmäßig eingeklappt** auf kleinen Bildschirmen (≤ 768px)
+- Menu-Toggle im Header klappt Sidebar ein/aus (funktioniert auf Desktop & Mobile)
+
+#### Vorlagen Feld-Builder
+- **Feldname-Eingabe breiter** (flex: 1 statt fester Breite → viel mehr Platz)
+- **Typ-Dropdown kompakter** (max-width: 120px)
+- **Dropdown-Optionen**: Wenn Typ „Auswahl (Dropdown)" gewählt wird, erscheint ein zusätzliches Eingabefeld für die Auswahloptionen (kommagetrennt)
+
+#### PDF-Designer (vollständig neu)
+- **Backend**: Neue Endpunkte `GET/POST/PUT/DELETE /api/pdfdesigns`
+- **Model**: PdfDesign (Id, Name, Description, ConfigJson, CreatedAtUtc)
+- **Frontend**: Übersicht → Neues Design anlegen → Editor
+- **Editor-Funktionen**:
+  - Seiten/Abschnitte verwalten:
+    - + Deckblatt, + Raumtabelle (wiederholend), + Freitext, + Zusammenfassung
+    - Abschnittstitel umbenennen
+    - Seitenausrichtung (Hochkant/Querformat) pro Abschnitt
+  - Globale Einstellungen: Kopfzeile, Fußzeile, Standard-Orientierung
+  - Deckblatt-Felder wählbar: Standortname, Kategorie, Adresse, Telefon, Hausmeister, Audit-Titel, Datum, Ersteller
+  - Raumtabellen-Spalten: Vorlage wählen → Felder als Spalten auswählen
+  - Speichern-Button
+
+#### Checklisten (vollständig neu)
+- **Backend**: Neue Endpunkte `GET/POST/PUT/DELETE /api/checklisttemplates`
+- **Backend**: `GET /api/audits/{id}/checklist` + `PUT /api/audits/{id}/checklist/{entryId}` für Live-Sync
+- **Model**: ChecklistTemplate (Id, Name, TemplateId, ColumnsJson, CreatedAtUtc)
+- **Frontend**: Checkliste erstellen mit:
+  - + Raum-Spalte: Zeigt den Raumnamen
+  - + Vorlagen-Feld-Spalte: Aus den Feldern der gewählten Audit-Vorlage
+  - + Freie Spalte: Eigener Spaltenname + Typ (Text/Zahl/Checkbox)
+  - Spalten-Reihenfolge nummeriert
+  - Löschen-Button für Spalten
+  - Speichern und Löschen von Checklisten-Templates
+
+### Status
+- ✅ TypeScript Build: 0 Fehler
+- ✅ Docker Rebuild: Erfolgreich
+- ✅ Backend: Alle neuen API-Endpunkte erreichbar
+- ✅ GitHub: `5a3dacc` auf master
+
 ## [1.7.3] - 2026-10-10
 
 ### Design & UX Komplettüberarbeitung
