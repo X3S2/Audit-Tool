@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 
 export type User = {
   id: number
@@ -19,15 +19,20 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ theme, onThemeToggle, user, onProfileClick, pageTitle, onMenuToggle }) => {
   const [showDropdown, setShowDropdown] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const getInitials = (displayName: string) => {
-    return displayName
-      .split(' ')
-      .map((part) => part[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2)
-  }
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+    if (showDropdown) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showDropdown])
+
+  const getInitials = (displayName: string) =>
+    displayName.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
 
   const handleDropdownItem = (action: 'profile' | 'password' | 'logout') => {
     setShowDropdown(false)
@@ -37,87 +42,59 @@ export const Header: React.FC<HeaderProps> = ({ theme, onThemeToggle, user, onPr
   return (
     <header className="topbar">
       {onMenuToggle && (
-        <button 
-          className="menu-toggle"
-          type="button" 
-          onClick={onMenuToggle}
-          title="Menü auf/zuklappen"
-          aria-label="Toggle menu"
-        >
+        <button className="menu-toggle" type="button" onClick={onMenuToggle} title="Menü ein/ausklappen">
           ☰
         </button>
       )}
 
       <div className="brand-section">
-        <div className="brand-logo">
-          <span className="logo-badge">A</span>
-          <div className="brand-text">
-            <h2>Audit-Tool</h2>
-            <small>Audit- & Datenmanagement</small>
-          </div>
+        <div className="brand-text">
+          <h2>Audit-Tool</h2>
         </div>
       </div>
 
       {pageTitle && (
         <div className="page-title">
-          <h1>{pageTitle}</h1>
+          <span>{pageTitle}</span>
         </div>
       )}
 
-      <div className="header-spacer"></div>
+      <div className="header-spacer" />
 
       <div className="header-actions">
         <button
           className="icon-button theme-toggle"
           type="button"
           onClick={onThemeToggle}
-          title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Light Mode aktivieren' : 'Dark Mode aktivieren'}
         >
           {theme === 'dark' ? '☀️' : '🌙'}
         </button>
 
-        <div className="profile-dropdown-wrapper">
+        <div className="profile-dropdown-wrapper" ref={dropdownRef}>
           <button
             className="profile-button"
             type="button"
-            onClick={() => setShowDropdown(!showDropdown)}
+            onClick={() => setShowDropdown(v => !v)}
             aria-expanded={showDropdown}
-            aria-haspopup="true"
+            aria-haspopup="menu"
           >
-            <span className="profile-avatar" title={user.displayName}>
-              {getInitials(user.displayName)}
-            </span>
+            <span className="profile-avatar">{getInitials(user.displayName)}</span>
             <span className="profile-name">{user.displayName}</span>
-            <span className="dropdown-indicator">▼</span>
+            <span className={`dropdown-indicator${showDropdown ? ' open' : ''}`}>▾</span>
           </button>
 
           {showDropdown && (
-            <div className="profile-dropdown" role="menu">
-              <button
-                className="dropdown-item"
-                type="button"
-                role="menuitem"
-                onClick={() => handleDropdownItem('profile')}
-              >
-                👤 Mein Profil
+            <div className="profile-dropdown-menu" role="menu">
+              <button className="dropdown-item" type="button" role="menuitem" onClick={() => handleDropdownItem('profile')}>
+                <span>👤</span> Mein Profil
               </button>
-              <button
-                className="dropdown-item"
-                type="button"
-                role="menuitem"
-                onClick={() => handleDropdownItem('password')}
-              >
-                🔑 Passwort ändern
+              <button className="dropdown-item" type="button" role="menuitem" onClick={() => handleDropdownItem('password')}>
+                <span>🔑</span> Passwort ändern
               </button>
-              <div className="dropdown-divider"></div>
-              <button
-                className="dropdown-item logout"
-                type="button"
-                role="menuitem"
-                onClick={() => handleDropdownItem('logout')}
-              >
-                🚪 Abmelden
+              <div className="dropdown-divider" />
+              <button className="dropdown-item logout" type="button" role="menuitem" onClick={() => handleDropdownItem('logout')}>
+                <span>🚪</span> Abmelden
               </button>
             </div>
           )}

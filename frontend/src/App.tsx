@@ -151,15 +151,32 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [profile, setProfile] = useState<User | null>(null)
   const [profileTab, setProfileTab] = useState<'info' | 'theme' | 'password'>('info')
+  // View mode: list or card, per user in localStorage
+  const [viewMode, setViewMode] = useState<'list' | 'card'>(() => {
+    const stored = localStorage.getItem('audit-view-mode')
+    return stored === 'card' ? 'card' : 'list'
+  })
   // Audit drill-down state
   const [auditView, setAuditView] = useState<'categories' | 'standorte' | 'standort'>('categories')
   const [auditSelectedCategory, setAuditSelectedCategory] = useState<Category | null>(null)
   const [auditSelectedSite, setAuditSelectedSite] = useState<Site | null>(null)
   const [auditTab, setAuditTab] = useState<'raume' | 'grunddaten' | 'dokumente'>('raume')
+  const [auditSelectedTemplate, setAuditSelectedTemplate] = useState<Template | null>(null)
   // Datenablage drill-down state
-  const [datenablageView, setDatenablageView] = useState<'categories' | 'standorte' | 'raume'>('categories')
+  const [datenablageView, setDatenablageView] = useState<'categories' | 'standorte' | 'standort'>('categories')
   const [datenablageCategory, setDatenablageCategory] = useState<Category | null>(null)
   const [datenablageSite, setDatenablageSite] = useState<Site | null>(null)
+  const [datenablageTab, setDatenablageTab] = useState<'raume' | 'grunddaten' | 'dokumente'>('raume')
+  // User management state
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [newUserForm, setNewUserForm] = useState({ userName: '', displayName: '', password: '', role: 'Benutzer' })
+  const [showNewUserForm, setShowNewUserForm] = useState(false)
+  // Vorlagen field builder state
+  const [templateFields, setTemplateFields] = useState<Array<{name: string; type: string; order: number; required: boolean}>>([
+    { name: '', type: 'text', order: 1, required: true }
+  ])
+  // Export mode
+  const [exportMode, setExportMode] = useState<'site' | 'all'>('site')
   const [categories, setCategories] = useState<Category[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
@@ -1002,18 +1019,35 @@ function App() {
                 <>
                   <div className="page-header">
                     <h3>Audits</h3>
-                    <p className="page-subtitle">Standort-Kategorie wählen</p>
+                    <div className="page-header-actions">
+                      <button type="button" className={`view-toggle${viewMode==='list'?' active':''}`} onClick={()=>{setViewMode('list');localStorage.setItem('audit-view-mode','list')}} title="Listenansicht">☰</button>
+                      <button type="button" className={`view-toggle${viewMode==='card'?' active':''}`} onClick={()=>{setViewMode('card');localStorage.setItem('audit-view-mode','card')}} title="Kachelansicht">⊞</button>
+                    </div>
                   </div>
-                  <div className="card-grid">
-                    {[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(cat=>(
-                      <button key={cat.id} type="button" className="card-item" onClick={()=>{setAuditSelectedCategory(cat);setAuditView('standorte')}}>
-                        <span className="card-icon">📁</span>
-                        <span className="card-name">{cat.name}</span>
-                        <span className="card-count">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
-                      </button>
-                    ))}
-                    {categories.length===0&&<p className="empty-hint">Keine Kategorien. Bitte unter Einstellungen anlegen.</p>}
-                  </div>
+                  {viewMode==='card' ? (
+                    <div className="card-grid">
+                      {[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(cat=>(
+                        <button key={cat.id} type="button" className="card-item" onClick={()=>{setAuditSelectedCategory(cat);setAuditView('standorte')}}>
+                          <span className="card-icon">📁</span>
+                          <span className="card-name">{cat.name}</span>
+                          <span className="card-count">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
+                        </button>
+                      ))}
+                      {categories.length===0&&<p className="empty-hint">Keine Kategorien. Bitte unter Einstellungen anlegen.</p>}
+                    </div>
+                  ) : (
+                    <div className="list-view">
+                      {[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(cat=>(
+                        <button key={cat.id} type="button" className="list-item" onClick={()=>{setAuditSelectedCategory(cat);setAuditView('standorte')}}>
+                          <span className="list-icon">📁</span>
+                          <span className="list-name">{cat.name}</span>
+                          <span className="list-meta">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
+                          <span className="list-arrow">›</span>
+                        </button>
+                      ))}
+                      {categories.length===0&&<p className="empty-hint">Keine Kategorien. Bitte unter Einstellungen anlegen.</p>}
+                    </div>
+                  )}
                 </>
               )}
               {auditView === 'standorte' && auditSelectedCategory && (
@@ -1021,84 +1055,136 @@ function App() {
                   <div className="page-header">
                     <button type="button" className="back-btn" onClick={()=>setAuditView('categories')}>← Zurück</button>
                     <div><h3>{auditSelectedCategory.name}</h3><p className="page-subtitle">Standort wählen</p></div>
+                    <div className="page-header-actions">
+                      <button type="button" className={`view-toggle${viewMode==='list'?' active':''}`} onClick={()=>{setViewMode('list');localStorage.setItem('audit-view-mode','list')}}>☰</button>
+                      <button type="button" className={`view-toggle${viewMode==='card'?' active':''}`} onClick={()=>{setViewMode('card');localStorage.setItem('audit-view-mode','card')}}>⊞</button>
+                    </div>
                   </div>
-                  <div className="card-grid">
-                    {[...sites].filter(s=>s.categoryId===auditSelectedCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
-                      <button key={site.id} type="button" className="card-item" onClick={()=>{setAuditSelectedSite(site);setAuditView('standort');setAuditTab('raume')}}>
-                        <span className="card-icon">🏢</span>
-                        <span className="card-name">{site.name}</span>
-                        <span className="card-count">{site.address}</span>
-                      </button>
-                    ))}
-                    {sites.filter(s=>s.categoryId===auditSelectedCategory.id).length===0&&<p className="empty-hint">Keine Standorte in dieser Kategorie.</p>}
-                  </div>
+                  {viewMode==='card' ? (
+                    <div className="card-grid">
+                      {[...sites].filter(s=>s.categoryId===auditSelectedCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
+                        <button key={site.id} type="button" className="card-item" onClick={()=>{setAuditSelectedSite(site);setAuditSelectedTemplate(null);setAuditView('standort');setAuditTab('raume')}}>
+                          <span className="card-icon">🏢</span>
+                          <span className="card-name">{site.name}</span>
+                          <span className="card-count">{site.address||'Keine Adresse'}</span>
+                        </button>
+                      ))}
+                      {sites.filter(s=>s.categoryId===auditSelectedCategory.id).length===0&&<p className="empty-hint">Keine Standorte.</p>}
+                    </div>
+                  ) : (
+                    <div className="list-view">
+                      {[...sites].filter(s=>s.categoryId===auditSelectedCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
+                        <button key={site.id} type="button" className="list-item" onClick={()=>{setAuditSelectedSite(site);setAuditSelectedTemplate(null);setAuditView('standort');setAuditTab('raume')}}>
+                          <span className="list-icon">🏢</span>
+                          <span className="list-name">{site.name}</span>
+                          <span className="list-meta">{site.address||'-'}</span>
+                          <span className="list-arrow">›</span>
+                        </button>
+                      ))}
+                      {sites.filter(s=>s.categoryId===auditSelectedCategory.id).length===0&&<p className="empty-hint">Keine Standorte.</p>}
+                    </div>
+                  )}
                 </>
               )}
               {auditView === 'standort' && auditSelectedSite && (
                 <>
                   <div className="page-header">
                     <button type="button" className="back-btn" onClick={()=>setAuditView('standorte')}>← Zurück</button>
-                    <div><h3>{auditSelectedSite.name}</h3><p className="page-subtitle">{auditSelectedSite.address}</p></div>
+                    <div>
+                      <h3>{auditSelectedSite.name}</h3>
+                      <p className="page-subtitle">{auditSelectedSite.address}</p>
+                    </div>
+                    {auditSelectedTemplate && (
+                      <div className="audit-template-badge">
+                        <span>Vorlage: <strong>{auditSelectedTemplate.name}</strong></span>
+                        <button type="button" className="tertiary-button" style={{padding:'2px 8px',fontSize:'0.8rem'}} onClick={()=>setAuditSelectedTemplate(null)}>✕ ändern</button>
+                      </div>
+                    )}
                   </div>
-                  <div className="tab-bar">
-                    {(['raume','grunddaten','dokumente'] as const).map(tab=>(
-                      <button key={tab} type="button" className={`tab-btn${auditTab===tab?' active':''}`} onClick={()=>setAuditTab(tab)}>
-                        {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':'📄 Dokumente'}
-                      </button>
-                    ))}
-                  </div>
-                  {auditTab==='raume'&&(
-                    <div className="tab-content">
-                      <table><thead><tr><th>Raum</th><th>Kapazität</th><th>Fläche</th><th>Notiz</th></tr></thead>
-                        <tbody>{rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>(
-                          <tr key={r.id}><td>{r.name}</td><td>{r.capacity}</td><td>{r.area}</td><td>{r.notes}</td></tr>
-                        ))}</tbody>
-                      </table>
-                      <form className="form-card" onSubmit={createRoom}>
-                        <h4>Neuen Raum anlegen</h4>
-                        <div className="form-grid">
-                          <label>Raumname<input value={roomForm.name} onChange={e=>setRoomForm(p=>({...p,name:e.target.value,siteId:String(auditSelectedSite.id)}))} required /></label>
-                          <label>Beschreibung<input value={roomForm.description} onChange={e=>setRoomForm(p=>({...p,description:e.target.value}))} /></label>
-                          <label>Kapazität<input value={roomForm.capacity} onChange={e=>setRoomForm(p=>({...p,capacity:e.target.value}))} /></label>
-                          <label>Fläche<input value={roomForm.area} onChange={e=>setRoomForm(p=>({...p,area:e.target.value}))} /></label>
+                  {!auditSelectedTemplate ? (
+                    <div className="template-selector">
+                      <h4 style={{marginBottom:'12px'}}>Audit-Vorlage wählen</h4>
+                      <div className="list-view">
+                        {templates.map(t=>(
+                          <button key={t.id} type="button" className="list-item" onClick={()=>setAuditSelectedTemplate(t)}>
+                            <span className="list-icon">📋</span>
+                            <span className="list-name">{t.name}</span>
+                            <span className="list-meta">{t.description||`${t.fields.length} Felder`}</span>
+                            <span className="list-arrow">›</span>
+                          </button>
+                        ))}
+                        {templates.length===0&&<p className="empty-hint">Keine Vorlagen. Bitte unter Einstellungen → Audit-Vorlagen anlegen.</p>}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="tab-bar">
+                        {(['raume','grunddaten','dokumente'] as const).map(tab=>(
+                          <button key={tab} type="button" className={`tab-btn${auditTab===tab?' active':''}`} onClick={()=>setAuditTab(tab)}>
+                            {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':'📄 Dokumente'}
+                          </button>
+                        ))}
+                      </div>
+                      {auditTab==='raume'&&(
+                        <div className="tab-content">
+                          <form className="form-card" onSubmit={createRoom}>
+                            <h4>Neuen Raum anlegen</h4>
+                            <div className="form-grid">
+                              <label>Raumname<input value={roomForm.name} onChange={e=>setRoomForm(p=>({...p,name:e.target.value,siteId:String(auditSelectedSite.id)}))} required /></label>
+                              <label>Beschreibung<input value={roomForm.description} onChange={e=>setRoomForm(p=>({...p,description:e.target.value}))} /></label>
+                              <label>Kapazität<input value={roomForm.capacity} onChange={e=>setRoomForm(p=>({...p,capacity:e.target.value}))} /></label>
+                              <label>Fläche<input value={roomForm.area} onChange={e=>setRoomForm(p=>({...p,area:e.target.value}))} /></label>
+                            </div>
+                            <button type="submit" className="primary-button">Raum speichern</button>
+                          </form>
+                          <table style={{marginTop:'16px'}}>
+                            <thead><tr><th>Raum</th><th>Kapazität</th><th>Fläche</th><th>Notiz</th></tr></thead>
+                            <tbody>{rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>(
+                              <tr key={r.id}><td>{r.name}</td><td>{r.capacity||'-'}</td><td>{r.area||'-'}</td><td>{r.notes||'-'}</td></tr>
+                            ))}</tbody>
+                          </table>
+                          {rooms.filter(r=>r.siteId===auditSelectedSite.id).length===0&&<p className="empty-hint">Noch keine Räume.</p>}
                         </div>
-                        <button type="submit" className="primary-button">Raum speichern</button>
-                      </form>
-                    </div>
-                  )}
-                  {auditTab==='grunddaten'&&(
-                    <div className="tab-content">
-                      <div className="info-grid">
-                        <div className="info-row"><span>Name</span><strong>{auditSelectedSite.name}</strong></div>
-                        <div className="info-row"><span>Adresse</span><strong>{auditSelectedSite.address}</strong></div>
-                        <div className="info-row"><span>Telefon</span><strong>{auditSelectedSite.phone||'-'}</strong></div>
-                        <div className="info-row"><span>Hausmeister</span><strong>{auditSelectedSite.caretakerPhone||'-'}</strong></div>
-                        <div className="info-row"><span>Räume gesamt</span><strong>{rooms.filter(r=>r.siteId===auditSelectedSite.id).length}</strong></div>
-                      </div>
-                    </div>
-                  )}
-                  {auditTab==='dokumente'&&(
-                    <div className="tab-content">
-                      <div className="form-card">
-                        <h4>Audit-Dokumente</h4>
-                        <table style={{marginTop:'12px'}}><thead><tr><th>Audit</th><th>Vorlage</th><th>Status</th><th>Aktion</th></tr></thead>
-                          <tbody>{audits.filter(a=>a.siteId===auditSelectedSite.id).map(audit=>(
-                            <tr key={audit.id}><td>{audit.title}</td><td>{audit.templateName}</td><td>{audit.status}</td>
-                              <td><button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(audit.id,audit.title)}>PDF</button></td>
-                            </tr>
-                          ))}</tbody>
-                        </table>
-                        {audits.filter(a=>a.siteId===auditSelectedSite.id).length===0&&<p className="empty-hint">Noch kein Audit für diesen Standort.</p>}
-                        <form className="form-card" style={{marginTop:'16px'}} onSubmit={createAudit}>
-                          <h4>Neues Audit anlegen</h4>
-                          <div className="form-grid">
-                            <label>Vorlage<select value={auditForm.templateId} onChange={e=>setAuditForm(p=>({...p,templateId:e.target.value,siteId:String(auditSelectedSite.id)}))}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-                            <label>Titel<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value}))} required /></label>
+                      )}
+                      {auditTab==='grunddaten'&&(
+                        <div className="tab-content">
+                          <div className="info-grid">
+                            <div className="info-row"><span>Name</span><strong>{auditSelectedSite.name}</strong></div>
+                            <div className="info-row"><span>Adresse</span><strong>{auditSelectedSite.address||'-'}</strong></div>
+                            <div className="info-row"><span>Telefon</span><strong>{auditSelectedSite.phone||'-'}</strong></div>
+                            <div className="info-row"><span>Hausmeister</span><strong>{auditSelectedSite.caretakerPhone||'-'}</strong></div>
+                            <div className="info-row"><span>Räume gesamt</span><strong>{rooms.filter(r=>r.siteId===auditSelectedSite.id).length}</strong></div>
+                            <div className="info-row"><span>Audit-Vorlage</span><strong>{auditSelectedTemplate.name}</strong></div>
                           </div>
-                          <button type="submit" className="primary-button">Audit anlegen</button>
-                        </form>
-                      </div>
-                    </div>
+                        </div>
+                      )}
+                      {auditTab==='dokumente'&&(
+                        <div className="tab-content">
+                          <form className="form-card" onSubmit={createAudit}>
+                            <h4>Audit-Dokument erstellen</h4>
+                            <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong></p>
+                            <div className="form-grid">
+                              <label>Titel / Bezeichnung<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value,siteId:String(auditSelectedSite.id),templateId:String(auditSelectedTemplate.id)}))} required /></label>
+                            </div>
+                            <button type="submit" className="primary-button">📄 Dokument erstellen</button>
+                          </form>
+                          {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length>0 && (
+                            <table style={{marginTop:'16px'}}>
+                              <thead><tr><th>Dokument</th><th>Status</th><th>Erstellt</th><th>Aktion</th></tr></thead>
+                              <tbody>{audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).map(audit=>(
+                                <tr key={audit.id}>
+                                  <td>{audit.title}</td>
+                                  <td><span className="status-badge">{audit.status}</span></td>
+                                  <td>{new Date(audit.createdAtUtc).toLocaleDateString('de-DE')}</td>
+                                  <td><button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(audit.id,audit.title)}>PDF</button></td>
+                                </tr>
+                              ))}</tbody>
+                            </table>
+                          )}
+                          {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length===0&&<p className="empty-hint">Noch kein Dokument für diesen Standort mit dieser Vorlage.</p>}
+                        </div>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -1110,11 +1196,12 @@ function App() {
               {datenablageView==='categories'&&(
                 <>
                   <div className="page-header"><h3>Datenablage</h3><p className="page-subtitle">Kategorie wählen</p></div>
-                  <div className="card-grid">
+                  <div className="list-view">
                     {[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(cat=>(
-                      <button key={cat.id} type="button" className="card-item" onClick={()=>{setDatenablageCategory(cat);setDatenablageView('standorte')}}>
-                        <span className="card-icon">📁</span><span className="card-name">{cat.name}</span>
-                        <span className="card-count">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
+                      <button key={cat.id} type="button" className="list-item" onClick={()=>{setDatenablageCategory(cat);setDatenablageView('standorte')}}>
+                        <span className="list-icon">📁</span><span className="list-name">{cat.name}</span>
+                        <span className="list-meta">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
+                        <span className="list-arrow">›</span>
                       </button>
                     ))}
                     {categories.length===0&&<p className="empty-hint">Keine Kategorien vorhanden.</p>}
@@ -1127,31 +1214,87 @@ function App() {
                     <button type="button" className="back-btn" onClick={()=>setDatenablageView('categories')}>← Zurück</button>
                     <div><h3>{datenablageCategory.name}</h3><p className="page-subtitle">Standort wählen</p></div>
                   </div>
-                  <div className="card-grid">
+                  <div className="list-view">
                     {[...sites].filter(s=>s.categoryId===datenablageCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
-                      <button key={site.id} type="button" className="card-item" onClick={()=>{setDatenablageSite(site);setDatenablageView('raume')}}>
-                        <span className="card-icon">🏢</span><span className="card-name">{site.name}</span>
-                        <span className="card-count">{rooms.filter(r=>r.siteId===site.id).length} Räume</span>
+                      <button key={site.id} type="button" className="list-item" onClick={()=>{setDatenablageSite(site);setDatenablageView('standort');setDatenablageTab('raume')}}>
+                        <span className="list-icon">🏢</span><span className="list-name">{site.name}</span>
+                        <span className="list-meta">{rooms.filter(r=>r.siteId===site.id).length} Räume · {audits.filter(a=>a.siteId===site.id).length} Audits</span>
+                        <span className="list-arrow">›</span>
                       </button>
                     ))}
                   </div>
                 </>
               )}
-              {datenablageView==='raume'&&datenablageSite&&(
+              {datenablageView==='standort'&&datenablageSite&&(
                 <>
                   <div className="page-header">
                     <button type="button" className="back-btn" onClick={()=>setDatenablageView('standorte')}>← Zurück</button>
-                    <div><h3>{datenablageSite.name}</h3><p className="page-subtitle">Räume und abgelegte Audits</p></div>
+                    <div><h3>{datenablageSite.name}</h3><p className="page-subtitle">{datenablageSite.address}</p></div>
                   </div>
-                  <div className="card-grid">
-                    {[...rooms].filter(r=>r.siteId===datenablageSite.id).sort((a,b)=>a.name.localeCompare(b.name)).map(room=>(
-                      <div key={room.id} className="card-item static">
-                        <span className="card-icon">🚪</span><span className="card-name">{room.name}</span>
-                        <span className="card-count">{audits.filter(a=>a.siteId===datenablageSite!.id).length} Audits</span>
-                      </div>
+                  <div className="tab-bar">
+                    {(['raume','grunddaten','dokumente'] as const).map(tab=>(
+                      <button key={tab} type="button" className={`tab-btn${datenablageTab===tab?' active':''}`} onClick={()=>setDatenablageTab(tab)}>
+                        {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':'📄 Dokumente'}
+                      </button>
                     ))}
-                    {rooms.filter(r=>r.siteId===datenablageSite.id).length===0&&<p className="empty-hint">Noch keine Räume für diesen Standort.</p>}
                   </div>
+                  {datenablageTab==='raume'&&(
+                    <div className="tab-content">
+                      {[...rooms].filter(r=>r.siteId===datenablageSite.id).sort((a,b)=>a.name.localeCompare(b.name)).map(room=>{
+                        const roomAudits = audits.filter(a=>a.siteId===datenablageSite!.id)
+                        return (
+                          <div key={room.id} className="daten-raum">
+                            <div className="daten-raum-header">
+                              <span>🚪</span><strong>{room.name}</strong>
+                              {room.capacity&&<span className="list-meta">Kap: {room.capacity}</span>}
+                              {room.area&&<span className="list-meta">Fläche: {room.area}</span>}
+                            </div>
+                            {roomAudits.length>0&&(
+                              <div className="daten-audit-list">
+                                {roomAudits.map(a=>(
+                                  <div key={a.id} className="daten-audit-item">
+                                    <span>📋</span><span>{a.title}</span>
+                                    <span className="list-meta">{a.templateName}</span>
+                                    <span className="list-meta">{new Date(a.createdAtUtc).toLocaleDateString('de-DE')}</span>
+                                    <button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(a.id,a.title)}>PDF</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {rooms.filter(r=>r.siteId===datenablageSite.id).length===0&&<p className="empty-hint">Noch keine Räume.</p>}
+                    </div>
+                  )}
+                  {datenablageTab==='grunddaten'&&(
+                    <div className="tab-content">
+                      <div className="info-grid">
+                        <div className="info-row"><span>Name</span><strong>{datenablageSite.name}</strong></div>
+                        <div className="info-row"><span>Adresse</span><strong>{datenablageSite.address||'-'}</strong></div>
+                        <div className="info-row"><span>Telefon</span><strong>{datenablageSite.phone||'-'}</strong></div>
+                        <div className="info-row"><span>Hausmeister</span><strong>{datenablageSite.caretakerPhone||'-'}</strong></div>
+                        <div className="info-row"><span>Räume</span><strong>{rooms.filter(r=>r.siteId===datenablageSite.id).length}</strong></div>
+                        <div className="info-row"><span>Audits</span><strong>{audits.filter(a=>a.siteId===datenablageSite.id).length}</strong></div>
+                      </div>
+                    </div>
+                  )}
+                  {datenablageTab==='dokumente'&&(
+                    <div className="tab-content">
+                      {audits.filter(a=>a.siteId===datenablageSite.id).length===0
+                        ? <p className="empty-hint">Noch keine Dokumente für diesen Standort.</p>
+                        : <table><thead><tr><th>Dokument</th><th>Vorlage</th><th>Status</th><th>Erstellt</th><th>Aktion</th></tr></thead>
+                            <tbody>{audits.filter(a=>a.siteId===datenablageSite.id).map(a=>(
+                              <tr key={a.id}><td>{a.title}</td><td>{a.templateName}</td>
+                                <td><span className="status-badge">{a.status}</span></td>
+                                <td>{new Date(a.createdAtUtc).toLocaleDateString('de-DE')}</td>
+                                <td><button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(a.id,a.title)}>PDF</button></td>
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                      }
+                    </div>
+                  )}
                 </>
               )}
             </section>
@@ -1160,57 +1303,104 @@ function App() {
           {page==='einstellungen-kategorien'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Standort-Kategorien</h3></div>
-              <table><thead><tr><th>Name</th><th>Beschreibung</th></tr></thead>
-                <tbody>{categories.map(c=><tr key={c.id}><td>{c.name}</td><td>{c.description}</td></tr>)}</tbody>
-              </table>
               <form className="form-card" onSubmit={createCategory}>
-                <h4>Neue Kategorie</h4>
+                <h4>Neue Kategorie anlegen</h4>
                 <div className="form-grid">
-                  <label>Name<input value={categoryForm.name} onChange={e=>setCategoryForm(p=>({...p,name:e.target.value}))} required /></label>
-                  <label>Beschreibung<input value={categoryForm.description} onChange={e=>setCategoryForm(p=>({...p,description:e.target.value}))} /></label>
+                  <label>Name<input value={categoryForm.name} onChange={e=>setCategoryForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Grundschulen" required /></label>
+                  <label>Beschreibung<input value={categoryForm.description} onChange={e=>setCategoryForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
                 </div>
                 <button type="submit" className="primary-button">Kategorie speichern</button>
               </form>
+              <div style={{marginTop:'24px'}}>
+                <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Kategorien ({categories.length})</h4>
+                {categories.length===0?<p className="empty-hint">Noch keine Kategorien.</p>:(
+                  <table><thead><tr><th>Name</th><th>Beschreibung</th></tr></thead>
+                    <tbody>{[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(c=><tr key={c.id}><td>{c.name}</td><td>{c.description||'-'}</td></tr>)}</tbody>
+                  </table>
+                )}
+              </div>
             </section>
           ):null}
 
           {page==='einstellungen-standorte'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Standorte</h3></div>
-              <table><thead><tr><th>Name</th><th>Kategorie</th><th>Adresse</th><th>Status</th></tr></thead>
-                <tbody>{[...sites].sort((a,b)=>a.name.localeCompare(b.name)).map(s=>(
-                  <tr key={s.id}><td>{s.name}</td><td>{categories.find(c=>c.id===s.categoryId)?.name??'-'}</td><td>{s.address}</td><td>{s.active?'Aktiv':'Inaktiv'}</td></tr>
-                ))}</tbody>
-              </table>
               <form className="form-card" onSubmit={createSite}>
                 <h4>Neuen Standort anlegen</h4>
                 <div className="form-grid">
                   <label>Kategorie<select value={siteForm.categoryId} onChange={e=>setSiteForm(p=>({...p,categoryId:e.target.value}))}>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-                  <label>Name<input value={siteForm.name} onChange={e=>setSiteForm(p=>({...p,name:e.target.value}))} required /></label>
-                  <label>Adresse<input value={siteForm.address} onChange={e=>setSiteForm(p=>({...p,address:e.target.value}))} /></label>
-                  <label>Telefon<input value={siteForm.phone} onChange={e=>setSiteForm(p=>({...p,phone:e.target.value}))} /></label>
-                  <label>Hausmeister Telefon<input value={siteForm.caretakerPhone} onChange={e=>setSiteForm(p=>({...p,caretakerPhone:e.target.value}))} /></label>
+                  <label>Name<input value={siteForm.name} onChange={e=>setSiteForm(p=>({...p,name:e.target.value}))} placeholder="Standortname" required /></label>
+                  <label>Adresse<input value={siteForm.address} onChange={e=>setSiteForm(p=>({...p,address:e.target.value}))} placeholder="Straße, PLZ Ort" /></label>
+                  <label>Telefon<input value={siteForm.phone} onChange={e=>setSiteForm(p=>({...p,phone:e.target.value}))} placeholder="+49 ..." /></label>
+                  <label>Hausmeister Telefon<input value={siteForm.caretakerPhone} onChange={e=>setSiteForm(p=>({...p,caretakerPhone:e.target.value}))} placeholder="+49 ..." /></label>
                 </div>
                 <button type="submit" className="primary-button">Standort speichern</button>
               </form>
+              <div style={{marginTop:'24px'}}>
+                <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Standorte ({sites.length})</h4>
+                {sites.length===0?<p className="empty-hint">Noch keine Standorte.</p>:(
+                  <table><thead><tr><th>Name</th><th>Kategorie</th><th>Adresse</th><th>Status</th></tr></thead>
+                    <tbody>{[...sites].sort((a,b)=>a.name.localeCompare(b.name)).map(s=>(
+                      <tr key={s.id}><td>{s.name}</td><td>{categories.find(c=>c.id===s.categoryId)?.name??'-'}</td><td>{s.address||'-'}</td><td><span className={s.active?'status-active':'status-inactive'}>{s.active?'Aktiv':'Inaktiv'}</span></td></tr>
+                    ))}</tbody>
+                  </table>
+                )}
+              </div>
             </section>
           ):null}
 
           {page==='einstellungen-vorlagen'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Audit-Vorlagen</h3></div>
-              <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Felder</th></tr></thead>
-                <tbody>{templates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.description}</td><td>{t.fields.map(f=>f.name).join(', ')}</td></tr>)}</tbody>
-              </table>
-              <form className="form-card" onSubmit={createTemplate}>
-                <h4>Neue Vorlage</h4>
+              <div className="form-card">
+                <h4>Neue Vorlage erstellen</h4>
                 <div className="form-grid">
-                  <label>Name<input value={templateForm.name} onChange={e=>setTemplateForm(p=>({...p,name:e.target.value}))} required /></label>
-                  <label>Beschreibung<input value={templateForm.description} onChange={e=>setTemplateForm(p=>({...p,description:e.target.value}))} /></label>
-                  <label className="full-width">Felder (Name|typ|reihenfolge|pflichtfeld)<textarea rows={5} value={templateForm.fields} onChange={e=>setTemplateForm(p=>({...p,fields:e.target.value}))} /></label>
+                  <label>Vorlagenname<input value={templateForm.name} onChange={e=>setTemplateForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Standard-Schulaudit" required /></label>
+                  <label>Beschreibung<input value={templateForm.description} onChange={e=>setTemplateForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
                 </div>
-                <button type="submit" className="primary-button">Vorlage speichern</button>
-              </form>
+                <div style={{marginTop:'16px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                    <strong style={{fontSize:'0.95rem'}}>Datenfelder</strong>
+                    <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true}])}>+ Feld hinzufügen</button>
+                  </div>
+                  <div className="field-builder">
+                    {templateFields.map((field,idx)=>(
+                      <div key={idx} className="field-builder-row">
+                        <span className="field-order">{field.order}</span>
+                        <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
+                        <select value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
+                          <option value="text">Text</option>
+                          <option value="number">Zahl</option>
+                          <option value="dropdown">Auswahl (Dropdown)</option>
+                          <option value="textarea">Langer Text</option>
+                          <option value="checkbox">Checkbox</option>
+                          <option value="image">Bild</option>
+                        </select>
+                        <label className="field-required-check" title="Pflichtfeld für Fortschrittsbalken">
+                          <input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />
+                          Pflicht
+                        </label>
+                        <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
+                      </div>
+                    ))}
+                    {templateFields.length===0&&<p className="empty-hint">Noch keine Felder. Klick auf "+ Feld hinzufügen".</p>}
+                  </div>
+                </div>
+                <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={(e)=>{
+                  const syntheticFields = templateFields.map(f=>`${f.name}|${f.type}|${f.order}|${f.required}`).join('\n')
+                  setTemplateForm(p=>({...p,fields:syntheticFields}))
+                  createTemplate(e as unknown as React.FormEvent)
+                  setTemplateFields([{name:'',type:'text',order:1,required:true}])
+                }}>Vorlage speichern</button>
+              </div>
+              <div style={{marginTop:'24px'}}>
+                <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Vorlagen ({templates.length})</h4>
+                {templates.length===0?<p className="empty-hint">Noch keine Vorlagen.</p>:(
+                  <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Felder</th></tr></thead>
+                    <tbody>{templates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.description||'-'}</td><td>{t.fields.length} Felder: {t.fields.map(f=>f.name).join(', ')}</td></tr>)}</tbody>
+                  </table>
+                )}
+              </div>
             </section>
           ):null}
 
@@ -1219,19 +1409,79 @@ function App() {
 
           {page==='admin-benutzer'&&isAdmin?(
             <section className="panel">
-              <div className="page-header"><h3>Benutzerverwaltung</h3></div>
-              <table><thead><tr><th>Name</th><th>Rolle</th><th>Status</th><th>Aktionen</th></tr></thead>
+              <div className="page-header">
+                <h3>Benutzerverwaltung</h3>
+                <button type="button" className="primary-button" style={{marginLeft:'auto'}} onClick={()=>setShowNewUserForm(v=>!v)}>
+                  {showNewUserForm?'✕ Abbrechen':'+ Benutzer anlegen'}
+                </button>
+              </div>
+              {showNewUserForm&&(
+                <form className="form-card" onSubmit={async e=>{
+                  e.preventDefault()
+                  if (!session) return
+                  try {
+                    const res = await apiRequest<{user:User}>('/api/users', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userName:newUserForm.userName,displayName:newUserForm.displayName,password:newUserForm.password,role:newUserForm.role})})
+                    setUsers(p=>[...p,res.user])
+                    setNewUserForm({userName:'',displayName:'',password:'',role:'Benutzer'})
+                    setShowNewUserForm(false)
+                  } catch (err) { setError(err instanceof Error?err.message:'Fehler beim Anlegen') }
+                }}>
+                  <h4>Neuen Benutzer anlegen</h4>
+                  <div className="form-grid">
+                    <label>Benutzername<input value={newUserForm.userName} onChange={e=>setNewUserForm(p=>({...p,userName:e.target.value}))} placeholder="benutzername" required /></label>
+                    <label>Anzeigename<input value={newUserForm.displayName} onChange={e=>setNewUserForm(p=>({...p,displayName:e.target.value}))} placeholder="Vor- und Nachname" required /></label>
+                    <label>Passwort<input type="password" value={newUserForm.password} onChange={e=>setNewUserForm(p=>({...p,password:e.target.value}))} placeholder="Mindestens 8 Zeichen" required /></label>
+                    <label>Rolle<select value={newUserForm.role} onChange={e=>setNewUserForm(p=>({...p,role:e.target.value}))}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option></select></label>
+                  </div>
+                  <button type="submit" className="primary-button">Benutzer anlegen</button>
+                </form>
+              )}
+              {editingUser&&(
+                <form className="form-card" style={{border:'1px solid rgba(96,165,250,0.3)',background:'rgba(37,99,235,0.06)'}} onSubmit={async e=>{
+                  e.preventDefault()
+                  if (!session) return
+                  try {
+                    const res = await apiRequest<{user:User}>(`/api/users/${editingUser.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({displayName:editingUser.displayName,role:editingUser.role})})
+                    setUsers(p=>p.map(u=>u.id===editingUser.id?res.user:u))
+                    setEditingUser(null)
+                  } catch { setError('Benutzer konnte nicht aktualisiert werden.') }
+                }}>
+                  <h4>Benutzer bearbeiten: {editingUser.userName}</h4>
+                  <div className="form-grid">
+                    <label>Anzeigename<input value={editingUser.displayName} onChange={e=>setEditingUser(p=>p?{...p,displayName:e.target.value}:p)} /></label>
+                    <label>Rolle<select value={editingUser.role} onChange={e=>setEditingUser(p=>p?{...p,role:e.target.value}:p)}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option></select></label>
+                    <label className="full-width">Passwort zurücksetzen (leer lassen = keine Änderung)
+                      <input type="password" id="resetPwInput" placeholder="Neues Passwort eingeben..." onBlur={async e=>{
+                        const pw=e.target.value
+                        if (pw.length>=8&&session) {
+                          try { await apiRequest(`/api/users/${editingUser.id}/password`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({newPassword:pw})}); e.target.value=''; e.target.placeholder='✓ Passwort gesetzt' } catch { setError('Passwort konnte nicht gesetzt werden.') }
+                        }
+                      }} />
+                    </label>
+                  </div>
+                  <div style={{display:'flex',gap:'8px'}}>
+                    <button type="submit" className="primary-button">Änderungen speichern</button>
+                    <button type="button" className="secondary-button" onClick={()=>setEditingUser(null)}>Abbrechen</button>
+                  </div>
+                </form>
+              )}
+              <table>
+                <thead><tr><th>Anzeigename</th><th>Benutzername</th><th>Rolle</th><th>Status</th><th>Aktionen</th></tr></thead>
                 <tbody>{users.map(user=>(
                   <tr key={user.id}>
-                    <td>{user.displayName} <small style={{color:'var(--muted)'}}>({user.userName})</small></td>
+                    <td>{user.displayName}</td>
+                    <td><small style={{color:'var(--muted)'}}>{user.userName}</small></td>
                     <td><span className={`role-badge role-${user.role.toLowerCase()}`}>{user.role}</span></td>
                     <td><span className={user.isActive?'status-active':'status-inactive'}>{user.isActive?'Aktiv':'Inaktiv'}</span></td>
-                    <td>{user.userName!==activeSession.user.userName&&user.role!=='Superadmin'&&(
-                      <div style={{display:'flex',gap:'8px'}}>
-                        <button type="button" className="secondary-button" onClick={()=>toggleUserActive(user.id)}>{user.isActive?'Deaktivieren':'Aktivieren'}</button>
-                        <button type="button" className="danger-button" onClick={()=>deleteUser(user.id)}>Löschen</button>
-                      </div>
-                    )}</td>
+                    <td><div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>{setEditingUser(user);setShowNewUserForm(false)}}>✏️ Bearbeiten</button>
+                      {user.userName!==activeSession.user.userName&&user.role!=='Superadmin'&&(
+                        <>
+                          <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>toggleUserActive(user.id)}>{user.isActive?'Deaktivieren':'Aktivieren'}</button>
+                          <button type="button" className="danger-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>deleteUser(user.id)}>Löschen</button>
+                        </>
+                      )}
+                    </div></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -1259,13 +1509,13 @@ function App() {
                 <h4>Automatische Backups</h4>
                 <div className="form-grid">
                   <label>Uhrzeit<input type="time" value={backupSchedule.time} onChange={e=>setBackupSchedule(p=>({...p,time:e.target.value}))} /></label>
-                  <label>Max. Backups<input type="number" min="1" max="100" value={backupSchedule.maxBackups} onChange={e=>setBackupSchedule(p=>({...p,maxBackups:parseInt(e.target.value)||10}))} /></label>
+                  <label>Max. gespeicherte Backups<input type="number" min="1" max="100" value={backupSchedule.maxBackups} onChange={e=>setBackupSchedule(p=>({...p,maxBackups:parseInt(e.target.value)||10}))} /></label>
                 </div>
                 <div style={{marginTop:'12px'}}>
-                  <p style={{fontWeight:500,marginBottom:'8px'}}>Wochentage:</p>
+                  <p style={{fontWeight:500,marginBottom:'8px',fontSize:'0.9rem'}}>Wochentage:</p>
                   <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
                     {['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'].map(day=>(
-                      <label key={day} style={{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer'}}>
+                      <label key={day} style={{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',padding:'6px 12px',borderRadius:'8px',border:'1px solid var(--border)',background:backupSchedule.days.includes(day)?'rgba(37,99,235,0.15)':'transparent'}}>
                         <input type="checkbox" checked={backupSchedule.days.includes(day)} onChange={e=>{if(e.target.checked)setBackupSchedule(p=>({...p,days:[...p.days,day]}));else setBackupSchedule(p=>({...p,days:p.days.filter(d=>d!==day)}))}} />{day}
                       </label>
                     ))}
@@ -1279,16 +1529,32 @@ function App() {
           {page==='admin-export'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Datenexport</h3></div>
-              <div className="form-card">
-                <div className="form-grid">
-                  <label>Standort<select value={exportSiteId} onChange={e=>setExportSiteId(e.target.value)}>{sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-                </div>
-                <button type="button" className="primary-button" onClick={exportAuditZip}>📦 ZIP exportieren</button>
+              <div className="tab-bar" style={{marginBottom:'20px'}}>
+                <button type="button" className={`tab-btn${exportMode==='site'?' active':''}`} onClick={()=>setExportMode('site')}>📍 Einzelner Standort</button>
+                <button type="button" className={`tab-btn${exportMode==='all'?' active':''}`} onClick={()=>setExportMode('all')}>🌐 Alle Standorte</button>
               </div>
+              {exportMode==='site'?(
+                <div className="form-card">
+                  <h4>Standort-Export</h4>
+                  <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'16px'}}>Exportiert alle Daten, Räume und Audits eines Standorts als ZIP-Archiv.</p>
+                  <div className="form-grid">
+                    <label>Kategorie<select onChange={e=>{const id=parseInt(e.target.value);const s=sites.find(x=>x.categoryId===id);if(s)setExportSiteId(String(s.id))}}><option value="">Alle</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+                    <label>Standort<select value={exportSiteId} onChange={e=>setExportSiteId(e.target.value)}>{sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+                  </div>
+                  <button type="button" className="primary-button" onClick={exportAuditZip}>📦 ZIP erstellen & herunterladen</button>
+                </div>
+              ):(
+                <div className="form-card">
+                  <h4>Gesamtexport</h4>
+                  <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'16px'}}>Exportiert alle Kategorien, Standorte, Räume und Audits in einer hierarchischen ZIP-Struktur.<br/><code style={{fontSize:'0.82rem',background:'rgba(148,163,184,0.1)',padding:'2px 6px',borderRadius:'4px'}}>Kategorie → Standort → Raum → Dateien</code></p>
+                  <button type="button" className="primary-button" onClick={()=>exportAuditZip()}>📦 Gesamtexport herunterladen</button>
+                </div>
+              )}
             </section>
           ):null}
 
           {page==='admin-logs'&&isAdmin?(<section className="panel"><div className="page-header"><h3>System-Logs</h3></div><p className="empty-hint">Logs werden in einer späteren Version angezeigt.</p></section>):null}
+
 
 
           {page === 'profil' ? (
@@ -1402,6 +1668,5 @@ async function apiRequest<T>(path: string, session: Session, init?: RequestInit)
 }
 
 export default App
-
 
 
