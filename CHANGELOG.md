@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.7.6] - 2026-10-10
+
+### PDF-Designer v2 (Mehrseiter WYSIWYG) + UI Spacing Fix
+
+#### PDF-Designer — Mehrseiten-Support
+- **Seitenliste links**: Alle Seiten in einer Übersicht, aktive Seite hervorgehoben
+- **+ Seite hinzufügen**: Neue leere Seite mit einem Klick
+- **Seiten löschen**: X-Button an jeder Seite
+- **Seitenname**: Direkt in der Seitenliste umbenennen (Klick auf Namen)
+- **Seitenausrichtung**: Jede Seite individuell Hochkant oder Querformat
+- **Druckbereich**: Roter gestrichelter Rahmen (toggle ein/aus im Header)
+
+#### PDF-Designer — Kopf/Fußzeilen
+- **Globale Kopf/Fußzeile**: Gilt für alle Seiten (⚙ Kopf/Fuß Button in Toolbar)
+  - Unterstützt Variablen: `{{pageNumber}}`, `{{totalPages}}`
+- **Seiten-spezifisch**: Je Seite eigene Kopf/Fußzeile überschreiben (Schalter "Globale Kopf/Fußzeile")
+
+#### PDF-Designer — Neue Elementfunktionen
+- **8 Elementtypen** (erweitert):
+  - `T Text` — Freitext, doppelklick zum Bearbeiten, vollständige Formatierung
+  - `⟨⟩ Variable` — Platzhalter aus Standortdaten oder Vorlagenfeldern
+  - `🖼 Bild (fix)` — Statisches Bild hochladen (Logo, Firmenzeichen), Base64 gespeichert
+  - `📷 Bild (Audit)` — Platzhalter für Audit-Fotos (automatisch befüllt bei Export)
+  - `📊 Datentabelle` — Auto-befüllt aus Audit; Seitenumbruch wenn nötig
+  - `🔄 Wiederholender Block` — 1× pro Raum/Objekt wiederholt
+  - `― Linie` — Trennlinie (Farbe wählbar)
+  - `▭ Box` — Rechteck/Rahmen
+
+- **Tabelle & Block Spalten/Felder** (Eigenschaften-Panel):
+  - Raumname, Kategorie, Standortname immer wählbar
+  - Alle Vorlagenfelder der gewählten Vorlage wählbar
+
+- **Neue Textformatierung**:
+  - Unterstrich (U)
+  - Vertikale Ausrichtung: Oben ⬆ / Mitte ↕ / Unten ⬇
+  - Ecken-Radius (Schieberegler)
+  - Transparenz/Opacity (Schieberegler)
+  - Rahmenfarbe frei wählbar
+
+- **Properties Panel**: Kein Scroll mehr, Breite automatisch angepasst
+
+#### UI Spacing Fix (global)
+- `.form-grid` gap: 16px — konsistenter Abstand zwischen Feldern
+- `.form-card` padding: 20px, Buttons haben immer 16px margin-top
+- Abstände zwischen Tabellen und darüberliegenden Formularen verbessert
+- `.form-inline-row` (Label links, Input rechts) für kompaktere Formulare
+- `.button-group` für einheitliche Button-Abstände
+
+### Status
+- ✅ TypeScript Build: 0 Fehler (24 Module)
+- ✅ Docker Rebuild: Erfolgreich
+- ✅ GitHub: `83d84f0` auf master
+
 ## [1.7.5] - 2026-10-10
 
 ### WYSIWYG PDF-Designer, Backup Download/Upload & Fixes
