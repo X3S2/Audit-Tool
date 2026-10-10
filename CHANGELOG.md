@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.7.3] - 2026-10-10
+
+### Design & UX Komplettüberarbeitung
+
+#### Header-Fixes
+- **Logo-Badge "A" entfernt** — kompakterer, saubererer Header (56px hoch)
+- **Dropdown-Overlay-Fix** — Profil-Dropdown klappt jetzt über den Header auf, Header-Größe bleibt unverändert (`position: absolute, z-index: 9999`)
+- **Click-Outside** — Dropdown schließt sich beim Klick außerhalb (`useRef + useEffect`)
+
+#### Audit-Verbesserungen
+- **Listenansicht als Standard** — statt Kacheln; Toggle (☰/⊞) speichert Einstellung pro Browser (`localStorage`)
+- **Vorlage-Auswahl** — Beim Öffnen eines Standorts muss zuerst eine Audit-Vorlage gewählt werden. Alle nachfolgenden Daten (Räume, Grunddaten, Dokumente) sind vorlagenspezifisch
+- **Formulare oben** — Raum anlegen und Audit erstellen sind jetzt über der Tabelle
+- **Dokumente-Tab** — Korrekte Bezeichnung "Audit-Dokument erstellen" statt "Neues Audit anlegen"
+
+#### Datenablage-Verbesserungen
+- **Gleiche Hierarchie wie Audits** — Kategorie → Standort → 3 Tabs (Räume, Grunddaten, Dokumente)
+- **Räume-Tab** — Zeigt Räume mit jeweils zugehörigen Audit-Dokumenten als Unterordner
+- **Read-Only** — Kein Erstellen/Bearbeiten in der Datenablage
+
+#### Einstellungen-Verbesserungen
+- **Formulare oben, Tabellen unten** — Kategorien, Standorte, Vorlagen
+- **Interaktiver Feld-Builder** (Vorlagen) — Ersetzt die alte Textarea:
+  - Felder mit Name, Typ (Text/Zahl/Dropdown/Langer Text/Checkbox/Bild)
+  - Pflichtfeld-Toggle für Fortschrittsbalken-Relevanz
+  - Reihenfolge-Nummern visuell angezeigt
+  - Feld hinzufügen / entfernen
+
+#### Admin-Verbesserungen
+- **Benutzerverwaltung**: "Benutzer anlegen" Button (togglebar) über der Liste
+- **Benutzer bearbeiten**: Edit-Formular mit Anzeigename, Rolle, Passwort-Reset
+- **Datenexport**: Zwei Modi — Einzelner Standort / Alle Standorte; verbessertes UI
+
+#### CSS-Bugfixes
+- **Tabs-Header Scrollbar** entfernt (`scrollbar-width: none`)
+- **app-container Höhe** auf 56px Header angepasst
+
+### Status
+- ✅ TypeScript Build: 0 Fehler  
+- ✅ Docker Rebuild: Erfolgreich
+- ✅ Alle Container laufen
+- ✅ GitHub Push: erfolgreich
+
 ## [1.7.2] - 2026-10-09
 
 ### Vollständiges UI/UX Redesign & Strukturkorrektur
