@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.7.2] - 2026-10-09
+
+### Vollständiges UI/UX Redesign & Strukturkorrektur
+
+#### Navigation (komplett überarbeitet)
+- **Doppelte Emojis behoben**: Icon und Label sind jetzt getrennte Felder in NavItem
+- **Korrektes Menü-Struktur** (wie in plan.md beschrieben):
+  1. Dashboard
+  2. Audits (keine Subpages im NAV — intern per Drill-Down)
+  3. Datenablage (keine Subpages im NAV — intern per Drill-Down)
+  4. Einstellungen ⚙️ (Admin only) → 5 Subpages: Kategorien, Standorte, Vorlagen, Checklisten, PDF-Designer
+  5. Admin Page 👨‍💼 (Admin only) → 4 Subpages: Benutzer, Backup, Datenexport, Logs
+  6. Profil (über Header-Dropdown erreichbar)
+- **Sidebar Layout-Fix**: `app-container` erhält jetzt korrekte Grid-Styles (war vorher unter dem Header statt daneben)
+- **Menu-Toggle**: Hamburger-Button im Header klappt Sidebar ein/aus
+
+#### Audits — Hierarchische Drill-Down Navigation
+- **Kategorie-Ansicht**: Alle Standort-Kategorien als Kacheln (A–Z sortiert)
+- **Standort-Ansicht**: Standorte der gewählten Kategorie (A–Z sortiert)
+- **Standort-Detail** mit 3 Tabs:
+  - 🏠 Räume/Objekte: Raumliste + neuen Raum anlegen
+  - 📋 Grunddaten: Standortinfos (Name, Adresse, Telefon, Hausmeister)
+  - 📄 Dokumente: Audit-Liste + neues Audit anlegen + PDF-Export
+- **Zurück-Button** auf jeder Ebene
+
+#### Datenablage — Gleiche Struktur wie Audits
+- Kategorie → Standort → Räume (mit Audit-Anzahl)
+
+#### Einstellungen (Subpages korrekt)
+- **Kategorien**: Standort-Kategorien anlegen/anzeigen
+- **Standorte**: Standorte anlegen/anzeigen (Kategorie-Zuordnung)
+- **Audit-Vorlagen**: Vorlagen anlegen/anzeigen (war vorher falsch in Audits-NAV)
+- **Checklisten**: Platzhalter (kommt in späterer Version)
+- **PDF-Designer**: Platzhalter (kommt in späterer Version)
+
+#### Admin-Seiten (separate Seiten statt Tabs)
+- Jede Subpage ist jetzt eine eigene Seite (nicht mehr Tab-basiert)
+- Admin-Subpages im Sidebar bleiben nach dem Klick expanded
+
+#### Design-Verbesserungen
+- **Card-Grid** für Kategorien/Standort-Auswahl
+- **Tab-Bar** für Standort-Detail-Reiter
+- **Info-Grid** für Grunddaten-Anzeige
+- **Back-Button** konsistent auf allen Drill-Down-Ebenen
+- **Leerer-State-Hinweis** (.empty-hint) bei fehlenden Daten
+- **Rollen-Badges** in Benutzerverwaltung
+- **Status-Indikatoren** (aktiv/inaktiv) in Benutzerverwaltung
+
+#### Weitere Bugfixes
+- Dashboard 72%-Bug bereits in v1.7.1 behoben — Bestätigung dass korrekte Counts gezeigt werden
+- toggleUserActive: 2-Argument-Aufruf auf 1-Argument korrigiert
+
+### Status
+- ✅ TypeScript Build: 0 Fehler
+- ✅ Docker Rebuild: Erfolgreich
+- ✅ Alle Container laufen
+- ✅ GitHub Push: Erfolgreich
+
 ## [1.7.1] - 2026-10-09
 
 ### Bugfix & Navigation Improvements
