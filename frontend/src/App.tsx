@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import './theme.css'
 import './App.css'
 import { compressImage } from './imageCompression'
@@ -145,12 +145,21 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => readTheme())
   const [session, setSession] = useState<Session | null>(() => readSession())
   const [page, setPage] = useState<PageKey>('dashboard')
+  const [sidebarVisible, setSidebarVisible] = useState(true)
   const [error, setError] = useState('')
   const [showErrorBanner, setShowErrorBanner] = useState(false)
   const [loading, setLoading] = useState(false)
   const [profile, setProfile] = useState<User | null>(null)
   const [profileTab, setProfileTab] = useState<'info' | 'theme' | 'password'>('info')
-  const [adminTab, setAdminTab] = useState<'benutzer' | 'backup' | 'export' | 'logs'>('benutzer')
+  // Audit drill-down state
+  const [auditView, setAuditView] = useState<'categories' | 'standorte' | 'standort'>('categories')
+  const [auditSelectedCategory, setAuditSelectedCategory] = useState<Category | null>(null)
+  const [auditSelectedSite, setAuditSelectedSite] = useState<Site | null>(null)
+  const [auditTab, setAuditTab] = useState<'raume' | 'grunddaten' | 'dokumente'>('raume')
+  // Datenablage drill-down state
+  const [datenablageView, setDatenablageView] = useState<'categories' | 'standorte' | 'raume'>('categories')
+  const [datenablageCategory, setDatenablageCategory] = useState<Category | null>(null)
+  const [datenablageSite, setDatenablageSite] = useState<Site | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
@@ -178,10 +187,6 @@ function App() {
   const [checklistForm, setChecklistForm] = useState({ auditId: '', question: '', answer: '', status: 'offen' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
 
-  const categoryNameById = Object.fromEntries(categories.map((category) => [category.id, category.name]))
-  const siteNameById = Object.fromEntries(sites.map((site) => [site.id, site.name]))
-  const roomNameById = Object.fromEntries(rooms.map((room) => [room.id, room.name]))
-
   useEffect(() => {
     document.body.dataset.theme = theme
     document.documentElement.className = theme
@@ -195,10 +200,8 @@ function App() {
   }, [error])
 
   useEffect(() => {
-    if (page.startsWith('admin-')) {
-      const adminTabName = page.replace('admin-', '')
-      setAdminTab(adminTabName as 'benutzer' | 'backup' | 'export' | 'logs')
-    }
+    // Admin tab switching handled by direct page navigation now
+    void page
   }, [page])
 
   useEffect(() => {
@@ -845,48 +848,38 @@ function App() {
     }
   }
 
-  const navItems = [
-    { key: 'dashboard' as const, label: '📊 Dashboard', visible: true },
-    { 
-      key: 'audits' as const, 
-      label: '📋 Audits', 
-      visible: true,
+  const isAdmin = session ? canManageUsers(session.user.role) : false
+
+  const navItems: import('./components/Navigation').NavItem[] = [
+    { key: 'dashboard', label: 'Dashboard', icon: '📊', visible: true },
+    { key: 'audits', label: 'Audits', icon: '📋', visible: true },
+    { key: 'datenablage', label: 'Datenablage', icon: '💾', visible: true },
+    {
+      key: 'einstellungen-kategorien',
+      label: 'Einstellungen',
+      icon: '⚙️',
+      visible: isAdmin,
       subpages: [
-        { key: 'audits' as const, label: 'Audits Overview' },
-        { key: 'audits-raume' as const, label: '🏢 Räume & Objekte' },
-        { key: 'audits-standorte' as const, label: '📍 Standorte' },
-        { key: 'audits-vorlagen' as const, label: '📝 Vorlagen' }
+        { key: 'einstellungen-kategorien', label: 'Kategorien' },
+        { key: 'einstellungen-standorte', label: 'Standorte' },
+        { key: 'einstellungen-vorlagen', label: 'Audit-Vorlagen' },
+        { key: 'einstellungen-checklisten', label: 'Checklisten' },
+        { key: 'einstellungen-pdfdesigner', label: 'PDF-Designer' },
       ]
     },
-    { 
-      key: 'datenablage' as const, 
-      label: '💾 Datenablage', 
-      visible: true,
+    {
+      key: 'admin-benutzer',
+      label: 'Admin Page',
+      icon: '👨‍💼',
+      visible: isAdmin,
       subpages: [
-        { key: 'datenablage' as const, label: '📂 Übersicht' }
+        { key: 'admin-benutzer', label: 'Benutzer' },
+        { key: 'admin-backup', label: 'Backup' },
+        { key: 'admin-export', label: 'Datenexport' },
+        { key: 'admin-logs', label: 'Logs' },
       ]
     },
-    { 
-      key: 'einstellungen' as const, 
-      label: '⚙️ Einstellungen', 
-      visible: session ? canManageUsers(session.user.role) : false,
-      subpages: [
-        { key: 'einstellungen' as const, label: '⚙️ Konfiguration' },
-        { key: 'einstellungen' as const, label: '💻 System' }
-      ]
-    },
-    { 
-      key: 'admin' as const, 
-      label: '👨‍💼 Admin', 
-      visible: session ? canManageUsers(session.user.role) : false,
-      subpages: [
-        { key: 'admin-benutzer' as const, label: '👥 Benutzer' },
-        { key: 'admin-backup' as const, label: '💾 Backup' },
-        { key: 'admin-export' as const, label: '📤 Datenexport' },
-        { key: 'admin-logs' as const, label: '📋 Logs' }
-      ]
-    },
-    { key: 'profil' as const, label: '👤 Profil', visible: true }
+    { key: 'profil', label: 'Profil', icon: '👤', visible: true },
   ]
 
   const handleProfileAction = (action: 'profile' | 'password' | 'logout') => {
@@ -899,6 +892,15 @@ function App() {
     } else if (action === 'logout') {
       logout()
     }
+  }
+
+  const pageTitleMap: Record<string, string> = {
+    dashboard: 'Dashboard', audits: 'Audits', datenablage: 'Datenablage',
+    'einstellungen-kategorien': 'Kategorien', 'einstellungen-standorte': 'Standorte',
+    'einstellungen-vorlagen': 'Audit-Vorlagen', 'einstellungen-checklisten': 'Checklisten',
+    'einstellungen-pdfdesigner': 'PDF-Designer',
+    'admin-benutzer': 'Benutzerverwaltung', 'admin-backup': 'Datenbankbackup',
+    'admin-export': 'Datenexport', 'admin-logs': 'System-Logs', profil: 'Mein Profil',
   }
 
   if (!session) {
@@ -942,58 +944,45 @@ function App() {
 
   const activeSession = session
 
-  // Convert navigation items to Navigation component format
-  const navItemsForComponent = navItems.map((item) => ({
-    key: item.key,
-    label: item.label,
-    visible: item.visible,
-    icon: item.label.split(' ')[0],
-    subpages: item.subpages?.map(subpage => ({
-      key: subpage.key,
-      label: subpage.label
-    }))
-  }))
-
   const profileTabsData: TabItem[] = [
-    { id: 'info', label: '👤 Benutzer Info', icon: '👤' },
-    { id: 'theme', label: '🎨 Theme', icon: '🎨' },
-    { id: 'password', label: '🔑 Passwort', icon: '🔑' }
-  ]
-
-  const adminTabsData: TabItem[] = [
-    { id: 'benutzer', label: '👥 Benutzer', icon: '👥' },
-    { id: 'backup', label: '💾 Backup', icon: '💾' },
-    { id: 'export', label: '📤 Export', icon: '📤' },
-    { id: 'logs', label: '📋 Logs', icon: '📋' }
+    { id: 'info', label: 'Benutzer Info', icon: '👤' },
+    { id: 'theme', label: 'Design-Modus', icon: '🎨' },
+    { id: 'password', label: 'Passwort', icon: '🔑' }
   ]
 
   return (
     <div className="app-wrapper">
-      <Header 
-        theme={theme} 
-        onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} 
-        user={profile ?? activeSession.user} 
-        onProfileClick={handleProfileAction} 
+      <Header
+        theme={theme}
+        onThemeToggle={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+        user={profile ?? activeSession.user}
+        onProfileClick={handleProfileAction}
+        pageTitle={pageTitleMap[page] ?? 'Audit-Tool'}
+        onMenuToggle={() => setSidebarVisible(v => !v)}
       />
 
-      <div className="app-container">
-        <Navigation 
-          items={navItemsForComponent} 
-          currentPage={page} 
-          onPageChange={setPage} 
-        />
+      <div className={`app-container${sidebarVisible ? '' : ' sidebar-hidden'}`}>
+        {sidebarVisible && (
+          <Navigation
+            items={navItems}
+            currentPage={page}
+            onPageChange={(p) => {
+              setPage(p)
+              if (p === 'audits') setAuditView('categories')
+              if (p === 'datenablage') setDatenablageView('categories')
+            }}
+          />
+        )}
 
         <main className="main-panel">
           {showErrorBanner && error ? (
-            <Alert 
-              type="error" 
-              message={error} 
-              onClose={() => {
-                setShowErrorBanner(false)
-                setError('')
-              }} 
+            <Alert
+              type="error"
+              message={error}
+              onClose={() => { setShowErrorBanner(false); setError('') }}
             />
           ) : null}
+
 
           {page === 'dashboard' ? (
             <section className="panel">
@@ -1009,646 +998,298 @@ function App() {
 
           {page === 'audits' ? (
             <section className="panel">
-              <h3>Audits</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Audit</th>
-                    <th>Standort</th>
-                    <th>Vorlage</th>
-                    <th>Einträge</th>
-                    <th>Status</th>
-                    <th>Aktionen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {audits.map((audit) => (
-                    <tr key={audit.id}>
-                      <td>{audit.title}</td>
-                      <td>{siteNameById[audit.siteId] ?? 'Unbekannt'}</td>
-                      <td>{audit.templateName}</td>
-                      <td>{audit.entryCount ?? audit.checklistEntries?.length ?? 0}</td>
-                      <td>{audit.status}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => downloadAuditPdf(audit.id, audit.title)}
-                          title="Als PDF exportieren"
-                        >
-                          PDF
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <form className="form-card" onSubmit={createAudit}>
-                <h4>Neues Audit anlegen</h4>
-                <div className="form-grid">
-                  <label>
-                    Standort
-                    <select value={auditForm.siteId} onChange={(event) => setAuditForm((previous) => ({ ...previous, siteId: event.target.value }))}>
-                      {sites.map((site) => (
-                        <option key={site.id} value={site.id}>{site.name}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Vorlage
-                    <select value={auditForm.templateId} onChange={(event) => setAuditForm((previous) => ({ ...previous, templateId: event.target.value }))}>
-                      {templates.map((template) => (
-                        <option key={template.id} value={template.id}>{template.name}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Titel
-                    <input value={auditForm.title} onChange={(event) => setAuditForm((previous) => ({ ...previous, title: event.target.value }))} />
-                  </label>
-                </div>
-                <button type="submit" className="primary-button">Audit speichern</button>
-              </form>
-
-              <form className="form-card" onSubmit={addChecklistEntry}>
-                <h4>Checklistenpunkt hinzufügen</h4>
-                <div className="form-grid">
-                  <label>
-                    Audit
-                    <select value={checklistForm.auditId} onChange={(event) => setChecklistForm((previous) => ({ ...previous, auditId: event.target.value }))}>
-                      <option value="">Bitte auswählen</option>
-                      {audits.map((audit) => (
-                        <option key={audit.id} value={audit.id}>{audit.title}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Frage
-                    <input value={checklistForm.question} onChange={(event) => setChecklistForm((previous) => ({ ...previous, question: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Antwort
-                    <input value={checklistForm.answer} onChange={(event) => setChecklistForm((previous) => ({ ...previous, answer: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Status
-                    <select value={checklistForm.status} onChange={(event) => setChecklistForm((previous) => ({ ...previous, status: event.target.value }))}>
-                      <option value="offen">offen</option>
-                      <option value="ok">ok</option>
-                      <option value="warnung">warnung</option>
-                      <option value="kritisch">kritisch</option>
-                    </select>
-                  </label>
-                </div>
-                <button type="submit" className="primary-button">Eintrag speichern</button>
-              </form>
+              {auditView === 'categories' && (
+                <>
+                  <div className="page-header">
+                    <h3>Audits</h3>
+                    <p className="page-subtitle">Standort-Kategorie wählen</p>
+                  </div>
+                  <div className="card-grid">
+                    {[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(cat=>(
+                      <button key={cat.id} type="button" className="card-item" onClick={()=>{setAuditSelectedCategory(cat);setAuditView('standorte')}}>
+                        <span className="card-icon">📁</span>
+                        <span className="card-name">{cat.name}</span>
+                        <span className="card-count">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
+                      </button>
+                    ))}
+                    {categories.length===0&&<p className="empty-hint">Keine Kategorien. Bitte unter Einstellungen anlegen.</p>}
+                  </div>
+                </>
+              )}
+              {auditView === 'standorte' && auditSelectedCategory && (
+                <>
+                  <div className="page-header">
+                    <button type="button" className="back-btn" onClick={()=>setAuditView('categories')}>← Zurück</button>
+                    <div><h3>{auditSelectedCategory.name}</h3><p className="page-subtitle">Standort wählen</p></div>
+                  </div>
+                  <div className="card-grid">
+                    {[...sites].filter(s=>s.categoryId===auditSelectedCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
+                      <button key={site.id} type="button" className="card-item" onClick={()=>{setAuditSelectedSite(site);setAuditView('standort');setAuditTab('raume')}}>
+                        <span className="card-icon">🏢</span>
+                        <span className="card-name">{site.name}</span>
+                        <span className="card-count">{site.address}</span>
+                      </button>
+                    ))}
+                    {sites.filter(s=>s.categoryId===auditSelectedCategory.id).length===0&&<p className="empty-hint">Keine Standorte in dieser Kategorie.</p>}
+                  </div>
+                </>
+              )}
+              {auditView === 'standort' && auditSelectedSite && (
+                <>
+                  <div className="page-header">
+                    <button type="button" className="back-btn" onClick={()=>setAuditView('standorte')}>← Zurück</button>
+                    <div><h3>{auditSelectedSite.name}</h3><p className="page-subtitle">{auditSelectedSite.address}</p></div>
+                  </div>
+                  <div className="tab-bar">
+                    {(['raume','grunddaten','dokumente'] as const).map(tab=>(
+                      <button key={tab} type="button" className={`tab-btn${auditTab===tab?' active':''}`} onClick={()=>setAuditTab(tab)}>
+                        {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':'📄 Dokumente'}
+                      </button>
+                    ))}
+                  </div>
+                  {auditTab==='raume'&&(
+                    <div className="tab-content">
+                      <table><thead><tr><th>Raum</th><th>Kapazität</th><th>Fläche</th><th>Notiz</th></tr></thead>
+                        <tbody>{rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>(
+                          <tr key={r.id}><td>{r.name}</td><td>{r.capacity}</td><td>{r.area}</td><td>{r.notes}</td></tr>
+                        ))}</tbody>
+                      </table>
+                      <form className="form-card" onSubmit={createRoom}>
+                        <h4>Neuen Raum anlegen</h4>
+                        <div className="form-grid">
+                          <label>Raumname<input value={roomForm.name} onChange={e=>setRoomForm(p=>({...p,name:e.target.value,siteId:String(auditSelectedSite.id)}))} required /></label>
+                          <label>Beschreibung<input value={roomForm.description} onChange={e=>setRoomForm(p=>({...p,description:e.target.value}))} /></label>
+                          <label>Kapazität<input value={roomForm.capacity} onChange={e=>setRoomForm(p=>({...p,capacity:e.target.value}))} /></label>
+                          <label>Fläche<input value={roomForm.area} onChange={e=>setRoomForm(p=>({...p,area:e.target.value}))} /></label>
+                        </div>
+                        <button type="submit" className="primary-button">Raum speichern</button>
+                      </form>
+                    </div>
+                  )}
+                  {auditTab==='grunddaten'&&(
+                    <div className="tab-content">
+                      <div className="info-grid">
+                        <div className="info-row"><span>Name</span><strong>{auditSelectedSite.name}</strong></div>
+                        <div className="info-row"><span>Adresse</span><strong>{auditSelectedSite.address}</strong></div>
+                        <div className="info-row"><span>Telefon</span><strong>{auditSelectedSite.phone||'-'}</strong></div>
+                        <div className="info-row"><span>Hausmeister</span><strong>{auditSelectedSite.caretakerPhone||'-'}</strong></div>
+                        <div className="info-row"><span>Räume gesamt</span><strong>{rooms.filter(r=>r.siteId===auditSelectedSite.id).length}</strong></div>
+                      </div>
+                    </div>
+                  )}
+                  {auditTab==='dokumente'&&(
+                    <div className="tab-content">
+                      <div className="form-card">
+                        <h4>Audit-Dokumente</h4>
+                        <table style={{marginTop:'12px'}}><thead><tr><th>Audit</th><th>Vorlage</th><th>Status</th><th>Aktion</th></tr></thead>
+                          <tbody>{audits.filter(a=>a.siteId===auditSelectedSite.id).map(audit=>(
+                            <tr key={audit.id}><td>{audit.title}</td><td>{audit.templateName}</td><td>{audit.status}</td>
+                              <td><button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(audit.id,audit.title)}>PDF</button></td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                        {audits.filter(a=>a.siteId===auditSelectedSite.id).length===0&&<p className="empty-hint">Noch kein Audit für diesen Standort.</p>}
+                        <form className="form-card" style={{marginTop:'16px'}} onSubmit={createAudit}>
+                          <h4>Neues Audit anlegen</h4>
+                          <div className="form-grid">
+                            <label>Vorlage<select value={auditForm.templateId} onChange={e=>setAuditForm(p=>({...p,templateId:e.target.value,siteId:String(auditSelectedSite.id)}))}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                            <label>Titel<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value}))} required /></label>
+                          </div>
+                          <button type="submit" className="primary-button">Audit anlegen</button>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </section>
           ) : null}
 
-          {page === 'audits-standorte' ? (
+          {page === 'datenablage' ? (
             <section className="panel">
-              <h3>Standorte</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Kategorie</th>
-                    <th>Adresse</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sites.map((site) => (
-                    <tr key={site.id}>
-                      <td>{site.name}</td>
-                      <td>{categoryNameById[site.categoryId] ?? site.category ?? 'Unbekannt'}</td>
-                      <td>{site.address}</td>
-                      <td>{site.active ? 'Aktiv' : 'Inaktiv'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {datenablageView==='categories'&&(
+                <>
+                  <div className="page-header"><h3>Datenablage</h3><p className="page-subtitle">Kategorie wählen</p></div>
+                  <div className="card-grid">
+                    {[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(cat=>(
+                      <button key={cat.id} type="button" className="card-item" onClick={()=>{setDatenablageCategory(cat);setDatenablageView('standorte')}}>
+                        <span className="card-icon">📁</span><span className="card-name">{cat.name}</span>
+                        <span className="card-count">{sites.filter(s=>s.categoryId===cat.id).length} Standorte</span>
+                      </button>
+                    ))}
+                    {categories.length===0&&<p className="empty-hint">Keine Kategorien vorhanden.</p>}
+                  </div>
+                </>
+              )}
+              {datenablageView==='standorte'&&datenablageCategory&&(
+                <>
+                  <div className="page-header">
+                    <button type="button" className="back-btn" onClick={()=>setDatenablageView('categories')}>← Zurück</button>
+                    <div><h3>{datenablageCategory.name}</h3><p className="page-subtitle">Standort wählen</p></div>
+                  </div>
+                  <div className="card-grid">
+                    {[...sites].filter(s=>s.categoryId===datenablageCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
+                      <button key={site.id} type="button" className="card-item" onClick={()=>{setDatenablageSite(site);setDatenablageView('raume')}}>
+                        <span className="card-icon">🏢</span><span className="card-name">{site.name}</span>
+                        <span className="card-count">{rooms.filter(r=>r.siteId===site.id).length} Räume</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {datenablageView==='raume'&&datenablageSite&&(
+                <>
+                  <div className="page-header">
+                    <button type="button" className="back-btn" onClick={()=>setDatenablageView('standorte')}>← Zurück</button>
+                    <div><h3>{datenablageSite.name}</h3><p className="page-subtitle">Räume und abgelegte Audits</p></div>
+                  </div>
+                  <div className="card-grid">
+                    {[...rooms].filter(r=>r.siteId===datenablageSite.id).sort((a,b)=>a.name.localeCompare(b.name)).map(room=>(
+                      <div key={room.id} className="card-item static">
+                        <span className="card-icon">🚪</span><span className="card-name">{room.name}</span>
+                        <span className="card-count">{audits.filter(a=>a.siteId===datenablageSite!.id).length} Audits</span>
+                      </div>
+                    ))}
+                    {rooms.filter(r=>r.siteId===datenablageSite.id).length===0&&<p className="empty-hint">Noch keine Räume für diesen Standort.</p>}
+                  </div>
+                </>
+              )}
+            </section>
+          ) : null}
 
+          {page==='einstellungen-kategorien'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header"><h3>Standort-Kategorien</h3></div>
+              <table><thead><tr><th>Name</th><th>Beschreibung</th></tr></thead>
+                <tbody>{categories.map(c=><tr key={c.id}><td>{c.name}</td><td>{c.description}</td></tr>)}</tbody>
+              </table>
+              <form className="form-card" onSubmit={createCategory}>
+                <h4>Neue Kategorie</h4>
+                <div className="form-grid">
+                  <label>Name<input value={categoryForm.name} onChange={e=>setCategoryForm(p=>({...p,name:e.target.value}))} required /></label>
+                  <label>Beschreibung<input value={categoryForm.description} onChange={e=>setCategoryForm(p=>({...p,description:e.target.value}))} /></label>
+                </div>
+                <button type="submit" className="primary-button">Kategorie speichern</button>
+              </form>
+            </section>
+          ):null}
+
+          {page==='einstellungen-standorte'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header"><h3>Standorte</h3></div>
+              <table><thead><tr><th>Name</th><th>Kategorie</th><th>Adresse</th><th>Status</th></tr></thead>
+                <tbody>{[...sites].sort((a,b)=>a.name.localeCompare(b.name)).map(s=>(
+                  <tr key={s.id}><td>{s.name}</td><td>{categories.find(c=>c.id===s.categoryId)?.name??'-'}</td><td>{s.address}</td><td>{s.active?'Aktiv':'Inaktiv'}</td></tr>
+                ))}</tbody>
+              </table>
               <form className="form-card" onSubmit={createSite}>
                 <h4>Neuen Standort anlegen</h4>
                 <div className="form-grid">
-                  <label>
-                    Kategorie
-                    <select value={siteForm.categoryId} onChange={(event) => setSiteForm((previous) => ({ ...previous, categoryId: event.target.value }))}>
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>{category.name}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Name
-                    <input value={siteForm.name} onChange={(event) => setSiteForm((previous) => ({ ...previous, name: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Adresse
-                    <input value={siteForm.address} onChange={(event) => setSiteForm((previous) => ({ ...previous, address: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Telefon
-                    <input value={siteForm.phone} onChange={(event) => setSiteForm((previous) => ({ ...previous, phone: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Hausmeister Telefon
-                    <input value={siteForm.caretakerPhone} onChange={(event) => setSiteForm((previous) => ({ ...previous, caretakerPhone: event.target.value }))} />
-                  </label>
+                  <label>Kategorie<select value={siteForm.categoryId} onChange={e=>setSiteForm(p=>({...p,categoryId:e.target.value}))}>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+                  <label>Name<input value={siteForm.name} onChange={e=>setSiteForm(p=>({...p,name:e.target.value}))} required /></label>
+                  <label>Adresse<input value={siteForm.address} onChange={e=>setSiteForm(p=>({...p,address:e.target.value}))} /></label>
+                  <label>Telefon<input value={siteForm.phone} onChange={e=>setSiteForm(p=>({...p,phone:e.target.value}))} /></label>
+                  <label>Hausmeister Telefon<input value={siteForm.caretakerPhone} onChange={e=>setSiteForm(p=>({...p,caretakerPhone:e.target.value}))} /></label>
                 </div>
                 <button type="submit" className="primary-button">Standort speichern</button>
               </form>
             </section>
-          ) : null}
+          ):null}
 
-          {page === 'audits-vorlagen' ? (
+          {page==='einstellungen-vorlagen'&&isAdmin?(
             <section className="panel">
-              <h3>Audit-Vorlagen</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Beschreibung</th>
-                    <th>Felder</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {templates.map((template) => (
-                    <tr key={template.id}>
-                      <td>{template.name}</td>
-                      <td>{template.description}</td>
-                      <td>{template.fields.map((field) => field.name).join(', ')}</td>
-                    </tr>
-                  ))}
-                </tbody>
+              <div className="page-header"><h3>Audit-Vorlagen</h3></div>
+              <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Felder</th></tr></thead>
+                <tbody>{templates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.description}</td><td>{t.fields.map(f=>f.name).join(', ')}</td></tr>)}</tbody>
               </table>
-
               <form className="form-card" onSubmit={createTemplate}>
-                <h4>Neue Vorlage anlegen</h4>
+                <h4>Neue Vorlage</h4>
                 <div className="form-grid">
-                  <label>
-                    Name
-                    <input value={templateForm.name} onChange={(event) => setTemplateForm((previous) => ({ ...previous, name: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Beschreibung
-                    <input value={templateForm.description} onChange={(event) => setTemplateForm((previous) => ({ ...previous, description: event.target.value }))} />
-                  </label>
-
-                  <label className="full-width">
-                    Felder (Format: Name|Typ|Reihenfolge|relevant)
-                    <textarea
-                      rows={6}
-                      value={templateForm.fields}
-                      onChange={(event) => setTemplateForm((previous) => ({ ...previous, fields: event.target.value }))}
-                    />
-                  </label>
+                  <label>Name<input value={templateForm.name} onChange={e=>setTemplateForm(p=>({...p,name:e.target.value}))} required /></label>
+                  <label>Beschreibung<input value={templateForm.description} onChange={e=>setTemplateForm(p=>({...p,description:e.target.value}))} /></label>
+                  <label className="full-width">Felder (Name|typ|reihenfolge|pflichtfeld)<textarea rows={5} value={templateForm.fields} onChange={e=>setTemplateForm(p=>({...p,fields:e.target.value}))} /></label>
                 </div>
                 <button type="submit" className="primary-button">Vorlage speichern</button>
               </form>
             </section>
-          ) : null}
+          ):null}
 
-          {page === 'audits-raume' ? (
+          {page==='einstellungen-checklisten'&&isAdmin?(<section className="panel"><div className="page-header"><h3>Checklisten</h3></div><p className="empty-hint">Wird in einer späteren Version implementiert.</p></section>):null}
+          {page==='einstellungen-pdfdesigner'&&isAdmin?(<section className="panel"><div className="page-header"><h3>PDF-Designer</h3></div><p className="empty-hint">Wird in einer späteren Version implementiert.</p></section>):null}
+
+          {page==='admin-benutzer'&&isAdmin?(
             <section className="panel">
-              <h3>Räume & Objekte</h3>
-
-              <table>
-                <thead>
-                  <tr>
-                    <th>Raum</th>
-                    <th>Standort</th>
-                    <th>Kapazität</th>
-                    <th>Fläche</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rooms.map((room) => (
-                    <tr key={room.id}>
-                      <td>{room.name}</td>
-                      <td>{siteNameById[room.siteId] ?? 'Unbekannt'}</td>
-                      <td>{room.capacity}</td>
-                      <td>{room.area}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <form className="form-card" onSubmit={createRoom}>
-                <h4>Neuen Raum anlegen</h4>
-                <div className="form-grid">
-                  <label>
-                    Standort
-                    <select value={roomForm.siteId} onChange={(event) => setRoomForm((previous) => ({ ...previous, siteId: event.target.value }))}>
-                      {sites.map((site) => (
-                        <option key={site.id} value={site.id}>{site.name}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Raumname
-                    <input value={roomForm.name} onChange={(event) => setRoomForm((previous) => ({ ...previous, name: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Beschreibung
-                    <input value={roomForm.description} onChange={(event) => setRoomForm((previous) => ({ ...previous, description: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Kapazität
-                    <input value={roomForm.capacity} onChange={(event) => setRoomForm((previous) => ({ ...previous, capacity: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Fläche
-                    <input value={roomForm.area} onChange={(event) => setRoomForm((previous) => ({ ...previous, area: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Notiz
-                    <input value={roomForm.notes} onChange={(event) => setRoomForm((previous) => ({ ...previous, notes: event.target.value }))} />
-                  </label>
-                </div>
-                <button type="submit" className="primary-button">Raum speichern</button>
-              </form>
-
-              <table>
-                <thead>
-                  <tr>
-                    <th>Objekt</th>
-                    <th>Raum</th>
-                    <th>Typ</th>
-                    <th>Status</th>
-                    <th>Aktion</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {objects.map((objectEntry) => (
-                    <tr key={objectEntry.id}>
-                      <td>{objectEntry.name}</td>
-                      <td>{roomNameById[objectEntry.roomId] ?? 'Unbekannt'}</td>
-                      <td>{objectEntry.objectType}</td>
-                      <td>{objectEntry.status}</td>
-                      <td>
-                        <button className="secondary-button" onClick={() => setImageGalleryObject(objectEntry)}>
-                          Bilder verwalten
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {imageGalleryObject && (
-                <div className="form-card" style={{ marginTop: '2rem', borderLeft: '4px solid #2196F3' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <h4>Bilder: {imageGalleryObject.name}</h4>
-                    <button className="secondary-button" onClick={() => setImageGalleryObject(null)}>
-                      Schließen
-                    </button>
-                  </div>
-
-                  <div style={{ marginBottom: '1rem' }}>
-                    <label>
-                      Neues Bild hochladen:
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageGalleryUpload}
-                        disabled={imageUploadLoading}
-                        style={{ display: 'block', marginTop: '0.5rem' }}
-                      />
-                    </label>
-                    {imageUploadLoading && <p style={{ color: '#FFC107', marginTop: '0.5rem' }}>⏳ Bild wird komprimiert und hochgeladen...</p>}
-                  </div>
-
-                  <div>
-                    <h5>Hochgeladene Bilder ({galleryImages.length})</h5>
-                    {galleryImages.length === 0 ? (
-                      <p style={{ color: '#999' }}>Keine Bilder vorhanden. Laden Sie eines hoch, um zu beginnen.</p>
-                    ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
-                        {galleryImages.map((image) => (
-                          <div
-                            key={image.name}
-                            style={{
-                              border: '1px solid #ddd',
-                              borderRadius: '4px',
-                              overflow: 'hidden',
-                              backgroundColor: '#f9f9f9'
-                            }}
-                          >
-                            <img
-                              src={`http://localhost:5050/api/objects/${imageGalleryObject.id}/images/${image.name}`}
-                              alt={image.name}
-                              style={{
-                                width: '100%',
-                                height: '180px',
-                                objectFit: 'cover',
-                                display: 'block'
-                              }}
-                            />
-                            <div style={{ padding: '0.75rem' }}>
-                              <p style={{ fontSize: '0.85rem', margin: '0 0 0.25rem 0', wordBreak: 'break-all', fontWeight: '500' }}>
-                                {image.name}
-                              </p>
-                              <p style={{ fontSize: '0.75rem', color: '#666', margin: 0 }}>
-                                {(image.sizeBytes / 1024).toFixed(1)} KB • {new Date(image.createdAtUtc).toLocaleDateString('de-DE')}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
+              <div className="page-header"><h3>Benutzerverwaltung</h3></div>
+              <table><thead><tr><th>Name</th><th>Rolle</th><th>Status</th><th>Aktionen</th></tr></thead>
+                <tbody>{users.map(user=>(
+                  <tr key={user.id}>
+                    <td>{user.displayName} <small style={{color:'var(--muted)'}}>({user.userName})</small></td>
+                    <td><span className={`role-badge role-${user.role.toLowerCase()}`}>{user.role}</span></td>
+                    <td><span className={user.isActive?'status-active':'status-inactive'}>{user.isActive?'Aktiv':'Inaktiv'}</span></td>
+                    <td>{user.userName!==activeSession.user.userName&&user.role!=='Superadmin'&&(
+                      <div style={{display:'flex',gap:'8px'}}>
+                        <button type="button" className="secondary-button" onClick={()=>toggleUserActive(user.id)}>{user.isActive?'Deaktivieren':'Aktivieren'}</button>
+                        <button type="button" className="danger-button" onClick={()=>deleteUser(user.id)}>Löschen</button>
                       </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <form className="form-card" onSubmit={createObject}>
-                <h4>Neues Objekt anlegen</h4>
-                <div className="form-grid">
-                  <label>
-                    Raum
-                    <select value={objectForm.roomId} onChange={(event) => setObjectForm((previous) => ({ ...previous, roomId: event.target.value }))}>
-                      {rooms.map((room) => (
-                        <option key={room.id} value={room.id}>{room.name}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Objektname
-                    <input value={objectForm.name} onChange={(event) => setObjectForm((previous) => ({ ...previous, name: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Typ
-                    <input value={objectForm.objectType} onChange={(event) => setObjectForm((previous) => ({ ...previous, objectType: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Status
-                    <select value={objectForm.status} onChange={(event) => setObjectForm((previous) => ({ ...previous, status: event.target.value }))}>
-                      <option value="Gut">Gut</option>
-                      <option value="Aktion erforderlich">Aktion erforderlich</option>
-                      <option value="Defekt">Defekt</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Notiz
-                    <input value={objectForm.notes} onChange={(event) => setObjectForm((previous) => ({ ...previous, notes: event.target.value }))} />
-                  </label>
-                </div>
-                <button type="submit" className="primary-button">Objekt speichern</button>
-              </form>
-            </section>
-          ) : null}
-
-          {(page === 'admin' || page.startsWith('admin-')) && canManageUsers(activeSession.user.role) ? (
-            <section className="panel">
-              <h3>Admin Bereich</h3>
-              <Tabs 
-                tabs={adminTabsData} 
-                activeTab={adminTab} 
-                onTabChange={(tabId) => setAdminTab(tabId as 'benutzer' | 'backup' | 'export' | 'logs')} 
-              />
-              <div style={{ marginBottom: '24px' }}></div>
-
-              {adminTab === 'benutzer' && (
-              <>
-              <h4>Benutzerverwaltung</h4>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Rolle</th>
-                    <th>Status</th>
-                    <th>Aktionen</th>
+                    )}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {users.map((user) => (
-                    <tr key={user.id}>
-                      <td>{user.displayName}</td>
-                      <td>{user.role}</td>
-                      <td>{user.isActive ? 'Aktiv' : 'Deaktiviert'}</td>
-                      <td>
-                        <button type="button" onClick={() => resetUserPassword(user.id)}>Passwort zurücksetzen</button>
-                        <button type="button" onClick={() => toggleUserActive(user.id)}>
-                          {user.isActive ? 'Deaktivieren' : 'Aktivieren'}
-                        </button>
-                        {user.userName !== 'superadmin' ? (
-                          <button type="button" onClick={() => deleteUser(user.id)}>Löschen</button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
+                ))}</tbody>
               </table>
+            </section>
+          ):null}
 
-              <form className="form-card" onSubmit={createUser}>
-                <h4>Neuer Benutzer</h4>
-                <div className="form-grid">
-                  <label>
-                    Benutzername
-                    <input
-                      value={loginForm.username}
-                      onChange={(event) => setLoginForm((previous) => ({ ...previous, username: event.target.value }))}
-                      placeholder="benutzername"
-                    />
-                  </label>
-                  <label>
-                    Passwort
-                    <input
-                      type="password"
-                      value={loginForm.password}
-                      onChange={(event) => setLoginForm((previous) => ({ ...previous, password: event.target.value }))}
-                      placeholder="Password123!"
-                    />
-                  </label>
-                  <label>
-                    Anzeigename
-                    <input
-                      value={categoryForm.name}
-                      onChange={(event) => setCategoryForm((previous) => ({ ...previous, name: event.target.value }))}
-                      placeholder="Max Mustermann"
-                    />
-                  </label>
-                  <label>
-                    Rolle
-                    <select value={categoryForm.description} onChange={(event) => setCategoryForm((previous) => ({ ...previous, description: event.target.value }))}>
-                      <option value="Benutzer">Benutzer</option>
-                      <option value="Azubi">Azubi</option>
-                      <option value="Admin">Admin</option>
-                      {activeSession.user.role === 'Superadmin' ? <option value="Superadmin">Superadmin</option> : null}
-                    </select>
-                  </label>
-                </div>
-                <button type="submit" className="primary-button">Benutzer erstellen</button>
-              </form>
-              </>
-              )}
-
-              {adminTab === 'backup' && (
-              <>
-              <form className="form-card" onSubmit={createCategory}>
-                <h4>Kategorie anlegen</h4>
-                <div className="form-grid">
-                  <label>
-                    Name
-                    <input value={categoryForm.name} onChange={(event) => setCategoryForm((previous) => ({ ...previous, name: event.target.value }))} />
-                  </label>
-
-                  <label>
-                    Beschreibung
-                    <input value={categoryForm.description} onChange={(event) => setCategoryForm((previous) => ({ ...previous, description: event.target.value }))} />
-                  </label>
-                </div>
-                <button type="submit" className="primary-button">Kategorie speichern</button>
-              </form>
-
-              <div className="form-card">
-                <h4>Backup-Management</h4>
-                <div className="form-grid">
-                  <button type="button" className="primary-button" onClick={createBackup}>Backup jetzt erstellen</button>
-                </div>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Datei</th>
-                      <th>Typ</th>
-                      <th>Größe</th>
-                      <th>Aktionen</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {backups.map((backup) => (
-                      <tr key={backup.id}>
-                        <td>{backup.fileName}</td>
-                        <td>{backup.type}</td>
-                        <td>{(backup.sizeBytes / 1024).toFixed(1)} KB</td>
-                        <td>
-                          <button type="button" onClick={() => restoreBackup(backup.id)}>Wiederherstellen</button>
-                          <button type="button" onClick={() => deleteBackup(backup.id)}>Löschen</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="form-card">
+          {page==='admin-backup'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header"><h3>Datenbankbackup</h3></div>
+              <div className="form-card"><button type="button" className="primary-button" onClick={createBackup}>💾 Backup jetzt erstellen</button></div>
+              <table style={{marginTop:'16px'}}><thead><tr><th>Dateiname</th><th>Erstellt</th><th>Größe</th><th>Aktionen</th></tr></thead>
+                <tbody>{backups.map(b=>(
+                  <tr key={b.id}>
+                    <td>{b.fileName}</td>
+                    <td>{new Date(b.createdAtUtc).toLocaleString('de-DE')}</td>
+                    <td>{(b.sizeBytes/1024/1024).toFixed(2)} MB</td>
+                    <td><div style={{display:'flex',gap:'8px'}}>
+                      <button type="button" className="secondary-button" onClick={()=>restoreBackup(b.id)}>Wiederherstellen</button>
+                      <button type="button" className="danger-button" onClick={()=>deleteBackup(b.id)}>Löschen</button>
+                    </div></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              <div className="form-card" style={{marginTop:'20px'}}>
                 <h4>Automatische Backups</h4>
                 <div className="form-grid">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={backupSchedule.enabled}
-                      onChange={(event) => setBackupSchedule((prev) => ({ ...prev, enabled: event.target.checked }))}
-                    />
-                    Zeitplan aktivieren
-                  </label>
+                  <label>Uhrzeit<input type="time" value={backupSchedule.time} onChange={e=>setBackupSchedule(p=>({...p,time:e.target.value}))} /></label>
+                  <label>Max. Backups<input type="number" min="1" max="100" value={backupSchedule.maxBackups} onChange={e=>setBackupSchedule(p=>({...p,maxBackups:parseInt(e.target.value)||10}))} /></label>
                 </div>
-
-                {backupSchedule.enabled && (
-                  <>
-                    <div className="form-grid">
-                      <label>
-                        Uhrzeit
-                        <input
-                          type="time"
-                          value={backupSchedule.time}
-                          onChange={(event) => setBackupSchedule((prev) => ({ ...prev, time: event.target.value }))}
-                        />
+                <div style={{marginTop:'12px'}}>
+                  <p style={{fontWeight:500,marginBottom:'8px'}}>Wochentage:</p>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
+                    {['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'].map(day=>(
+                      <label key={day} style={{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer'}}>
+                        <input type="checkbox" checked={backupSchedule.days.includes(day)} onChange={e=>{if(e.target.checked)setBackupSchedule(p=>({...p,days:[...p.days,day]}));else setBackupSchedule(p=>({...p,days:p.days.filter(d=>d!==day)}))}} />{day}
                       </label>
-
-                      <label>
-                        Max. Backups
-                        <input
-                          type="number"
-                          min="1"
-                          max="100"
-                          value={backupSchedule.maxBackups}
-                          onChange={(event) => setBackupSchedule((prev) => ({ ...prev, maxBackups: parseInt(event.target.value) || 10 }))}
-                        />
-                      </label>
-                    </div>
-
-                    <div style={{ marginTop: '1rem' }}>
-                      <p style={{ marginBottom: '0.5rem', fontWeight: '500' }}>Wochentage ausw?hlen:</p>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.5rem' }}>
-                        {['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'].map((day) => (
-                          <label key={day} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <input
-                              type="checkbox"
-                              checked={backupSchedule.days.includes(day)}
-                              onChange={(event) => {
-                                if (event.target.checked) {
-                                  setBackupSchedule((prev) => ({ ...prev, days: [...prev.days, day] }))
-                                } else {
-                                  setBackupSchedule((prev) => ({ ...prev, days: prev.days.filter((d) => d !== day) }))
-                                }
-                              }}
-                            />
-                            {day}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button type="button" className="primary-button" onClick={saveBackupSchedule} style={{ marginTop: '1rem' }}>
-                      Zeitplan speichern
-                    </button>
-                  </>
-                )}
-              </div>
-              </>
-              )}
-
-              {adminTab === 'export' && (
-              <>
-              <div className="form-card">
-                <h4>Datenexport</h4>
-                <div className="form-grid">
-                  <label>
-                    Standort
-                    <select value={exportSiteId} onChange={(event) => setExportSiteId(event.target.value)}>
-                      {sites.map((site) => (
-                        <option key={site.id} value={site.id}>{site.name}</option>
-                      ))}
-                    </select>
-                  </label>
+                    ))}
+                  </div>
                 </div>
-                <button type="button" className="primary-button" onClick={exportAuditZip}>ZIP exportieren</button>
+                <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={saveBackupSchedule}>Zeitplan speichern</button>
               </div>
-              </>
-              )}
-
-              {adminTab === 'logs' && (
-              <>
-              <div className="form-card">
-                <h4>System-Logs</h4>
-                <p>Logs werden hier angezeigt.</p>
-              </div>
-              </>
-              )}
             </section>
-          ) : null}
+          ):null}
+
+          {page==='admin-export'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header"><h3>Datenexport</h3></div>
+              <div className="form-card">
+                <div className="form-grid">
+                  <label>Standort<select value={exportSiteId} onChange={e=>setExportSiteId(e.target.value)}>{sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+                </div>
+                <button type="button" className="primary-button" onClick={exportAuditZip}>📦 ZIP exportieren</button>
+              </div>
+            </section>
+          ):null}
+
+          {page==='admin-logs'&&isAdmin?(<section className="panel"><div className="page-header"><h3>System-Logs</h3></div><p className="empty-hint">Logs werden in einer späteren Version angezeigt.</p></section>):null}
+
 
           {page === 'profil' ? (
             <section className="panel profile-panel">

@@ -13,6 +13,23 @@
   --color-accent-light: #60a5fa;
   --color-gradient-start: #2563eb;
   --color-gradient-end: #60a5fa;
+
+  /* Modern design system */
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --header-bg: rgba(15, 23, 42, 0.95);
+  --border: rgba(148, 163, 184, 0.2);
+  --text-h: #f8fafc;
+  --text-s: #cbd5e1;
+  --muted: #94a3b8;
+
+  /* Button colors */
+  --btn-primary-bg: #3b82f6;
+  --btn-primary-hover: #2563eb;
+  --btn-secondary-bg: rgba(148, 163, 184, 0.1);
+  --btn-secondary-border: rgba(148, 163, 184, 0.3);
+  --btn-danger-bg: rgba(239, 68, 68, 0.15);
+  --btn-danger-border: rgba(239, 68, 68, 0.4);
 }
 
 /* Light Mode */
@@ -30,6 +47,23 @@
   --color-accent-light: #3b82f6;
   --color-gradient-start: #1d4ed8;
   --color-gradient-end: #2563eb;
+
+  /* Modern design system */
+  --bg: #ffffff;
+  --surface: #f8fafc;
+  --header-bg: rgba(255, 255, 255, 0.95);
+  --border: rgba(71, 85, 105, 0.15);
+  --text-h: #0f172a;
+  --text-s: #475569;
+  --muted: #64748b;
+
+  /* Button colors */
+  --btn-primary-bg: #2563eb;
+  --btn-primary-hover: #1d4ed8;
+  --btn-secondary-bg: rgba(71, 85, 105, 0.1);
+  --btn-secondary-border: rgba(71, 85, 105, 0.3);
+  --btn-danger-bg: rgba(239, 68, 68, 0.1);
+  --btn-danger-border: rgba(239, 68, 68, 0.3);
 }
 
 html {

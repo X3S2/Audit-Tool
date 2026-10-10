@@ -3,12 +3,12 @@ import React, { useState } from 'react'
 export type PageKey =
   | 'dashboard'
   | 'audits'
-  | 'audits-raume'
-  | 'audits-standorte'
-  | 'audits-vorlagen'
   | 'datenablage'
-  | 'einstellungen'
-  | 'admin'
+  | 'einstellungen-kategorien'
+  | 'einstellungen-standorte'
+  | 'einstellungen-vorlagen'
+  | 'einstellungen-checklisten'
+  | 'einstellungen-pdfdesigner'
   | 'admin-benutzer'
   | 'admin-backup'
   | 'admin-export'
@@ -18,8 +18,8 @@ export type PageKey =
 export interface NavItem {
   key: PageKey
   label: string
+  icon: string
   visible: boolean
-  icon?: string
   subpages?: Array<{ key: PageKey; label: string }>
 }
 
@@ -30,73 +30,82 @@ interface NavigationProps {
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ items, currentPage, onPageChange }) => {
-  const [expandedNav, setExpandedNav] = useState<Set<string>>(new Set())
+  const [expandedNav, setExpandedNav] = useState<Set<string>>(() => {
+    // Auto-expand group of the current page on mount
+    const initial = new Set<string>()
+    if (currentPage.startsWith('einstellungen')) initial.add('einstellungen-kategorien')
+    if (currentPage.startsWith('admin')) initial.add('admin-benutzer')
+    return initial
+  })
 
-  const isPageActive = (navKey: PageKey): boolean => {
-    return currentPage === navKey || currentPage.startsWith(navKey + '-')
+  const isGroupActive = (item: NavItem): boolean => {
+    if (item.subpages) {
+      return item.subpages.some((sp) => sp.key === currentPage)
+    }
+    return currentPage === item.key
   }
 
   const toggleExpand = (itemKey: string) => {
-    const newExpanded = new Set(expandedNav)
-    if (newExpanded.has(itemKey)) {
-      newExpanded.delete(itemKey)
-    } else {
-      newExpanded.add(itemKey)
-    }
-    setExpandedNav(newExpanded)
+    setExpandedNav((prev) => {
+      const next = new Set(prev)
+      if (next.has(itemKey)) {
+        next.delete(itemKey)
+      } else {
+        next.add(itemKey)
+      }
+      return next
+    })
   }
 
   const handleNavClick = (item: NavItem) => {
-    if (item.subpages) {
-      // Expandable item - toggle expand, don't navigate
+    if (item.subpages && item.subpages.length > 0) {
       toggleExpand(item.key)
     } else {
-      // Leaf item - navigate directly
       onPageChange(item.key)
     }
   }
 
-  const handleSubpageClick = (subpage: { key: PageKey; label: string }) => {
-    onPageChange(subpage.key)
-    // Don't collapse - keep expanded so user can navigate between subpages
-  }
-
   return (
     <aside className="sidebar">
-      {items
-        .filter((item) => item.visible)
-        .map((item) => (
-          <div key={item.key} className="nav-group">
-            <button
-              type="button"
-              className={`nav-item ${isPageActive(item.key) ? 'active' : ''} ${item.subpages ? 'has-subpages' : ''}`}
-              onClick={() => handleNavClick(item)}
-              title={item.label}
-            >
-              {item.icon && <span className="nav-icon">{item.icon}</span>}
-              <span className="nav-label">{item.label}</span>
-              {item.subpages && (
-                <span className={`nav-arrow ${expandedNav.has(item.key) ? 'expanded' : ''}`}>›</span>
-              )}
-            </button>
+      <nav>
+        {items
+          .filter((item) => item.visible)
+          .map((item) => {
+            const isActive = isGroupActive(item)
+            const isExpanded = expandedNav.has(item.key)
+            return (
+              <div key={item.key} className="nav-group">
+                <button
+                  type="button"
+                  className={`nav-item${isActive ? ' active' : ''}${item.subpages ? ' has-subpages' : ''}`}
+                  onClick={() => handleNavClick(item)}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  <span className="nav-label">{item.label}</span>
+                  {item.subpages && item.subpages.length > 0 && (
+                    <span className={`nav-arrow${isExpanded ? ' expanded' : ''}`}>›</span>
+                  )}
+                </button>
 
-            {item.subpages && expandedNav.has(item.key) && (
-              <div className="nav-subpages">
-                {item.subpages.map((subpage) => (
-                  <button
-                    key={subpage.key}
-                    type="button"
-                    className={`nav-subpage ${currentPage === subpage.key ? 'active' : ''}`}
-                    onClick={() => handleSubpageClick(subpage)}
-                    title={subpage.label}
-                  >
-                    {subpage.label}
-                  </button>
-                ))}
+                {item.subpages && isExpanded && (
+                  <div className="nav-subpages">
+                    {item.subpages.map((subpage) => (
+                      <button
+                        key={subpage.key}
+                        type="button"
+                        className={`nav-subpage${currentPage === subpage.key ? ' active' : ''}`}
+                        onClick={() => onPageChange(subpage.key)}
+                      >
+                        {subpage.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        ))}
+            )
+          })}
+      </nav>
     </aside>
   )
 }
+

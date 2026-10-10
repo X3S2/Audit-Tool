@@ -13,9 +13,11 @@ interface HeaderProps {
   onThemeToggle: () => void
   user: User
   onProfileClick: (action: 'profile' | 'password' | 'logout') => void
+  pageTitle?: string
+  onMenuToggle?: () => void
 }
 
-export const Header: React.FC<HeaderProps> = ({ theme, onThemeToggle, user, onProfileClick }) => {
+export const Header: React.FC<HeaderProps> = ({ theme, onThemeToggle, user, onProfileClick, pageTitle, onMenuToggle }) => {
   const [showDropdown, setShowDropdown] = useState(false)
 
   const getInitials = (displayName: string) => {
@@ -34,6 +36,18 @@ export const Header: React.FC<HeaderProps> = ({ theme, onThemeToggle, user, onPr
 
   return (
     <header className="topbar">
+      {onMenuToggle && (
+        <button 
+          className="menu-toggle"
+          type="button" 
+          onClick={onMenuToggle}
+          title="Menü auf/zuklappen"
+          aria-label="Toggle menu"
+        >
+          ☰
+        </button>
+      )}
+
       <div className="brand-section">
         <div className="brand-logo">
           <span className="logo-badge">A</span>
@@ -43,6 +57,12 @@ export const Header: React.FC<HeaderProps> = ({ theme, onThemeToggle, user, onPr
           </div>
         </div>
       </div>
+
+      {pageTitle && (
+        <div className="page-title">
+          <h1>{pageTitle}</h1>
+        </div>
+      )}
 
       <div className="header-spacer"></div>
 
