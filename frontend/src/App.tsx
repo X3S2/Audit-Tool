@@ -105,6 +105,54 @@ type BackupRecord = {
   type: string
 }
 
+type PdfDesign = {
+  id: number
+  name: string
+  description: string
+  configJson: string
+  createdAtUtc: string
+}
+
+type PdfDesignConfig = {
+  templateId?: number
+  coverFields: string[]
+  orientation: 'portrait' | 'landscape'
+  headerText: string
+  footerText: string
+  showRoomsTable: boolean
+  roomColumns: string[]
+  showSummary: boolean
+  logo?: string
+  sections: PdfSection[]
+}
+
+type PdfSection = {
+  id: string
+  type: 'cover' | 'rooms-table' | 'text' | 'summary'
+  title: string
+  fields?: string[]
+  text?: string
+  orientation?: 'portrait' | 'landscape'
+}
+
+type ChecklistTemplate = {
+  id: number
+  name: string
+  templateId: number
+  columnsJson: string
+  createdAtUtc: string
+}
+
+type ChecklistColumn = {
+  id: string
+  label: string
+  source: 'field' | 'custom' | 'room'
+  fieldName?: string
+  inputType: 'text' | 'number' | 'checkbox'
+  width?: number
+  order: number
+}
+
 const SESSION_KEY = 'audit-tool-session'
 const THEME_KEY = 'audit-tool-theme'
 const API_BASE = 'http://localhost:5050'
@@ -145,7 +193,10 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => readTheme())
   const [session, setSession] = useState<Session | null>(() => readSession())
   const [page, setPage] = useState<PageKey>('dashboard')
-  const [sidebarVisible, setSidebarVisible] = useState(true)
+  const [sidebarVisible, setSidebarVisible] = useState(() => {
+    // Default hidden on mobile
+    return typeof window !== 'undefined' ? window.innerWidth > 768 : true
+  })
   const [error, setError] = useState('')
   const [showErrorBanner, setShowErrorBanner] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -172,11 +223,36 @@ function App() {
   const [newUserForm, setNewUserForm] = useState({ userName: '', displayName: '', password: '', role: 'Benutzer' })
   const [showNewUserForm, setShowNewUserForm] = useState(false)
   // Vorlagen field builder state
-  const [templateFields, setTemplateFields] = useState<Array<{name: string; type: string; order: number; required: boolean}>>([
-    { name: '', type: 'text', order: 1, required: true }
+  const [templateFields, setTemplateFields] = useState<Array<{name: string; type: string; order: number; required: boolean; dropdownOptions: string}>>([
+    { name: '', type: 'text', order: 1, required: true, dropdownOptions: '' }
   ])
   // Export mode
   const [exportMode, setExportMode] = useState<'site' | 'all'>('site')
+  // PDF Designer state
+  const [pdfDesigns, setPdfDesigns] = useState<PdfDesign[]>([])
+  const [editingPdfDesign, setEditingPdfDesign] = useState<PdfDesign | null>(null)
+  const [pdfDesignConfig, setPdfDesignConfig] = useState<PdfDesignConfig>({
+    coverFields: ['siteName', 'category', 'address', 'phone', 'caretakerPhone'],
+    orientation: 'portrait',
+    headerText: '',
+    footerText: '',
+    showRoomsTable: true,
+    roomColumns: [],
+    showSummary: false,
+    sections: [
+      { id: 'cover', type: 'cover', title: 'Deckblatt', orientation: 'portrait' },
+      { id: 'rooms', type: 'rooms-table', title: 'Räume & Objekte', orientation: 'portrait' }
+    ]
+  })
+  const [newPdfDesignName, setNewPdfDesignName] = useState('')
+  const [newPdfDesignDesc, setNewPdfDesignDesc] = useState('')
+  // Checkliste state
+  const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
+  const [editingChecklistTemplate, setEditingChecklistTemplate] = useState<ChecklistTemplate | null>(null)
+  const [checklistColumns, setChecklistColumns] = useState<ChecklistColumn[]>([])
+  const [newChecklistName, setNewChecklistName] = useState('')
+  const [newChecklistTemplateId, setNewChecklistTemplateId] = useState('1')
+  const [activeChecklistAudit, setActiveChecklistAudit] = useState<AuditInstance | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
@@ -284,12 +360,14 @@ function App() {
 
     const loadData = async () => {
       try {
-        const [categoryData, siteData, templateData, roomData, auditData] = await Promise.all([
+        const [categoryData, siteData, templateData, roomData, auditData, pdfDesignData, checklistTmplData] = await Promise.all([
           apiRequest<Category[]>('/api/categories', session),
           apiRequest<Site[]>('/api/standorte', session),
           apiRequest<Template[]>('/api/templates', session),
           apiRequest<Room[]>('/api/rooms', session),
-          apiRequest<AuditInstance[]>('/api/audits', session)
+          apiRequest<AuditInstance[]>('/api/audits', session),
+          apiRequest<PdfDesign[]>('/api/pdfdesigns', session),
+          apiRequest<ChecklistTemplate[]>('/api/checklisttemplates', session)
         ])
 
         setCategories(categoryData)
@@ -297,6 +375,8 @@ function App() {
         setTemplates(templateData)
         setRooms(roomData)
         setAudits(auditData)
+        setPdfDesigns(pdfDesignData)
+        setChecklistTemplates(checklistTmplData)
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Daten konnten nicht geladen werden.')
       }
@@ -1361,36 +1441,44 @@ function App() {
                 <div style={{marginTop:'16px'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
                     <strong style={{fontSize:'0.95rem'}}>Datenfelder</strong>
-                    <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true}])}>+ Feld hinzufügen</button>
+                    <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:''}])}>+ Feld hinzufügen</button>
                   </div>
                   <div className="field-builder">
                     {templateFields.map((field,idx)=>(
-                      <div key={idx} className="field-builder-row">
-                        <span className="field-order">{field.order}</span>
-                        <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
-                        <select value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
-                          <option value="text">Text</option>
-                          <option value="number">Zahl</option>
-                          <option value="dropdown">Auswahl (Dropdown)</option>
-                          <option value="textarea">Langer Text</option>
-                          <option value="checkbox">Checkbox</option>
-                          <option value="image">Bild</option>
-                        </select>
-                        <label className="field-required-check" title="Pflichtfeld für Fortschrittsbalken">
-                          <input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />
-                          Pflicht
-                        </label>
-                        <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
+                      <div key={idx} className="field-builder-item">
+                        <div className="field-builder-row">
+                          <span className="field-order">{field.order}</span>
+                          <input className="field-name-input" placeholder="Feldname (z.B. Zustand)" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
+                          <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
+                            <option value="text">Text</option>
+                            <option value="number">Zahl</option>
+                            <option value="dropdown">▼ Auswahl</option>
+                            <option value="textarea">Langer Text</option>
+                            <option value="checkbox">☑ Checkbox</option>
+                            <option value="image">📷 Bild</option>
+                          </select>
+                          <label className="field-required-check" title="Pflichtfeld für Fortschrittsbalken">
+                            <input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />
+                            Pflicht
+                          </label>
+                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
+                        </div>
+                        {field.type==='dropdown'&&(
+                          <div className="dropdown-options-row">
+                            <span style={{fontSize:'0.82rem',color:'var(--muted)',whiteSpace:'nowrap'}}>Optionen:</span>
+                            <input placeholder="Option 1, Option 2, Option 3 ..." value={field.dropdownOptions} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,dropdownOptions:e.target.value}:f))} style={{flex:1,padding:'5px 10px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'7px',color:'var(--text-h)',fontSize:'0.88rem'}} />
+                          </div>
+                        )}
                       </div>
                     ))}
                     {templateFields.length===0&&<p className="empty-hint">Noch keine Felder. Klick auf "+ Feld hinzufügen".</p>}
                   </div>
                 </div>
                 <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={(e)=>{
-                  const syntheticFields = templateFields.map(f=>`${f.name}|${f.type}|${f.order}|${f.required}`).join('\n')
+                  const syntheticFields = templateFields.map(f=>`${f.name}|${f.type}${f.dropdownOptions?`|options:${f.dropdownOptions}`:''}|${f.order}|${f.required}`).join('\n')
                   setTemplateForm(p=>({...p,fields:syntheticFields}))
                   createTemplate(e as unknown as React.FormEvent)
-                  setTemplateFields([{name:'',type:'text',order:1,required:true}])
+                  setTemplateFields([{name:'',type:'text',order:1,required:true,dropdownOptions:''}])
                 }}>Vorlage speichern</button>
               </div>
               <div style={{marginTop:'24px'}}>
@@ -1404,8 +1492,205 @@ function App() {
             </section>
           ):null}
 
-          {page==='einstellungen-checklisten'&&isAdmin?(<section className="panel"><div className="page-header"><h3>Checklisten</h3></div><p className="empty-hint">Wird in einer späteren Version implementiert.</p></section>):null}
-          {page==='einstellungen-pdfdesigner'&&isAdmin?(<section className="panel"><div className="page-header"><h3>PDF-Designer</h3></div><p className="empty-hint">Wird in einer späteren Version implementiert.</p></section>):null}
+          {page==='einstellungen-checklisten'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header"><h3>Checklisten</h3></div>
+              <div className="form-card">
+                <h4>Neue Checkliste erstellen</h4>
+                <div className="form-grid">
+                  <label>Name<input value={newChecklistName} onChange={e=>setNewChecklistName(e.target.value)} placeholder="z.B. Abnahme-Checkliste" /></label>
+                  <label>Audit-Vorlage<select value={newChecklistTemplateId} onChange={e=>setNewChecklistTemplateId(e.target.value)}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                </div>
+                <div style={{marginTop:'16px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                    <strong style={{fontSize:'0.95rem'}}>Spalten definieren</strong>
+                    <div style={{display:'flex',gap:'8px'}}>
+                      <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Raum',source:'room',inputType:'text',order:p.length+1}])}>+ Raum-Spalte</button>
+                      <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.82rem'}} onClick={()=>{const tmpl=templates.find(t=>t.id===parseInt(newChecklistTemplateId));if(tmpl&&tmpl.fields[0])setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:tmpl.fields[0].name,source:'field',fieldName:tmpl.fields[0].name,inputType:'text',order:p.length+1}])}}>+ Vorlagen-Feld</button>
+                      <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Neue Spalte',source:'custom',inputType:'checkbox',order:p.length+1}])}>+ Freie Spalte</button>
+                    </div>
+                  </div>
+                  <div className="field-builder">
+                    {checklistColumns.map((col,idx)=>(
+                      <div key={col.id} className="field-builder-row">
+                        <span className="field-order">{col.order}</span>
+                        <input className="field-name-input" placeholder="Spaltenname" value={col.label} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,label:e.target.value}:c))} />
+                        {col.source==='field'&&(
+                          <select value={col.fieldName||''} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,fieldName:e.target.value,label:e.target.value}:c))}>
+                            {(templates.find(t=>t.id===parseInt(newChecklistTemplateId))?.fields||[]).map(f=><option key={f.id} value={f.name}>{f.name}</option>)}
+                          </select>
+                        )}
+                        <select value={col.inputType} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,inputType:e.target.value as 'text'|'number'|'checkbox'}:c))}>
+                          <option value="text">Text</option>
+                          <option value="number">Zahl</option>
+                          <option value="checkbox">Checkbox</option>
+                        </select>
+                        <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setChecklistColumns(p=>p.filter((_,i)=>i!==idx).map((c,i)=>({...c,order:i+1})))}>✕</button>
+                      </div>
+                    ))}
+                    {checklistColumns.length===0&&<p className="empty-hint">Noch keine Spalten. Füge Spalten hinzu.</p>}
+                  </div>
+                </div>
+                <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={async()=>{
+                  if (!session||!newChecklistName) return
+                  try {
+                    const res = await apiRequest<ChecklistTemplate>('/api/checklisttemplates', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newChecklistName,templateId:parseInt(newChecklistTemplateId),columnsJson:JSON.stringify(checklistColumns)})})
+                    setChecklistTemplates(p=>[...p,res])
+                    setNewChecklistName(''); setChecklistColumns([])
+                  } catch { setError('Checkliste konnte nicht gespeichert werden.') }
+                }}>Checkliste speichern</button>
+              </div>
+              <div style={{marginTop:'24px'}}>
+                <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Checklisten ({checklistTemplates.length})</h4>
+                {checklistTemplates.length===0?<p className="empty-hint">Noch keine Checklisten.</p>:(
+                  <table><thead><tr><th>Name</th><th>Vorlage</th><th>Spalten</th><th>Aktion</th></tr></thead>
+                    <tbody>{checklistTemplates.map(c=>{
+                      const cols: ChecklistColumn[] = (() => { try { return JSON.parse(c.columnsJson) } catch { return [] } })()
+                      return <tr key={c.id}><td>{c.name}</td><td>{templates.find(t=>t.id===c.templateId)?.name??'-'}</td><td>{cols.length} Spalten</td>
+                        <td><button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/checklisttemplates/${c.id}`,session,{method:'DELETE'});setChecklistTemplates(p=>p.filter(x=>x.id!==c.id))}}>Löschen</button></td>
+                      </tr>
+                    })}</tbody>
+                  </table>
+                )}
+              </div>
+            </section>
+          ):null}
+
+          {page==='einstellungen-pdfdesigner'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header"><h3>PDF-Designer</h3></div>
+              {!editingPdfDesign ? (
+                <>
+                  <div className="form-card">
+                    <h4>Neues PDF-Design erstellen</h4>
+                    <div className="form-grid">
+                      <label>Design-Name<input value={newPdfDesignName} onChange={e=>setNewPdfDesignName(e.target.value)} placeholder="z.B. Standard Schulaudit PDF" /></label>
+                      <label>Beschreibung<input value={newPdfDesignDesc} onChange={e=>setNewPdfDesignDesc(e.target.value)} placeholder="Kurze Beschreibung" /></label>
+                    </div>
+                    <button type="button" className="primary-button" style={{marginTop:'12px'}} onClick={async()=>{
+                      if (!session||!newPdfDesignName) return
+                      try {
+                        const res = await apiRequest<PdfDesign>('/api/pdfdesigns', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newPdfDesignName,description:newPdfDesignDesc,configJson:JSON.stringify(pdfDesignConfig)})})
+                        setPdfDesigns(p=>[...p,res])
+                        setNewPdfDesignName(''); setNewPdfDesignDesc('')
+                      } catch { setError('Design konnte nicht gespeichert werden.') }
+                    }}>Design anlegen & Bearbeiten</button>
+                  </div>
+                  <div style={{marginTop:'24px'}}>
+                    <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Designs ({pdfDesigns.length})</h4>
+                    {pdfDesigns.length===0?<p className="empty-hint">Noch keine PDF-Designs.</p>:(
+                      <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Erstellt</th><th>Aktionen</th></tr></thead>
+                        <tbody>{pdfDesigns.map(d=>(
+                          <tr key={d.id}>
+                            <td>{d.name}</td><td>{d.description||'-'}</td>
+                            <td>{new Date(d.createdAtUtc).toLocaleDateString('de-DE')}</td>
+                            <td><div style={{display:'flex',gap:'6px'}}>
+                              <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{setEditingPdfDesign(d);try{setPdfDesignConfig(JSON.parse(d.configJson))}catch{}}}>✏️ Bearbeiten</button>
+                              <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/pdfdesigns/${d.id}`,session,{method:'DELETE'});setPdfDesigns(p=>p.filter(x=>x.id!==d.id))}}>Löschen</button>
+                            </div></td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="pdf-designer">
+                  <div className="pdf-designer-header">
+                    <button type="button" className="back-btn" onClick={()=>setEditingPdfDesign(null)}>← Zurück zur Übersicht</button>
+                    <h4>Design: {editingPdfDesign.name}</h4>
+                    <button type="button" className="primary-button" style={{marginLeft:'auto'}} onClick={async()=>{
+                      if (!session) return
+                      try {
+                        const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(pdfDesignConfig)})})
+                        setPdfDesigns(p=>p.map(x=>x.id===res.id?res:x))
+                        setEditingPdfDesign(res)
+                      } catch { setError('Speichern fehlgeschlagen.') }
+                    }}>💾 Design speichern</button>
+                  </div>
+
+                  <div className="pdf-designer-body">
+                    {/* Left: Section list */}
+                    <div className="pdf-section-list">
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                        <strong>Seiten/Abschnitte</strong>
+                        <div style={{display:'flex',gap:'4px'}}>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'cover',title:'Deckblatt',orientation:'portrait'}]}))}>+ Deckblatt</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'rooms-table',title:'Raumtabelle',orientation:'portrait'}]}))}>+ Tabelle</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'text',title:'Textseite',text:'',orientation:'portrait'}]}))}>+ Text</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'summary',title:'Zusammenfassung',orientation:'portrait'}]}))}>+ Zusammenfassung</button>
+                        </div>
+                      </div>
+                      {pdfDesignConfig.sections.map((section,idx)=>(
+                        <div key={section.id} className={`pdf-section-item`}>
+                          <span className="pdf-section-icon">{section.type==='cover'?'📋':section.type==='rooms-table'?'📊':section.type==='text'?'📝':'📈'}</span>
+                          <div className="pdf-section-info">
+                            <input value={section.title} onChange={e=>setPdfDesignConfig(p=>({...p,sections:p.sections.map((s,i)=>i===idx?{...s,title:e.target.value}:s)}))} className="pdf-section-title-input" />
+                            <span className="pdf-section-type">{section.type==='cover'?'Deckblatt':section.type==='rooms-table'?'Raumtabelle':section.type==='text'?'Freitext':'Zusammenfassung'} · {section.orientation==='landscape'?'Quer':'Hochkant'}</span>
+                          </div>
+                          <select value={section.orientation||'portrait'} onChange={e=>setPdfDesignConfig(p=>({...p,sections:p.sections.map((s,i)=>i===idx?{...s,orientation:e.target.value as 'portrait'|'landscape'}:s)}))} style={{fontSize:'0.8rem',padding:'3px 6px',width:'auto'}}>
+                            <option value="portrait">Hochkant</option>
+                            <option value="landscape">Querformat</option>
+                          </select>
+                          <button type="button" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:'0.9rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:p.sections.filter((_,i)=>i!==idx)}))}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Right: Global settings */}
+                    <div className="pdf-designer-settings">
+                      <h4>Globale Einstellungen</h4>
+                      <div className="form-grid" style={{gridTemplateColumns:'1fr'}}>
+                        <label>Kopfzeile<input value={pdfDesignConfig.headerText} onChange={e=>setPdfDesignConfig(p=>({...p,headerText:e.target.value}))} placeholder="Kopfzeilen-Text..." /></label>
+                        <label>Fußzeile<input value={pdfDesignConfig.footerText} onChange={e=>setPdfDesignConfig(p=>({...p,footerText:e.target.value}))} placeholder="Fußzeilen-Text..." /></label>
+                        <label>Standard-Orientierung
+                          <select value={pdfDesignConfig.orientation} onChange={e=>setPdfDesignConfig(p=>({...p,orientation:e.target.value as 'portrait'|'landscape'}))}>
+                            <option value="portrait">Hochkant</option>
+                            <option value="landscape">Querformat</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div style={{marginTop:'16px'}}>
+                        <strong style={{fontSize:'0.9rem'}}>Deckblatt-Felder</strong>
+                        <p style={{color:'var(--muted)',fontSize:'0.82rem',marginBottom:'8px'}}>Welche Infos auf dem Deckblatt erscheinen:</p>
+                        {[
+                          {key:'siteName',label:'Standort-Name'},
+                          {key:'category',label:'Kategorie'},
+                          {key:'address',label:'Adresse'},
+                          {key:'phone',label:'Telefon'},
+                          {key:'caretakerPhone',label:'Hausmeister Telefon'},
+                          {key:'auditTitle',label:'Audit-Titel'},
+                          {key:'date',label:'Datum'},
+                          {key:'createdBy',label:'Ersteller'},
+                        ].map(f=>(
+                          <label key={f.key} style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 0',cursor:'pointer',fontSize:'0.9rem'}}>
+                            <input type="checkbox" checked={pdfDesignConfig.coverFields.includes(f.key)} onChange={e=>{if(e.target.checked)setPdfDesignConfig(p=>({...p,coverFields:[...p.coverFields,f.key]}));else setPdfDesignConfig(p=>({...p,coverFields:p.coverFields.filter(x=>x!==f.key)}))}} />
+                            {f.label}
+                          </label>
+                        ))}
+                      </div>
+                      <div style={{marginTop:'16px'}}>
+                        <strong style={{fontSize:'0.9rem'}}>Raumtabelle Spalten</strong>
+                        <p style={{color:'var(--muted)',fontSize:'0.82rem',marginBottom:'8px'}}>Vorlage wählen für Spalten-Auswahl:</p>
+                        <select value={pdfDesignConfig.templateId||''} onChange={e=>setPdfDesignConfig(p=>({...p,templateId:parseInt(e.target.value)||undefined,roomColumns:[]}))} style={{width:'100%',marginBottom:'8px'}}>
+                          <option value="">Vorlage wählen...</option>
+                          {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                        {pdfDesignConfig.templateId && templates.find(t=>t.id===pdfDesignConfig.templateId) && (
+                          (templates.find(t=>t.id===pdfDesignConfig.templateId)!.fields).map(f=>(
+                            <label key={f.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'4px 0',cursor:'pointer',fontSize:'0.88rem'}}>
+                              <input type="checkbox" checked={pdfDesignConfig.roomColumns.includes(f.name)} onChange={e=>{if(e.target.checked)setPdfDesignConfig(p=>({...p,roomColumns:[...p.roomColumns,f.name]}));else setPdfDesignConfig(p=>({...p,roomColumns:p.roomColumns.filter(x=>x!==f.name)}))}} />
+                              {f.name} <span style={{color:'var(--muted)',fontSize:'0.8rem'}}>({f.type})</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+          ):null}
 
           {page==='admin-benutzer'&&isAdmin?(
             <section className="panel">

@@ -439,6 +439,59 @@ app.MapPost("/api/audits/{auditId:int}/checklist", [Authorize] (AuditStore store
     return Results.Ok(entry);
 });
 
+app.MapGet("/api/audits/{auditId:int}/checklist", [Authorize] (AuditStore store, int auditId) =>
+    Results.Ok(store.ChecklistEntries.Where(e => e.AuditId == auditId).ToList()));
+
+app.MapPut("/api/audits/{auditId:int}/checklist/{entryId:int}", [Authorize] (AuditStore store, int auditId, int entryId, UpdateChecklistEntryRequest request) =>
+{
+    var updated = store.UpdateChecklistEntry(entryId, request.Answer, request.Status);
+    if (updated is null) return Results.NotFound();
+    return Results.Ok(updated);
+});
+
+// PDF Designs
+app.MapGet("/api/pdfdesigns", [Authorize] (AuditStore store) => Results.Ok(store.PdfDesigns));
+app.MapGet("/api/pdfdesigns/{id:int}", [Authorize] (AuditStore store, int id) =>
+{
+    var design = store.PdfDesigns.FirstOrDefault(d => d.Id == id);
+    return design is null ? Results.NotFound() : Results.Ok(design);
+});
+app.MapPost("/api/pdfdesigns", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, CreatePdfDesignRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
+    var design = store.CreatePdfDesign(request.Name, request.Description ?? string.Empty, request.ConfigJson ?? "{}");
+    return Results.Ok(design);
+});
+app.MapPut("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id, CreatePdfDesignRequest request) =>
+{
+    var design = store.UpdatePdfDesign(id, request.Name ?? string.Empty, request.Description ?? string.Empty, request.ConfigJson ?? "{}");
+    return design is null ? Results.NotFound() : Results.Ok(design);
+});
+app.MapDelete("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id) =>
+{
+    store.DeletePdfDesign(id);
+    return Results.Ok(new { message = "Design gelöscht." });
+});
+
+// Checkliste Templates
+app.MapGet("/api/checklisttemplates", [Authorize] (AuditStore store) => Results.Ok(store.ChecklistTemplates));
+app.MapPost("/api/checklisttemplates", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, CreateChecklistTemplateRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
+    var tmpl = store.CreateChecklistTemplate(request.Name, request.TemplateId ?? 0, request.ColumnsJson ?? "[]");
+    return Results.Ok(tmpl);
+});
+app.MapPut("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id, CreateChecklistTemplateRequest request) =>
+{
+    var tmpl = store.UpdateChecklistTemplate(id, request.Name ?? string.Empty, request.TemplateId ?? 0, request.ColumnsJson ?? "[]");
+    return tmpl is null ? Results.NotFound() : Results.Ok(tmpl);
+});
+app.MapDelete("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id) =>
+{
+    store.DeleteChecklistTemplate(id);
+    return Results.Ok(new { message = "Checkliste gelöscht." });
+});
+
 app.MapGet("/api/users", [Authorize(Policy = "RequireAdminAccess")] (UserStore users) =>
     Results.Ok(users.All.Select(u => new UserSummary(u.Id, u.UserName, u.DisplayName, u.Role, u.IsActive))));
 
@@ -762,6 +815,8 @@ public sealed class AuditStore
     private readonly List<AuditObject> _objects;
     private readonly List<AuditInstance> _audits;
     private readonly List<AuditChecklistEntry> _checklistEntries;
+    private readonly List<PdfDesign> _pdfDesigns;
+    private readonly List<ChecklistTemplate> _checklistTemplates;
 
     public AuditStore(AppDatabase database)
     {
@@ -773,6 +828,8 @@ public sealed class AuditStore
         _objects = _database.Load("audit_objects", CreateInitialObjects());
         _audits = _database.Load("audit_instances", CreateInitialAudits());
         _checklistEntries = _database.Load("audit_checklist_entries", CreateInitialChecklistEntries());
+        _pdfDesigns = _database.Load("pdf_designs", new List<PdfDesign>());
+        _checklistTemplates = _database.Load("checklist_templates", new List<ChecklistTemplate>());
     }
 
     public IReadOnlyList<AuditCategory> Categories => _categories;
@@ -791,6 +848,8 @@ public sealed class AuditStore
         _database.Save("audit_objects", _objects);
         _database.Save("audit_instances", _audits);
         _database.Save("audit_checklist_entries", _checklistEntries);
+        _database.Save("pdf_designs", _pdfDesigns);
+        _database.Save("checklist_templates", _checklistTemplates);
     }
 
     public AuditCategory CreateCategory(string name, string description)
@@ -870,6 +929,63 @@ public sealed class AuditStore
         Persist();
         return entry;
     }
+
+    public AuditChecklistEntry? UpdateChecklistEntry(int entryId, string? answer, string? status)
+    {
+        var idx = _checklistEntries.FindIndex(e => e.Id == entryId);
+        if (idx < 0) return null;
+        var existing = _checklistEntries[idx];
+        var updated = existing with { Answer = answer ?? existing.Answer, Status = status ?? existing.Status };
+        _checklistEntries[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public IReadOnlyList<AuditChecklistEntry> ChecklistEntries => _checklistEntries;
+    public IReadOnlyList<PdfDesign> PdfDesigns => _pdfDesigns;
+    public IReadOnlyList<ChecklistTemplate> ChecklistTemplates => _checklistTemplates;
+
+    public PdfDesign CreatePdfDesign(string name, string description, string configJson)
+    {
+        var id = _pdfDesigns.Count == 0 ? 1 : _pdfDesigns.Max(x => x.Id) + 1;
+        var design = new PdfDesign(id, name, description, configJson, DateTime.UtcNow);
+        _pdfDesigns.Add(design);
+        Persist();
+        return design;
+    }
+
+    public PdfDesign? UpdatePdfDesign(int id, string name, string description, string configJson)
+    {
+        var idx = _pdfDesigns.FindIndex(d => d.Id == id);
+        if (idx < 0) return null;
+        var updated = _pdfDesigns[idx] with { Name = name, Description = description, ConfigJson = configJson };
+        _pdfDesigns[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public void DeletePdfDesign(int id) { _pdfDesigns.RemoveAll(d => d.Id == id); Persist(); }
+
+    public ChecklistTemplate CreateChecklistTemplate(string name, int templateId, string columnsJson)
+    {
+        var id = _checklistTemplates.Count == 0 ? 1 : _checklistTemplates.Max(x => x.Id) + 1;
+        var tmpl = new ChecklistTemplate(id, name, templateId, columnsJson, DateTime.UtcNow);
+        _checklistTemplates.Add(tmpl);
+        Persist();
+        return tmpl;
+    }
+
+    public ChecklistTemplate? UpdateChecklistTemplate(int id, string name, int templateId, string columnsJson)
+    {
+        var idx = _checklistTemplates.FindIndex(t => t.Id == id);
+        if (idx < 0) return null;
+        var updated = _checklistTemplates[idx] with { Name = name, TemplateId = templateId, ColumnsJson = columnsJson };
+        _checklistTemplates[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public void DeleteChecklistTemplate(int id) { _checklistTemplates.RemoveAll(t => t.Id == id); Persist(); }
 
     private static List<AuditCategory> CreateInitialCategories() => new()
     {
@@ -1139,6 +1255,8 @@ public sealed record AuditInstance(int Id, int SiteId, int TemplateId, string Ti
 public sealed record AuditInstanceSummary(int Id, int SiteId, string Title, int TemplateId, string TemplateName, string CreatedBy, DateTime CreatedAtUtc, string Status, int EntryCount);
 public sealed record TemplateField(int Id, string Name, string Type, int Order, bool RelevantForProgress);
 public sealed record AuditTemplate(int Id, string Name, string Description, IEnumerable<TemplateField> Fields);
+public sealed record PdfDesign(int Id, string Name, string Description, string ConfigJson, DateTime CreatedAtUtc);
+public sealed record ChecklistTemplate(int Id, string Name, int TemplateId, string ColumnsJson, DateTime CreatedAtUtc);
 public sealed record UserSummary(int Id, string UserName, string DisplayName, string Role, bool IsActive);
 public sealed record BackupRecord(string Id, string FileName, DateTime CreatedAtUtc, long SizeBytes, string Type);
 public sealed record LoginRequest(string Username, string Password);
@@ -1151,5 +1269,8 @@ public sealed record CreateRoomRequest(int SiteId, string Name, string Descripti
 public sealed record CreateObjectRequest(int RoomId, string Name, string? ObjectType, string? Status, string? Notes);
 public sealed record CreateAuditRequest(int SiteId, int TemplateId, string Title);
 public sealed record CreateChecklistEntryRequest(string? Question, string? Answer, string? Status);
+public sealed record UpdateChecklistEntryRequest(string? Answer, string? Status);
 public sealed record TemplateFieldRequest(string Name, string Type, int? Order, bool? RelevantForProgress);
 public sealed record CreateTemplateRequest(string Name, string Description, IEnumerable<TemplateFieldRequest>? Fields);
+public sealed record CreatePdfDesignRequest(string Name, string? Description, string? ConfigJson);
+public sealed record CreateChecklistTemplateRequest(string Name, int? TemplateId, string? ColumnsJson);
