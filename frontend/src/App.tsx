@@ -114,26 +114,22 @@ type PdfDesign = {
   createdAtUtc: string
 }
 
-type PdfDesignConfig = {
-  templateId?: number
-  coverFields: string[]
+type PageDesign = {
+  id: string
+  name: string
   orientation: 'portrait' | 'landscape'
   headerText: string
   footerText: string
-  showRoomsTable: boolean
-  roomColumns: string[]
-  showSummary: boolean
-  logo?: string
-  sections: PdfSection[]
+  useGlobalHeader: boolean
+  elements: import('./components/PdfDesignerCanvas').DesignElement[]
 }
 
-type PdfSection = {
-  id: string
-  type: 'cover' | 'rooms-table' | 'text' | 'summary'
-  title: string
-  fields?: string[]
-  text?: string
-  orientation?: 'portrait' | 'landscape'
+type PdfDesignConfig = {
+  templateId?: number
+  globalHeaderText: string
+  globalFooterText: string
+  showPrintArea: boolean
+  pages: PageDesign[]
 }
 
 type ChecklistTemplate = {
@@ -232,18 +228,12 @@ function App() {
   // PDF Designer state
   const [pdfDesigns, setPdfDesigns] = useState<PdfDesign[]>([])
   const [editingPdfDesign, setEditingPdfDesign] = useState<PdfDesign | null>(null)
-  const [canvasElements, setCanvasElements] = useState<DesignElement[]>([])
   const [pdfDesignConfig, setPdfDesignConfig] = useState<PdfDesignConfig>({
-    coverFields: ['siteName', 'category', 'address', 'phone', 'caretakerPhone'],
-    orientation: 'portrait',
-    headerText: '',
-    footerText: '',
-    showRoomsTable: true,
-    roomColumns: [],
-    showSummary: false,
-    sections: [
-      { id: 'cover', type: 'cover', title: 'Deckblatt', orientation: 'portrait' },
-      { id: 'rooms', type: 'rooms-table', title: 'Räume & Objekte', orientation: 'portrait' }
+    globalHeaderText: '',
+    globalFooterText: '',
+    showPrintArea: true,
+    pages: [
+      { id: 'p1', name: 'Deckblatt', orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: false, elements: [] }
     ]
   })
   const [newPdfDesignName, setNewPdfDesignName] = useState('')
@@ -1590,10 +1580,19 @@ function App() {
                               <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{
                                 setEditingPdfDesign(d)
                                 try {
-                                  const config = JSON.parse(d.configJson)
-                                  setPdfDesignConfig(config)
-                                  setCanvasElements(config.canvasElements || [])
-                                } catch { setCanvasElements([]) }
+                                  const config = JSON.parse(d.configJson) as PdfDesignConfig
+                                  setPdfDesignConfig({
+                                    globalHeaderText: config.globalHeaderText || '',
+                                    globalFooterText: config.globalFooterText || '',
+                                    showPrintArea: config.showPrintArea ?? true,
+                                    templateId: config.templateId,
+                                    pages: config.pages?.length ? config.pages : [
+                                      { id: 'p1', name: 'Deckblatt', orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: false, elements: [] }
+                                    ]
+                                  })
+                                } catch {
+                                  setPdfDesignConfig({ globalHeaderText:'', globalFooterText:'', showPrintArea:true, pages:[{id:'p1',name:'Deckblatt',orientation:'portrait',headerText:'',footerText:'',useGlobalHeader:false,elements:[]}] })
+                                }
                               }}>✏️ Bearbeiten</button>
                               <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/pdfdesigns/${d.id}`,session,{method:'DELETE'});setPdfDesigns(p=>p.filter(x=>x.id!==d.id))}}>Löschen</button>
                             </div></td>
@@ -1607,17 +1606,20 @@ function App() {
                 <div className="pdf-designer">
                   <div className="pdf-designer-header">
                     <button type="button" className="back-btn" onClick={()=>setEditingPdfDesign(null)}>← Zurück zur Übersicht</button>
-                    <h4>✏️ WYSIWYG Designer: {editingPdfDesign.name}</h4>
-                    <div style={{display:'flex',gap:'8px',marginLeft:'auto'}}>
-                      <select value={pdfDesignConfig.templateId||''} onChange={e=>setPdfDesignConfig(p=>({...p,templateId:parseInt(e.target.value)||undefined}))} style={{padding:'6px 10px',borderRadius:'8px',border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text-h)',fontSize:'0.88rem'}}>
-                        <option value="">Vorlage für Felder...</option>
+                    <h4>✏️ {editingPdfDesign.name}</h4>
+                    <div style={{display:'flex',gap:'8px',alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
+                      <label style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'0.85rem',color:'var(--muted)',cursor:'pointer'}}>
+                        <input type="checkbox" checked={pdfDesignConfig.showPrintArea} onChange={e=>setPdfDesignConfig(p=>({...p,showPrintArea:e.target.checked}))} />
+                        Druckbereich
+                      </label>
+                      <select value={pdfDesignConfig.templateId||''} onChange={e=>setPdfDesignConfig(p=>({...p,templateId:parseInt(e.target.value)||undefined}))} style={{padding:'6px 10px',borderRadius:'8px',border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text-h)',fontSize:'0.85rem'}}>
+                        <option value="">Vorlage wählen...</option>
                         {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                       <button type="button" className="primary-button" onClick={async()=>{
                         if (!session) return
                         try {
-                          const config = {...pdfDesignConfig, canvasElements: canvasElements}
-                          const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(config)})})
+                          const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(pdfDesignConfig)})})
                           setPdfDesigns(p=>p.map(x=>x.id===res.id?res:x))
                           setEditingPdfDesign(res)
                         } catch { setError('Speichern fehlgeschlagen.') }
@@ -1625,8 +1627,13 @@ function App() {
                     </div>
                   </div>
                   <PdfDesignerCanvas
-                    elements={canvasElements}
-                    onChange={setCanvasElements}
+                    pages={pdfDesignConfig.pages}
+                    onPagesChange={pages=>setPdfDesignConfig(p=>({...p,pages}))}
+                    globalHeaderText={pdfDesignConfig.globalHeaderText}
+                    globalFooterText={pdfDesignConfig.globalFooterText}
+                    onGlobalHeaderChange={t=>setPdfDesignConfig(p=>({...p,globalHeaderText:t}))}
+                    onGlobalFooterChange={t=>setPdfDesignConfig(p=>({...p,globalFooterText:t}))}
+                    showPrintArea={pdfDesignConfig.showPrintArea}
                     templateFields={pdfDesignConfig.templateId ? (templates.find(t=>t.id===pdfDesignConfig.templateId)?.fields ?? []) : []}
                   />
                 </div>

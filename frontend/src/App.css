@@ -1680,3 +1680,240 @@ thead { background: rgba(148,163,184,0.06); }
 }
 
 .pdf-format-btn:hover { background: rgba(37,99,235,0.1); }
+
+/* ===== GLOBAL UI SPACING FIX ===== */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: 0;
+}
+
+.form-grid label.full-width { grid-column: 1 / -1; }
+
+.form-card {
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 0;
+}
+
+.form-card > h4 { margin: 0 0 16px; }
+
+.form-card > button[type="submit"],
+.form-card > button[type="button"].primary-button {
+  margin-top: 16px;
+}
+
+.form-card .form-grid + button,
+.form-card .form-grid + .primary-button,
+.form-card .form-grid + div { margin-top: 16px; }
+
+/* Inline form layout (label left, input right) */
+.form-inline-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.form-inline-row label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Better button group spacing */
+.button-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 16px;
+}
+
+/* Table improvement */
+table { margin-top: 0; }
+.table-wrapper { margin-top: 16px; }
+
+/* Section spacing */
+.panel > .form-card + .table-wrapper,
+.panel > .form-card + table,
+.panel > .form-card + div > table {
+  margin-top: 24px;
+}
+
+/* ===== PDF DESIGNER v2 ===== */
+.pdf-global-settings {
+  padding: 12px 16px;
+  background: rgba(59,130,246,0.05);
+  border: 1px solid rgba(59,130,246,0.15);
+  border-radius: 10px;
+}
+
+.pdf-canvas-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  overflow-x: auto;
+  min-height: 500px;
+}
+
+.pdf-page-list {
+  width: 120px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pdf-page-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.pdf-page-thumb {
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-page-thumb:hover { border-color: rgba(96,165,250,0.5); }
+.pdf-page-thumb.active { border-color: #3b82f6; }
+
+.pdf-page-thumb-preview {
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 60px;
+}
+
+.pdf-page-thumb-label {
+  padding: 2px 4px;
+  font-size: 0.75rem;
+}
+
+.pdf-page-settings-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 0.85rem;
+}
+
+.pdf-canvas-scroll {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Properties panel - no scroll, auto-width */
+.pdf-properties {
+  min-width: 220px;
+  max-width: 280px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  overflow: visible;
+  height: fit-content;
+}
+
+.pdf-properties-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+}
+
+.pdf-prop-group {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.pdf-prop-group:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+.pdf-prop-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.pdf-prop-row2 label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.pdf-prop-row2 input {
+  padding: 4px 6px;
+  background: rgba(15,23,42,0.3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-h);
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+.pdf-prop-group label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pdf-prop-group input[type="text"],
+.pdf-prop-group input[type="number"],
+.pdf-prop-group select,
+.pdf-prop-group textarea {
+  padding: 5px 7px;
+  background: rgba(15,23,42,0.3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-h);
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+
+.pdf-prop-group input[type="color"] {
+  height: 30px; width: 100%; padding: 2px; border-radius: 5px; cursor: pointer;
+}
+
+.pdf-prop-group input[type="range"] {
+  width: 100%; cursor: pointer;
+}
