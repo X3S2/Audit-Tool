@@ -6,6 +6,7 @@ import { Header } from './components/Header'
 import { Navigation, type PageKey } from './components/Navigation'
 import { Tabs, type TabItem } from './components/Tabs'
 import { Alert } from './components/Alert'
+import { PdfDesignerCanvas, type DesignElement } from './components/PdfDesignerCanvas'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -231,6 +232,7 @@ function App() {
   // PDF Designer state
   const [pdfDesigns, setPdfDesigns] = useState<PdfDesign[]>([])
   const [editingPdfDesign, setEditingPdfDesign] = useState<PdfDesign | null>(null)
+  const [canvasElements, setCanvasElements] = useState<DesignElement[]>([])
   const [pdfDesignConfig, setPdfDesignConfig] = useState<PdfDesignConfig>({
     coverFields: ['siteName', 'category', 'address', 'phone', 'caretakerPhone'],
     orientation: 'portrait',
@@ -1585,7 +1587,14 @@ function App() {
                             <td>{d.name}</td><td>{d.description||'-'}</td>
                             <td>{new Date(d.createdAtUtc).toLocaleDateString('de-DE')}</td>
                             <td><div style={{display:'flex',gap:'6px'}}>
-                              <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{setEditingPdfDesign(d);try{setPdfDesignConfig(JSON.parse(d.configJson))}catch{}}}>✏️ Bearbeiten</button>
+                              <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{
+                                setEditingPdfDesign(d)
+                                try {
+                                  const config = JSON.parse(d.configJson)
+                                  setPdfDesignConfig(config)
+                                  setCanvasElements(config.canvasElements || [])
+                                } catch { setCanvasElements([]) }
+                              }}>✏️ Bearbeiten</button>
                               <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/pdfdesigns/${d.id}`,session,{method:'DELETE'});setPdfDesigns(p=>p.filter(x=>x.id!==d.id))}}>Löschen</button>
                             </div></td>
                           </tr>
@@ -1598,95 +1607,28 @@ function App() {
                 <div className="pdf-designer">
                   <div className="pdf-designer-header">
                     <button type="button" className="back-btn" onClick={()=>setEditingPdfDesign(null)}>← Zurück zur Übersicht</button>
-                    <h4>Design: {editingPdfDesign.name}</h4>
-                    <button type="button" className="primary-button" style={{marginLeft:'auto'}} onClick={async()=>{
-                      if (!session) return
-                      try {
-                        const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(pdfDesignConfig)})})
-                        setPdfDesigns(p=>p.map(x=>x.id===res.id?res:x))
-                        setEditingPdfDesign(res)
-                      } catch { setError('Speichern fehlgeschlagen.') }
-                    }}>💾 Design speichern</button>
-                  </div>
-
-                  <div className="pdf-designer-body">
-                    {/* Left: Section list */}
-                    <div className="pdf-section-list">
-                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                        <strong>Seiten/Abschnitte</strong>
-                        <div style={{display:'flex',gap:'4px'}}>
-                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'cover',title:'Deckblatt',orientation:'portrait'}]}))}>+ Deckblatt</button>
-                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'rooms-table',title:'Raumtabelle',orientation:'portrait'}]}))}>+ Tabelle</button>
-                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'text',title:'Textseite',text:'',orientation:'portrait'}]}))}>+ Text</button>
-                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.78rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:[...p.sections,{id:Date.now().toString(),type:'summary',title:'Zusammenfassung',orientation:'portrait'}]}))}>+ Zusammenfassung</button>
-                        </div>
-                      </div>
-                      {pdfDesignConfig.sections.map((section,idx)=>(
-                        <div key={section.id} className={`pdf-section-item`}>
-                          <span className="pdf-section-icon">{section.type==='cover'?'📋':section.type==='rooms-table'?'📊':section.type==='text'?'📝':'📈'}</span>
-                          <div className="pdf-section-info">
-                            <input value={section.title} onChange={e=>setPdfDesignConfig(p=>({...p,sections:p.sections.map((s,i)=>i===idx?{...s,title:e.target.value}:s)}))} className="pdf-section-title-input" />
-                            <span className="pdf-section-type">{section.type==='cover'?'Deckblatt':section.type==='rooms-table'?'Raumtabelle':section.type==='text'?'Freitext':'Zusammenfassung'} · {section.orientation==='landscape'?'Quer':'Hochkant'}</span>
-                          </div>
-                          <select value={section.orientation||'portrait'} onChange={e=>setPdfDesignConfig(p=>({...p,sections:p.sections.map((s,i)=>i===idx?{...s,orientation:e.target.value as 'portrait'|'landscape'}:s)}))} style={{fontSize:'0.8rem',padding:'3px 6px',width:'auto'}}>
-                            <option value="portrait">Hochkant</option>
-                            <option value="landscape">Querformat</option>
-                          </select>
-                          <button type="button" style={{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:'0.9rem'}} onClick={()=>setPdfDesignConfig(p=>({...p,sections:p.sections.filter((_,i)=>i!==idx)}))}>✕</button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Right: Global settings */}
-                    <div className="pdf-designer-settings">
-                      <h4>Globale Einstellungen</h4>
-                      <div className="form-grid" style={{gridTemplateColumns:'1fr'}}>
-                        <label>Kopfzeile<input value={pdfDesignConfig.headerText} onChange={e=>setPdfDesignConfig(p=>({...p,headerText:e.target.value}))} placeholder="Kopfzeilen-Text..." /></label>
-                        <label>Fußzeile<input value={pdfDesignConfig.footerText} onChange={e=>setPdfDesignConfig(p=>({...p,footerText:e.target.value}))} placeholder="Fußzeilen-Text..." /></label>
-                        <label>Standard-Orientierung
-                          <select value={pdfDesignConfig.orientation} onChange={e=>setPdfDesignConfig(p=>({...p,orientation:e.target.value as 'portrait'|'landscape'}))}>
-                            <option value="portrait">Hochkant</option>
-                            <option value="landscape">Querformat</option>
-                          </select>
-                        </label>
-                      </div>
-                      <div style={{marginTop:'16px'}}>
-                        <strong style={{fontSize:'0.9rem'}}>Deckblatt-Felder</strong>
-                        <p style={{color:'var(--muted)',fontSize:'0.82rem',marginBottom:'8px'}}>Welche Infos auf dem Deckblatt erscheinen:</p>
-                        {[
-                          {key:'siteName',label:'Standort-Name'},
-                          {key:'category',label:'Kategorie'},
-                          {key:'address',label:'Adresse'},
-                          {key:'phone',label:'Telefon'},
-                          {key:'caretakerPhone',label:'Hausmeister Telefon'},
-                          {key:'auditTitle',label:'Audit-Titel'},
-                          {key:'date',label:'Datum'},
-                          {key:'createdBy',label:'Ersteller'},
-                        ].map(f=>(
-                          <label key={f.key} style={{display:'flex',alignItems:'center',gap:'8px',padding:'5px 0',cursor:'pointer',fontSize:'0.9rem'}}>
-                            <input type="checkbox" checked={pdfDesignConfig.coverFields.includes(f.key)} onChange={e=>{if(e.target.checked)setPdfDesignConfig(p=>({...p,coverFields:[...p.coverFields,f.key]}));else setPdfDesignConfig(p=>({...p,coverFields:p.coverFields.filter(x=>x!==f.key)}))}} />
-                            {f.label}
-                          </label>
-                        ))}
-                      </div>
-                      <div style={{marginTop:'16px'}}>
-                        <strong style={{fontSize:'0.9rem'}}>Raumtabelle Spalten</strong>
-                        <p style={{color:'var(--muted)',fontSize:'0.82rem',marginBottom:'8px'}}>Vorlage wählen für Spalten-Auswahl:</p>
-                        <select value={pdfDesignConfig.templateId||''} onChange={e=>setPdfDesignConfig(p=>({...p,templateId:parseInt(e.target.value)||undefined,roomColumns:[]}))} style={{width:'100%',marginBottom:'8px'}}>
-                          <option value="">Vorlage wählen...</option>
-                          {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                        </select>
-                        {pdfDesignConfig.templateId && templates.find(t=>t.id===pdfDesignConfig.templateId) && (
-                          (templates.find(t=>t.id===pdfDesignConfig.templateId)!.fields).map(f=>(
-                            <label key={f.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'4px 0',cursor:'pointer',fontSize:'0.88rem'}}>
-                              <input type="checkbox" checked={pdfDesignConfig.roomColumns.includes(f.name)} onChange={e=>{if(e.target.checked)setPdfDesignConfig(p=>({...p,roomColumns:[...p.roomColumns,f.name]}));else setPdfDesignConfig(p=>({...p,roomColumns:p.roomColumns.filter(x=>x!==f.name)}))}} />
-                              {f.name} <span style={{color:'var(--muted)',fontSize:'0.8rem'}}>({f.type})</span>
-                            </label>
-                          ))
-                        )}
-                      </div>
+                    <h4>✏️ WYSIWYG Designer: {editingPdfDesign.name}</h4>
+                    <div style={{display:'flex',gap:'8px',marginLeft:'auto'}}>
+                      <select value={pdfDesignConfig.templateId||''} onChange={e=>setPdfDesignConfig(p=>({...p,templateId:parseInt(e.target.value)||undefined}))} style={{padding:'6px 10px',borderRadius:'8px',border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text-h)',fontSize:'0.88rem'}}>
+                        <option value="">Vorlage für Felder...</option>
+                        {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                      <button type="button" className="primary-button" onClick={async()=>{
+                        if (!session) return
+                        try {
+                          const config = {...pdfDesignConfig, canvasElements: canvasElements}
+                          const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(config)})})
+                          setPdfDesigns(p=>p.map(x=>x.id===res.id?res:x))
+                          setEditingPdfDesign(res)
+                        } catch { setError('Speichern fehlgeschlagen.') }
+                      }}>💾 Speichern</button>
                     </div>
                   </div>
+                  <PdfDesignerCanvas
+                    elements={canvasElements}
+                    onChange={setCanvasElements}
+                    templateFields={pdfDesignConfig.templateId ? (templates.find(t=>t.id===pdfDesignConfig.templateId)?.fields ?? []) : []}
+                  />
                 </div>
               )}
             </section>
@@ -1776,16 +1718,40 @@ function App() {
           {page==='admin-backup'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Datenbankbackup</h3></div>
-              <div className="form-card"><button type="button" className="primary-button" onClick={createBackup}>💾 Backup jetzt erstellen</button></div>
-              <table style={{marginTop:'16px'}}><thead><tr><th>Dateiname</th><th>Erstellt</th><th>Größe</th><th>Aktionen</th></tr></thead>
+              <div className="form-card" style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
+                <button type="button" className="primary-button" onClick={createBackup}>💾 Backup jetzt erstellen</button>
+                <span style={{color:'var(--muted)',fontSize:'0.88rem'}}>oder</span>
+                <label className="secondary-button" style={{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',padding:'10px 16px'}}>
+                  📤 Backup hochladen
+                  <input type="file" accept=".zip" style={{display:'none'}} onChange={async e=>{
+                    if (!session||!e.target.files?.[0]) return
+                    const formData = new FormData()
+                    formData.append('file', e.target.files[0])
+                    try {
+                      const res = await fetch(`${API_BASE}/api/admin/backups/upload`, {
+                        method:'POST', headers:{'Authorization':`Bearer ${session.token}`}, body:formData
+                      })
+                      if (res.ok) { const b = await res.json(); setBackups(p=>[b,...p]) }
+                    } catch { setError('Upload fehlgeschlagen.') }
+                    e.target.value = ''
+                  }} />
+                </label>
+              </div>
+              <table style={{marginTop:'16px'}}><thead><tr><th>Dateiname</th><th>Erstellt</th><th>Größe</th><th>Typ</th><th>Aktionen</th></tr></thead>
                 <tbody>{backups.map(b=>(
                   <tr key={b.id}>
-                    <td>{b.fileName}</td>
+                    <td style={{fontSize:'0.88rem'}}>{b.fileName}</td>
                     <td>{new Date(b.createdAtUtc).toLocaleString('de-DE')}</td>
                     <td>{(b.sizeBytes/1024/1024).toFixed(2)} MB</td>
-                    <td><div style={{display:'flex',gap:'8px'}}>
-                      <button type="button" className="secondary-button" onClick={()=>restoreBackup(b.id)}>Wiederherstellen</button>
-                      <button type="button" className="danger-button" onClick={()=>deleteBackup(b.id)}>Löschen</button>
+                    <td><span className="status-badge">{b.type}</span></td>
+                    <td><div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                      <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{
+                        if (!session) return
+                        const res = await fetch(`${API_BASE}/api/admin/backups/${b.id}/download`, {headers:{'Authorization':`Bearer ${session.token}`}})
+                        if (res.ok) { const blob = await res.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = b.fileName; a.click() }
+                      }}>⬇ Download</button>
+                      <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>restoreBackup(b.id)}>↩ Wiederherstellen</button>
+                      <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>deleteBackup(b.id)}>✕ Löschen</button>
                     </div></td>
                   </tr>
                 ))}</tbody>
@@ -1953,5 +1919,4 @@ async function apiRequest<T>(path: string, session: Session, init?: RequestInit)
 }
 
 export default App
-
 

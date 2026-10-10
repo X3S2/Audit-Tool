@@ -1535,3 +1535,148 @@ thead { background: rgba(148,163,184,0.06); }
   padding: 16px;
 }
 .pdf-designer-settings h4 { margin: 0 0 14px; color: var(--text-h); font-size: 0.95rem; }
+
+/* ===== WYSIWYG PDF CANVAS ===== */
+.pdf-canvas-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pdf-canvas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.pdf-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pdf-toolbar-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.pdf-tool-btn {
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-h);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.pdf-tool-btn:hover {
+  background: rgba(37,99,235,0.1);
+  border-color: rgba(96,165,250,0.5);
+}
+
+.pdf-tool-btn.danger:hover {
+  background: rgba(239,68,68,0.1);
+  border-color: rgba(239,68,68,0.5);
+  color: #fca5a5;
+}
+
+.pdf-canvas-area {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  overflow-x: auto;
+}
+
+.pdf-page {
+  background: white;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  border-radius: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.pdf-properties {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  max-height: 842px;
+  overflow-y: auto;
+}
+
+.pdf-properties h4 {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  color: var(--text-h);
+}
+
+.pdf-prop-section {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pdf-prop-section:last-child {
+  border-bottom: none;
+}
+
+.pdf-prop-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pdf-prop-section input[type="text"],
+.pdf-prop-section input[type="number"],
+.pdf-prop-section select,
+.pdf-prop-section textarea {
+  padding: 5px 8px;
+  background: rgba(15,23,42,0.3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-h);
+  font-size: 0.85rem;
+}
+
+.pdf-prop-section input[type="color"] {
+  height: 32px;
+  padding: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.pdf-format-btn {
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--text-h);
+  font-weight: bold;
+  transition: all 0.15s;
+}
+
+.pdf-format-btn.active {
+  background: rgba(37,99,235,0.2);
+  border-color: rgba(96,165,250,0.6);
+  color: var(--color-gradient-end);
+}
+
+.pdf-format-btn:hover { background: rgba(37,99,235,0.1); }

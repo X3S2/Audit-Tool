@@ -130,7 +130,8 @@ app.MapPost("/api/auth/login", (LoginRequest request, UserStore users, RefreshTo
         return Results.BadRequest(new { message = "Benutzername und Passwort sind erforderlich." });
     }
 
-    var user = users.Authenticate(request.Username, request.Password);
+    // Username ist case-insensitive, Passwort case-sensitive
+    var user = users.Authenticate(request.Username.Trim().ToLowerInvariant(), request.Password);
     if (user is null)
     {
         return Results.Unauthorized();
@@ -633,6 +634,31 @@ app.MapDelete("/api/admin/backups/{backupId}", [Authorize(Policy = "RequireAdmin
     }
 
     return Results.Ok(new { message = $"Backup '{backupId}' wurde gelöscht." });
+});
+
+app.MapGet("/api/admin/backups/{backupId}/download", [Authorize(Policy = "RequireAdminAccess")] (string backupId, BackupStore backups) =>
+{
+    var filePath = backups.GetFilePath(backupId);
+    if (filePath is null || !File.Exists(filePath))
+        return Results.NotFound(new { message = "Backup nicht gefunden." });
+
+    var bytes = File.ReadAllBytes(filePath);
+    var fileName = Path.GetFileName(filePath);
+    return Results.File(bytes, "application/zip", fileName);
+});
+
+app.MapPost("/api/admin/backups/upload", [Authorize(Policy = "RequireAdminAccess")] async (HttpRequest request, BackupStore backups, AuditStore store) =>
+{
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { message = "Multipart-Formular erwartet." });
+
+    var form = await request.ReadFormAsync();
+    var file = form.Files.FirstOrDefault();
+    if (file is null || file.Length == 0)
+        return Results.BadRequest(new { message = "Keine Datei hochgeladen." });
+
+    var backup = await backups.Upload(file);
+    return Results.Ok(backup);
 });
 
 app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int? siteId, HttpContext httpContext) =>
@@ -1158,8 +1184,25 @@ public sealed class BackupStore
         File.Delete(filePath);
         return true;
     }
-}
 
+    public string? GetFilePath(string backupId)
+    {
+        var filePath = Path.Combine(_folderPath, $"{backupId}.zip");
+        if (File.Exists(filePath)) return filePath;
+        filePath = Path.Combine(_folderPath, backupId);
+        return File.Exists(filePath) ? filePath : null;
+    }
+
+    public async Task<BackupRecord> Upload(IFormFile file)
+    {
+        var fileName = $"upload_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{file.FileName}";
+        var fullPath = Path.Combine(_folderPath, fileName);
+        using var stream = File.Create(fullPath);
+        await file.CopyToAsync(stream);
+        var info = new FileInfo(fullPath);
+        return new BackupRecord(Path.GetFileNameWithoutExtension(info.Name), info.Name, info.LastWriteTimeUtc, info.Length, "Hochgeladen");
+    }
+}
 public sealed class UserStore
 {
     private readonly AppDatabase _database;
