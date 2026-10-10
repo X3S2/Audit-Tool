@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.7.5] - 2026-10-10
+
+### WYSIWYG PDF-Designer, Backup Download/Upload & Fixes
+
+#### WYSIWYG PDF-Designer (komplett neu — `PdfDesignerCanvas.tsx`)
+- **DIN A4 Weißes Blatt** als Canvas (595×842px, 75% Maßstab)
+- **Drag & Drop**: Elemente mit der Maus frei verschieben
+- **Größe ändern**: Resize-Anfasser rechts unten per Maus
+- **7 Elementtypen** per Toolbar einfügbar:
+  - `T Text` — Freitext, doppelklicken zum Bearbeiten
+  - `⟨⟩ Variable` — Platzhalter (z.B. `{{siteName}}`, `{{date}}`, Vorlagenfelder)
+  - `📷 Bild` — Bild-Platzhalter (wird bei PDF-Export mit Auditbild befüllt)
+  - `📊 Tabelle` — Datentabelle mit wählbaren Spalten aus der Vorlage
+  - `🔄 Wiederholen` — Wiederholender Block pro Raum (Mail-Merge-Prinzip)
+  - `— Linie` — Trennlinie
+  - `▭ Box` — Rechteck/Rahmen
+- **Eigenschaften-Panel** (rechts):
+  - Position (X/Y), Größe (Breite/Höhe) numerisch
+  - Schriftgröße, Bold, Italic, Ausrichtung (Links/Mitte/Rechts)
+  - Textfarbe, Hintergrundfarbe, Rahmen ein/aus
+  - Variablen-Bindung aus Dropdown (alle Audit-Felder)
+  - Tabellen/Repeat-Felder aus gewählter Vorlage
+- **Vorlage auswählen** im Designer-Header für Feld-Bindungen
+- **Speichern** speichert alle Canvas-Elemente als JSON im Backend
+
+#### Backup — Download & Upload
+- **⬇ Download**: Backup direkt als ZIP herunterladen (lokal speichern)
+- **📤 Backup hochladen**: ZIP-Datei hochladen für Restore auf neuem System
+- Backend: `GET /api/admin/backups/{id}/download`
+- Backend: `POST /api/admin/backups/upload`
+- Typ-Spalte in Backup-Tabelle (Vollbackup / Hochgeladen)
+
+### Status
+- ✅ TypeScript Build: 0 Fehler (24 Module)
+- ✅ Docker Rebuild: Erfolgreich
+- ✅ GitHub: `6157a37` auf master
+
 ## [1.7.4] - 2026-10-10
 
 ### PDF-Designer, Checklisten & UX-Fixes
