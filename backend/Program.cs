@@ -211,6 +211,18 @@ app.MapPost("/api/categories", [Authorize(Policy = "RequireAdminAccess")] (Creat
     return Results.Ok(category);
 });
 
+app.MapPut("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, CreateCategoryRequest request, AuditStore store) =>
+{
+    var updated = store.UpdateCategory(id, request.Name ?? string.Empty, request.Description ?? string.Empty);
+    return updated is null ? Results.NotFound() : Results.Ok(updated);
+});
+
+app.MapDelete("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, AuditStore store) =>
+{
+    store.DeleteCategory(id);
+    return Results.Ok(new { message = "Kategorie gelöscht." });
+});
+
 app.MapGet("/api/standorte", [Authorize] (AuditStore store) => Results.Ok(store.Sites));
 app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] (CreateSiteRequest request, AuditStore store) =>
 {
@@ -221,6 +233,18 @@ app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] (Create
 
     var site = store.CreateSite(request.CategoryId, request.Name, request.Address ?? string.Empty, request.Phone ?? string.Empty, request.CaretakerPhone ?? string.Empty);
     return Results.Ok(site);
+});
+
+app.MapPut("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, UpdateSiteRequest request, AuditStore store) =>
+{
+    var updated = store.UpdateSite(id, request.CategoryId, request.Name ?? string.Empty, request.Address ?? string.Empty, request.Phone ?? string.Empty, request.CaretakerPhone ?? string.Empty);
+    return updated is null ? Results.NotFound() : Results.Ok(updated);
+});
+
+app.MapDelete("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, AuditStore store) =>
+{
+    store.DeleteSite(id);
+    return Results.Ok(new { message = "Standort gelöscht." });
 });
 
 app.MapGet("/api/templates", [Authorize] (AuditStore store) => Results.Ok(store.Templates));
@@ -235,9 +259,21 @@ app.MapPost("/api/templates", [Authorize(Policy = "RequireAdminAccess")] (Create
     return Results.Ok(template);
 });
 
+app.MapPut("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, CreateTemplateRequest request, AuditStore store) =>
+{
+    var updated = store.UpdateTemplate(id, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Fields ?? Array.Empty<TemplateFieldRequest>());
+    return updated is null ? Results.NotFound() : Results.Ok(updated);
+});
+
+app.MapDelete("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, AuditStore store) =>
+{
+    store.DeleteTemplate(id);
+    return Results.Ok(new { message = "Vorlage gelöscht." });
+});
+
 app.MapGet("/api/rooms", [Authorize] (AuditStore store, int? siteId) =>
     Results.Ok(siteId.HasValue ? store.Rooms.Where(room => room.SiteId == siteId.Value).ToList() : store.Rooms));
-app.MapPost("/api/rooms", [Authorize(Policy = "RequireAdminAccess")] (CreateRoomRequest request, AuditStore store) =>
+app.MapPost("/api/rooms", [Authorize] (CreateRoomRequest request, AuditStore store) =>
 {
     if (request.SiteId <= 0 || string.IsNullOrWhiteSpace(request.Name))
     {
@@ -247,6 +283,19 @@ app.MapPost("/api/rooms", [Authorize(Policy = "RequireAdminAccess")] (CreateRoom
     var room = store.CreateRoom(request.SiteId, request.Name, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty);
     return Results.Ok(room);
 });
+
+app.MapPut("/api/rooms/{roomId:int}", [Authorize] (int roomId, CreateRoomRequest request, AuditStore store) =>
+{
+    var updated = store.UpdateRoom(roomId, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty);
+    return updated is null ? Results.NotFound() : Results.Ok(updated);
+});
+
+app.MapDelete("/api/rooms/{roomId:int}", [Authorize] (int roomId, AuditStore store) =>
+{
+    store.DeleteRoom(roomId);
+    return Results.Ok(new { message = "Raum gelöscht." });
+});
+
 
 app.MapGet("/api/rooms/{roomId}/objects", [Authorize] (AuditStore store, int roomId) =>
     Results.Ok(store.Objects.Where(obj => obj.RoomId == roomId).ToList()));
@@ -661,6 +710,12 @@ app.MapPost("/api/admin/backups/upload", [Authorize(Policy = "RequireAdminAccess
     return Results.Ok(backup);
 });
 
+app.MapGet("/api/admin/logs", [Authorize(Policy = "RequireAdminAccess")] async (AuditLogger logger, int? limit) =>
+{
+    var logs = await logger.GetLogsAsync(limit: limit ?? 200);
+    return Results.Ok(logs.OrderByDescending(l => l.Timestamp).ToList());
+});
+
 app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int? siteId, HttpContext httpContext) =>
 {
     var exportDirectory = Path.Combine(builder.Environment.ContentRootPath, "..", "storage", "exports");
@@ -1013,6 +1068,67 @@ public sealed class AuditStore
 
     public void DeleteChecklistTemplate(int id) { _checklistTemplates.RemoveAll(t => t.Id == id); Persist(); }
 
+    public AuditCategory? UpdateCategory(int id, string name, string description)
+    {
+        var idx = _categories.FindIndex(c => c.Id == id);
+        if (idx < 0) return null;
+        var updated = _categories[idx] with { Name = name, Description = description };
+        _categories[idx] = updated;
+        // Propagate rename to no extra fields needed (sites reference by CategoryId)
+        Persist();
+        return updated;
+    }
+
+    public void DeleteCategory(int id) { _categories.RemoveAll(c => c.Id == id); Persist(); }
+
+    public AuditSite? UpdateSite(int id, int categoryId, string name, string address, string phone, string caretakerPhone)
+    {
+        var idx = _sites.FindIndex(s => s.Id == id);
+        if (idx < 0) return null;
+        var updated = _sites[idx] with { CategoryId = categoryId, Name = name, Address = address, Phone = phone, CaretakerPhone = caretakerPhone };
+        _sites[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public void DeleteSite(int id) { _sites.RemoveAll(s => s.Id == id); Persist(); }
+
+    public AuditTemplate? UpdateTemplate(int id, string name, string description, IEnumerable<TemplateFieldRequest> fields)
+    {
+        var idx = _templates.FindIndex(t => t.Id == id);
+        if (idx < 0) return null;
+        var templateFields = fields.Select((field, index) =>
+            new TemplateField(index + 1, field.Name, field.Type, field.Order ?? index + 1, field.RelevantForProgress ?? true))
+            .OrderBy(f => f.Order).ToArray();
+        var updated = _templates[idx] with { Name = name, Description = description, Fields = templateFields };
+        _templates[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public void DeleteTemplate(int id) { _templates.RemoveAll(t => t.Id == id); Persist(); }
+
+    public AuditRoom? UpdateRoom(int id, string name, string description, string capacity, string area, string notes)
+    {
+        var idx = _rooms.FindIndex(r => r.Id == id);
+        if (idx < 0) return null;
+        var updated = _rooms[idx] with { Name = name, Description = description, Capacity = capacity, Area = area, Notes = notes };
+        _rooms[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public void DeleteRoom(int id) { _rooms.RemoveAll(r => r.Id == id); Persist(); }
+
+    private readonly List<string> _inMemoryLog = new();
+
+    public void AddLog(string level, string category, string message)
+    {
+        // in-memory log (also written to file via AuditLogger DI)
+        _inMemoryLog.Insert(0, $"[{DateTime.UtcNow:HH:mm:ss}] [{level}] [{category}] {message}");
+        if (_inMemoryLog.Count > 200) _inMemoryLog.RemoveAt(_inMemoryLog.Count - 1);
+    }
+
     private static List<AuditCategory> CreateInitialCategories() => new()
     {
         new AuditCategory(1, "Grundschulen", "Standorte für Schuleinrichtungen"),
@@ -1315,5 +1431,7 @@ public sealed record CreateChecklistEntryRequest(string? Question, string? Answe
 public sealed record UpdateChecklistEntryRequest(string? Answer, string? Status);
 public sealed record TemplateFieldRequest(string Name, string Type, int? Order, bool? RelevantForProgress);
 public sealed record CreateTemplateRequest(string Name, string Description, IEnumerable<TemplateFieldRequest>? Fields);
+public sealed record UpdateSiteRequest(int CategoryId, string? Name, string? Address, string? Phone, string? CaretakerPhone);
 public sealed record CreatePdfDesignRequest(string Name, string? Description, string? ConfigJson);
 public sealed record CreateChecklistTemplateRequest(string Name, int? TemplateId, string? ColumnsJson);
+

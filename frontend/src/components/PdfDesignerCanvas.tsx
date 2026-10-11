@@ -201,6 +201,25 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
     return () => window.removeEventListener('keydown', handler)
   }, [selected, editingText, deleteEl])
 
+  // Align element relative to print area
+  const alignEl = (how: string) => {
+    if (!selectedEl) return
+    const printLeft = MARGIN
+    const printRight = pageW - MARGIN
+    const printTop = MARGIN
+    const printBottom = pageH - MARGIN
+    const printW = printRight - printLeft
+    const printH = printBottom - printTop
+    let { x, y } = selectedEl
+    if (how === 'left')   x = printLeft
+    if (how === 'center') x = printLeft + (printW - selectedEl.width) / 2
+    if (how === 'right')  x = printRight - selectedEl.width
+    if (how === 'top')    y = printTop
+    if (how === 'middle') y = printTop + (printH - selectedEl.height) / 2
+    if (how === 'bottom') y = printBottom - selectedEl.height
+    updateEl(selectedEl.id, { x: Math.round(x), y: Math.round(y) })
+  }
+
   const renderEl = (el: DesignElement) => {
     const isSel = selected === el.id
     const s = el.style
@@ -310,6 +329,18 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
         <button type="button" className="pdf-tool-btn" onClick={() => addEl('repeat-block')}>🔄 Block</button>
         <button type="button" className="pdf-tool-btn" onClick={() => addEl('divider')}>― Linie</button>
         <button type="button" className="pdf-tool-btn" onClick={() => addEl('rectangle')}>▭ Box</button>
+        {selectedEl && (
+          <>
+            <span className="pdf-toolbar-sep" />
+            <span className="pdf-toolbar-label">Ausrichten:</span>
+            <button type="button" className="pdf-tool-btn" title="Links ausrichten" onClick={() => alignEl('left')}>⇤</button>
+            <button type="button" className="pdf-tool-btn" title="Horizontal zentrieren" onClick={() => alignEl('center')}>↔</button>
+            <button type="button" className="pdf-tool-btn" title="Rechts ausrichten" onClick={() => alignEl('right')}>⇥</button>
+            <button type="button" className="pdf-tool-btn" title="Oben ausrichten" onClick={() => alignEl('top')}>⇡</button>
+            <button type="button" className="pdf-tool-btn" title="Vertikal zentrieren" onClick={() => alignEl('middle')}>↕</button>
+            <button type="button" className="pdf-tool-btn" title="Unten ausrichten" onClick={() => alignEl('bottom')}>⇣</button>
+          </>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <button type="button" className="pdf-tool-btn" onClick={() => setShowGlobalSettings(s => !s)}>⚙ Kopf/Fuß</button>
           {selected && <button type="button" className="pdf-tool-btn danger" onClick={deleteEl}>🗑 Entfernen</button>}
@@ -500,10 +531,10 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
                 <label>Schriftgröße <input type="number" min={5} max={96} value={selectedEl.style.fontSize} onChange={e => updateStyle(selectedEl.id, { fontSize: +e.target.value })} /></label>
                 <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
                   {[
-                    { k: 'fontWeight', v1: 'bold' as const, v2: 'normal' as const, label: 'B', bold: true },
+                    { k: 'fontWeight' as const, v1: 'bold' as const, v2: 'normal' as const, label: 'B', bold: true },
                   ].map(({ k, v1, v2, label, bold }) => (
-                    <button key={k} type="button" className={`pdf-format-btn${selectedEl.style[k as keyof typeof selectedEl.style] === v1 ? ' active' : ''}`} style={{ fontWeight: bold ? 'bold' : undefined }}
-                      onClick={() => updateStyle(selectedEl.id, { [k]: selectedEl.style[k as keyof typeof selectedEl.style] === v1 ? v2 : v1 } as Partial<DesignElement['style']>)}>
+                    <button key={k} type="button" className={`pdf-format-btn${selectedEl.style.fontWeight === v1 ? ' active' : ''}`} style={{ fontWeight: bold ? 'bold' : undefined }}
+                      onClick={() => updateStyle(selectedEl.id, { fontWeight: selectedEl.style.fontWeight === v1 ? v2 : v1 })}>
                       {label}
                     </button>
                   ))}

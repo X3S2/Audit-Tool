@@ -219,6 +219,13 @@ function App() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [newUserForm, setNewUserForm] = useState({ userName: '', displayName: '', password: '', role: 'Benutzer' })
   const [showNewUserForm, setShowNewUserForm] = useState(false)
+  // Einstellungen Edit state
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null)
+  const [editingSite, setEditingSite] = useState<Site | null>(null)
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null)
+  // Logs state
+  const [logs, setLogs] = useState<Array<{timestamp: string; action: string; details?: string; userId: number}>>([])
+  const [logFilter, setLogFilter] = useState('')
   // Vorlagen field builder state
   const [templateFields, setTemplateFields] = useState<Array<{name: string; type: string; order: number; required: boolean; dropdownOptions: string}>>([
     { name: '', type: 'text', order: 1, required: true, dropdownOptions: '' }
@@ -1082,6 +1089,28 @@ function App() {
                 <div className="stat-card"><span>Vorlagen</span><strong>{templates.length}</strong></div>
                 <div className="stat-card"><span>Audits</span><strong>{audits.length}</strong></div>
               </div>
+              <div className="dashboard-quick" style={{marginTop:'24px'}}>
+                <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Schnellzugriff</h4>
+                <div className="card-grid">
+                  <button type="button" className="card-item" onClick={()=>setPage('audits')}>
+                    <span className="card-icon">📋</span>
+                    <span className="card-name">Audits</span>
+                    <span className="card-count">Audit erfassen oder fortsetzen</span>
+                  </button>
+                  <button type="button" className="card-item" onClick={()=>setPage('datenablage')}>
+                    <span className="card-icon">💾</span>
+                    <span className="card-name">Datenablage</span>
+                    <span className="card-count">Aufgenommene Daten einsehen</span>
+                  </button>
+                  {isAdmin && (
+                    <button type="button" className="card-item" onClick={()=>setPage('einstellungen-standorte')}>
+                      <span className="card-icon">📍</span>
+                      <span className="card-name">Standorte</span>
+                      <span className="card-count">Standorte verwalten</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             </section>
           ) : null}
 
@@ -1210,9 +1239,15 @@ function App() {
                             <button type="submit" className="primary-button">Raum speichern</button>
                           </form>
                           <table style={{marginTop:'16px'}}>
-                            <thead><tr><th>Raum</th><th>Kapazität</th><th>Fläche</th><th>Notiz</th></tr></thead>
+                            <thead><tr><th>Raum</th><th>Kapazität</th><th>Fläche</th><th>Notiz</th><th>Aktionen</th></tr></thead>
                             <tbody>{rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>(
-                              <tr key={r.id}><td>{r.name}</td><td>{r.capacity||'-'}</td><td>{r.area||'-'}</td><td>{r.notes||'-'}</td></tr>
+                              <tr key={r.id}>
+                                <td>{r.name}</td><td>{r.capacity||'-'}</td><td>{r.area||'-'}</td><td>{r.notes||'-'}</td>
+                                <td><div style={{display:'flex',gap:'6px'}}>
+                                  <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>setRoomForm({siteId:String(r.siteId),name:r.name,description:r.description,capacity:r.capacity,area:r.area,notes:r.notes})}>✏️</button>
+                                  <button type="button" className="danger-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={async()=>{if(!session)return;if(!confirm(`Raum "${r.name}" wirklich löschen?`))return;await apiRequest(`/api/rooms/${r.id}`,session,{method:'DELETE'});setRooms(p=>p.filter(x=>x.id!==r.id))}}>✕</button>
+                                </div></td>
+                              </tr>
                             ))}</tbody>
                           </table>
                           {rooms.filter(r=>r.siteId===auditSelectedSite.id).length===0&&<p className="empty-hint">Noch keine Räume.</p>}
@@ -1372,22 +1407,47 @@ function App() {
             </section>
           ) : null}
 
+
           {page==='einstellungen-kategorien'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Standort-Kategorien</h3></div>
-              <form className="form-card" onSubmit={createCategory}>
-                <h4>Neue Kategorie anlegen</h4>
-                <div className="form-grid">
-                  <label>Name<input value={categoryForm.name} onChange={e=>setCategoryForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Grundschulen" required /></label>
-                  <label>Beschreibung<input value={categoryForm.description} onChange={e=>setCategoryForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
-                </div>
-                <button type="submit" className="primary-button">Kategorie speichern</button>
-              </form>
+              {editingCategory ? (
+                <form className="form-card" onSubmit={async e=>{e.preventDefault();if(!session)return;const res=await apiRequest<Category>(`/api/categories/${editingCategory.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingCategory.name,description:editingCategory.description})});setCategories(p=>p.map(c=>c.id===res.id?res:c));setEditingCategory(null)}}>
+                  <h4>Kategorie bearbeiten</h4>
+                  <div className="form-grid">
+                    <label>Name<input value={editingCategory.name} onChange={e=>setEditingCategory(p=>p?{...p,name:e.target.value}:p)} required /></label>
+                    <label>Beschreibung<input value={editingCategory.description} onChange={e=>setEditingCategory(p=>p?{...p,description:e.target.value}:p)} /></label>
+                  </div>
+                  <p style={{color:'var(--muted)',fontSize:'0.82rem',marginTop:'8px'}}>⚠️ Umbenennung wird automatisch auf alle zugeordneten Standorte übernommen.</p>
+                  <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+                    <button type="submit" className="primary-button">Speichern</button>
+                    <button type="button" className="secondary-button" onClick={()=>setEditingCategory(null)}>Abbrechen</button>
+                  </div>
+                </form>
+              ) : (
+                <form className="form-card" onSubmit={createCategory}>
+                  <h4>Neue Kategorie anlegen</h4>
+                  <div className="form-grid">
+                    <label>Name<input value={categoryForm.name} onChange={e=>setCategoryForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Grundschulen" required /></label>
+                    <label>Beschreibung<input value={categoryForm.description} onChange={e=>setCategoryForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
+                  </div>
+                  <button type="submit" className="primary-button">Kategorie speichern</button>
+                </form>
+              )}
               <div style={{marginTop:'24px'}}>
                 <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Kategorien ({categories.length})</h4>
                 {categories.length===0?<p className="empty-hint">Noch keine Kategorien.</p>:(
-                  <table><thead><tr><th>Name</th><th>Beschreibung</th></tr></thead>
-                    <tbody>{[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(c=><tr key={c.id}><td>{c.name}</td><td>{c.description||'-'}</td></tr>)}</tbody>
+                  <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Standorte</th><th>Aktionen</th></tr></thead>
+                    <tbody>{[...categories].sort((a,b)=>a.name.localeCompare(b.name)).map(c=>(
+                      <tr key={c.id}>
+                        <td>{c.name}</td><td>{c.description||'-'}</td>
+                        <td><span className="status-badge">{sites.filter(s=>s.categoryId===c.id).length} Standorte</span></td>
+                        <td><div style={{display:'flex',gap:'6px'}}>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>setEditingCategory(c)}>✏️ Bearbeiten</button>
+                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(!session)return;if(sites.filter(s=>s.categoryId===c.id).length>0){alert(`Kategorie hat noch ${sites.filter(s=>s.categoryId===c.id).length} Standorte. Bitte zuerst die Standorte umziehen.`);return}if(!confirm(`Kategorie "${c.name}" löschen?`))return;await apiRequest(`/api/categories/${c.id}`,session,{method:'DELETE'});setCategories(p=>p.filter(x=>x.id!==c.id))}}>✕ Löschen</button>
+                        </div></td>
+                      </tr>
+                    ))}</tbody>
                   </table>
                 )}
               </div>
@@ -1397,23 +1457,49 @@ function App() {
           {page==='einstellungen-standorte'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Standorte</h3></div>
-              <form className="form-card" onSubmit={createSite}>
-                <h4>Neuen Standort anlegen</h4>
-                <div className="form-grid">
-                  <label>Kategorie<select value={siteForm.categoryId} onChange={e=>setSiteForm(p=>({...p,categoryId:e.target.value}))}>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-                  <label>Name<input value={siteForm.name} onChange={e=>setSiteForm(p=>({...p,name:e.target.value}))} placeholder="Standortname" required /></label>
-                  <label>Adresse<input value={siteForm.address} onChange={e=>setSiteForm(p=>({...p,address:e.target.value}))} placeholder="Straße, PLZ Ort" /></label>
-                  <label>Telefon<input value={siteForm.phone} onChange={e=>setSiteForm(p=>({...p,phone:e.target.value}))} placeholder="+49 ..." /></label>
-                  <label>Hausmeister Telefon<input value={siteForm.caretakerPhone} onChange={e=>setSiteForm(p=>({...p,caretakerPhone:e.target.value}))} placeholder="+49 ..." /></label>
-                </div>
-                <button type="submit" className="primary-button">Standort speichern</button>
-              </form>
+              {editingSite ? (
+                <form className="form-card" onSubmit={async e=>{e.preventDefault();if(!session)return;const res=await apiRequest<Site>(`/api/standorte/${editingSite.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({categoryId:editingSite.categoryId,name:editingSite.name,address:editingSite.address,phone:editingSite.phone,caretakerPhone:editingSite.caretakerPhone})});setSites(p=>p.map(s=>s.id===res.id?res:s));setEditingSite(null)}}>
+                  <h4>Standort bearbeiten</h4>
+                  <div className="form-grid">
+                    <label>Kategorie<select value={editingSite.categoryId} onChange={e=>setEditingSite(p=>p?{...p,categoryId:parseInt(e.target.value)}:p)}>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+                    <label>Name<input value={editingSite.name} onChange={e=>setEditingSite(p=>p?{...p,name:e.target.value}:p)} required /></label>
+                    <label>Adresse<input value={editingSite.address} onChange={e=>setEditingSite(p=>p?{...p,address:e.target.value}:p)} /></label>
+                    <label>Telefon<input value={editingSite.phone} onChange={e=>setEditingSite(p=>p?{...p,phone:e.target.value}:p)} /></label>
+                    <label>Hausmeister Telefon<input value={editingSite.caretakerPhone} onChange={e=>setEditingSite(p=>p?{...p,caretakerPhone:e.target.value}:p)} /></label>
+                  </div>
+                  <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+                    <button type="submit" className="primary-button">Speichern</button>
+                    <button type="button" className="secondary-button" onClick={()=>setEditingSite(null)}>Abbrechen</button>
+                  </div>
+                </form>
+              ) : (
+                <form className="form-card" onSubmit={createSite}>
+                  <h4>Neuen Standort anlegen</h4>
+                  <div className="form-grid">
+                    <label>Kategorie<select value={siteForm.categoryId} onChange={e=>setSiteForm(p=>({...p,categoryId:e.target.value}))}>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+                    <label>Name<input value={siteForm.name} onChange={e=>setSiteForm(p=>({...p,name:e.target.value}))} placeholder="Standortname" required /></label>
+                    <label>Adresse<input value={siteForm.address} onChange={e=>setSiteForm(p=>({...p,address:e.target.value}))} placeholder="Straße, PLZ Ort" /></label>
+                    <label>Telefon<input value={siteForm.phone} onChange={e=>setSiteForm(p=>({...p,phone:e.target.value}))} placeholder="+49 ..." /></label>
+                    <label>Hausmeister Telefon<input value={siteForm.caretakerPhone} onChange={e=>setSiteForm(p=>({...p,caretakerPhone:e.target.value}))} placeholder="+49 ..." /></label>
+                  </div>
+                  <button type="submit" className="primary-button">Standort speichern</button>
+                </form>
+              )}
               <div style={{marginTop:'24px'}}>
                 <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Standorte ({sites.length})</h4>
                 {sites.length===0?<p className="empty-hint">Noch keine Standorte.</p>:(
-                  <table><thead><tr><th>Name</th><th>Kategorie</th><th>Adresse</th><th>Status</th></tr></thead>
+                  <table><thead><tr><th>Name</th><th>Kategorie</th><th>Adresse</th><th>Audits</th><th>Aktionen</th></tr></thead>
                     <tbody>{[...sites].sort((a,b)=>a.name.localeCompare(b.name)).map(s=>(
-                      <tr key={s.id}><td>{s.name}</td><td>{categories.find(c=>c.id===s.categoryId)?.name??'-'}</td><td>{s.address||'-'}</td><td><span className={s.active?'status-active':'status-inactive'}>{s.active?'Aktiv':'Inaktiv'}</span></td></tr>
+                      <tr key={s.id}>
+                        <td>{s.name}</td>
+                        <td>{categories.find(c=>c.id===s.categoryId)?.name??'-'}</td>
+                        <td>{s.address||'-'}</td>
+                        <td><span className="status-badge">{audits.filter(a=>a.siteId===s.id).length} Audits</span></td>
+                        <td><div style={{display:'flex',gap:'6px'}}>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>setEditingSite(s)}>✏️ Bearbeiten</button>
+                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(!session)return;if(audits.filter(a=>a.siteId===s.id).length>0){alert(`Standort hat noch ${audits.filter(a=>a.siteId===s.id).length} Audits.`);return}if(!confirm(`Standort "${s.name}" löschen?`))return;await apiRequest(`/api/standorte/${s.id}`,session,{method:'DELETE'});setSites(p=>p.filter(x=>x.id!==s.id))}}>✕ Löschen</button>
+                        </div></td>
+                      </tr>
                     ))}</tbody>
                   </table>
                 )}
@@ -1424,60 +1510,112 @@ function App() {
           {page==='einstellungen-vorlagen'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Audit-Vorlagen</h3></div>
-              <div className="form-card">
-                <h4>Neue Vorlage erstellen</h4>
-                <div className="form-grid">
-                  <label>Vorlagenname<input value={templateForm.name} onChange={e=>setTemplateForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Standard-Schulaudit" required /></label>
-                  <label>Beschreibung<input value={templateForm.description} onChange={e=>setTemplateForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
-                </div>
-                <div style={{marginTop:'16px'}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                    <strong style={{fontSize:'0.95rem'}}>Datenfelder</strong>
-                    <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:''}])}>+ Feld hinzufügen</button>
+              {editingTemplate ? (
+                <div className="form-card">
+                  <h4>Vorlage bearbeiten: {editingTemplate.name}</h4>
+                  <div className="form-grid">
+                    <label>Name<input value={editingTemplate.name} onChange={e=>setEditingTemplate(p=>p?{...p,name:e.target.value}:p)} /></label>
+                    <label>Beschreibung<input value={editingTemplate.description} onChange={e=>setEditingTemplate(p=>p?{...p,description:e.target.value}:p)} /></label>
                   </div>
-                  <div className="field-builder">
-                    {templateFields.map((field,idx)=>(
-                      <div key={idx} className="field-builder-item">
-                        <div className="field-builder-row">
-                          <span className="field-order">{field.order}</span>
-                          <input className="field-name-input" placeholder="Feldname (z.B. Zustand)" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
-                          <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
-                            <option value="text">Text</option>
-                            <option value="number">Zahl</option>
-                            <option value="dropdown">▼ Auswahl</option>
-                            <option value="textarea">Langer Text</option>
-                            <option value="checkbox">☑ Checkbox</option>
-                            <option value="image">📷 Bild</option>
-                          </select>
-                          <label className="field-required-check" title="Pflichtfeld für Fortschrittsbalken">
-                            <input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />
-                            Pflicht
-                          </label>
-                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
-                        </div>
-                        {field.type==='dropdown'&&(
-                          <div className="dropdown-options-row">
-                            <span style={{fontSize:'0.82rem',color:'var(--muted)',whiteSpace:'nowrap'}}>Optionen:</span>
-                            <input placeholder="Option 1, Option 2, Option 3 ..." value={field.dropdownOptions} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,dropdownOptions:e.target.value}:f))} style={{flex:1,padding:'5px 10px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'7px',color:'var(--text-h)',fontSize:'0.88rem'}} />
+                  <div style={{marginTop:'16px'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                      <strong>Datenfelder</strong>
+                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:''}])}>+ Feld</button>
+                    </div>
+                    <div className="field-builder">
+                      {templateFields.map((field,idx)=>(
+                        <div key={idx} className="field-builder-item">
+                          <div className="field-builder-row">
+                            <span className="field-order" style={{cursor:'pointer',userSelect:'none'}} title="Nach oben"
+                              onClick={()=>setTemplateFields(p=>{if(idx===0)return p;const n=[...p];[n[idx-1],n[idx]]=[n[idx],n[idx-1]];return n.map((f,i)=>({...f,order:i+1}))})}>↑</span>
+                            <span className="field-order" style={{cursor:'pointer',userSelect:'none'}} title="Nach unten"
+                              onClick={()=>setTemplateFields(p=>{if(idx===p.length-1)return p;const n=[...p];[n[idx],n[idx+1]]=[n[idx+1],n[idx]];return n.map((f,i)=>({...f,order:i+1}))})}>↓</span>
+                            <span className="field-order">{field.order}</span>
+                            <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
+                            <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
+                              <option value="text">Text</option>
+                              <option value="number">Zahl</option>
+                              <option value="dropdown">▼ Auswahl</option>
+                              <option value="textarea">Langer Text</option>
+                              <option value="checkbox">☑ Checkbox</option>
+                              <option value="image">📷 Bild</option>
+                            </select>
+                            <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />Pflicht</label>
+                            <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                    {templateFields.length===0&&<p className="empty-hint">Noch keine Felder. Klick auf "+ Feld hinzufügen".</p>}
+                          {field.type==='dropdown'&&(
+                            <div className="dropdown-options-row">
+                              <span style={{fontSize:'0.82rem',color:'var(--muted)',whiteSpace:'nowrap'}}>Optionen:</span>
+                              <input placeholder="Option 1, Option 2..." value={field.dropdownOptions} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,dropdownOptions:e.target.value}:f))} style={{flex:1,padding:'5px 10px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'7px',color:'var(--text-h)',fontSize:'0.88rem'}} />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:'8px',marginTop:'16px'}}>
+                    <button type="button" className="primary-button" onClick={async()=>{
+                      if(!session||!editingTemplate)return
+                      const fields=templateFields.map(f=>({name:f.name,type:f.type+(f.dropdownOptions?`|options:${f.dropdownOptions}`:''),order:f.order,relevantForProgress:f.required}))
+                      const res=await apiRequest<Template>(`/api/templates/${editingTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingTemplate.name,description:editingTemplate.description,fields})})
+                      setTemplates(p=>p.map(t=>t.id===res.id?res:t))
+                      setEditingTemplate(null)
+                    }}>Speichern</button>
+                    <button type="button" className="secondary-button" onClick={()=>setEditingTemplate(null)}>Abbrechen</button>
                   </div>
                 </div>
-                <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={(e)=>{
-                  const syntheticFields = templateFields.map(f=>`${f.name}|${f.type}${f.dropdownOptions?`|options:${f.dropdownOptions}`:''}|${f.order}|${f.required}`).join('\n')
-                  setTemplateForm(p=>({...p,fields:syntheticFields}))
-                  createTemplate(e as unknown as React.FormEvent)
-                  setTemplateFields([{name:'',type:'text',order:1,required:true,dropdownOptions:''}])
-                }}>Vorlage speichern</button>
-              </div>
+              ) : (
+                <div className="form-card">
+                  <h4>Neue Vorlage erstellen</h4>
+                  <div className="form-grid">
+                    <label>Vorlagenname<input value={templateForm.name} onChange={e=>setTemplateForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Standard-Schulaudit" required /></label>
+                    <label>Beschreibung<input value={templateForm.description} onChange={e=>setTemplateForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
+                  </div>
+                  <div style={{marginTop:'16px'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                      <strong>Datenfelder</strong>
+                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:''}])}>+ Feld</button>
+                    </div>
+                    <div className="field-builder">
+                      {templateFields.map((field,idx)=>(
+                        <div key={idx} className="field-builder-item">
+                          <div className="field-builder-row">
+                            <span className="field-order">{field.order}</span>
+                            <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
+                            <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
+                              <option value="text">Text</option><option value="number">Zahl</option><option value="dropdown">▼ Auswahl</option><option value="textarea">Langer Text</option><option value="checkbox">☑ Checkbox</option><option value="image">📷 Bild</option>
+                            </select>
+                            <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />Pflicht</label>
+                            <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
+                          </div>
+                          {field.type==='dropdown'&&(<div className="dropdown-options-row"><span style={{fontSize:'0.82rem',color:'var(--muted)',whiteSpace:'nowrap'}}>Optionen:</span><input placeholder="Option 1, Option 2..." value={field.dropdownOptions} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,dropdownOptions:e.target.value}:f))} style={{flex:1,padding:'5px 10px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'7px',color:'var(--text-h)',fontSize:'0.88rem'}} /></div>)}
+                        </div>
+                      ))}
+                      {templateFields.length===0&&<p className="empty-hint">Noch keine Felder.</p>}
+                    </div>
+                  </div>
+                  <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={(e)=>{
+                    const syntheticFields=templateFields.map(f=>`${f.name}|${f.type}${f.dropdownOptions?`|options:${f.dropdownOptions}`:''}|${f.order}|${f.required}`).join('\n')
+                    setTemplateForm(p=>({...p,fields:syntheticFields}))
+                    createTemplate(e as unknown as React.FormEvent)
+                    setTemplateFields([{name:'',type:'text',order:1,required:true,dropdownOptions:''}])
+                  }}>Vorlage speichern</button>
+                </div>
+              )}
               <div style={{marginTop:'24px'}}>
                 <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Vorlagen ({templates.length})</h4>
                 {templates.length===0?<p className="empty-hint">Noch keine Vorlagen.</p>:(
-                  <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Felder</th></tr></thead>
-                    <tbody>{templates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.description||'-'}</td><td>{t.fields.length} Felder: {t.fields.map(f=>f.name).join(', ')}</td></tr>)}</tbody>
+                  <table><thead><tr><th>Name</th><th>Beschreibung</th><th>Felder</th><th>Verwendungen</th><th>Aktionen</th></tr></thead>
+                    <tbody>{templates.map(t=>(
+                      <tr key={t.id}>
+                        <td>{t.name}</td><td>{t.description||'-'}</td><td>{t.fields.length}</td>
+                        <td><span className="status-badge">{audits.filter(a=>a.templateId===t.id).length} Audits</span></td>
+                        <td><div style={{display:'flex',gap:'6px'}}>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>{setEditingTemplate(t);setTemplateFields(t.fields.map(f=>({name:f.name,type:f.type,order:f.order,required:f.relevantForProgress,dropdownOptions:''})))}}>✏️ Bearbeiten</button>
+                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(!session)return;const cnt=audits.filter(a=>a.templateId===t.id).length;if(cnt>0){alert(`Vorlage wird in ${cnt} Audits verwendet und kann nicht gelöscht werden.`);return}if(!confirm(`Vorlage "${t.name}" löschen?`))return;await apiRequest(`/api/templates/${t.id}`,session,{method:'DELETE'});setTemplates(p=>p.filter(x=>x.id!==t.id))}}>✕ Löschen</button>
+                        </div></td>
+                      </tr>
+                    ))}</tbody>
                   </table>
                 )}
               </div>
@@ -1487,59 +1625,66 @@ function App() {
           {page==='einstellungen-checklisten'&&isAdmin?(
             <section className="panel">
               <div className="page-header"><h3>Checklisten</h3></div>
-              <div className="form-card">
-                <h4>Neue Checkliste erstellen</h4>
-                <div className="form-grid">
-                  <label>Name<input value={newChecklistName} onChange={e=>setNewChecklistName(e.target.value)} placeholder="z.B. Abnahme-Checkliste" /></label>
-                  <label>Audit-Vorlage<select value={newChecklistTemplateId} onChange={e=>setNewChecklistTemplateId(e.target.value)}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-                </div>
-                <div style={{marginTop:'16px'}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                    <strong style={{fontSize:'0.95rem'}}>Spalten definieren</strong>
-                    <div style={{display:'flex',gap:'8px'}}>
-                      <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Raum',source:'room',inputType:'text',order:p.length+1}])}>+ Raum-Spalte</button>
-                      <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.82rem'}} onClick={()=>{const tmpl=templates.find(t=>t.id===parseInt(newChecklistTemplateId));if(tmpl&&tmpl.fields[0])setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:tmpl.fields[0].name,source:'field',fieldName:tmpl.fields[0].name,inputType:'text',order:p.length+1}])}}>+ Vorlagen-Feld</button>
-                      <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Neue Spalte',source:'custom',inputType:'checkbox',order:p.length+1}])}>+ Freie Spalte</button>
+              {editingChecklistTemplate ? (
+                <form className="form-card" onSubmit={async e=>{e.preventDefault();if(!session||!editingChecklistTemplate)return;
+                  const res=await apiRequest<ChecklistTemplate>(`/api/checklisttemplates/${editingChecklistTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingChecklistTemplate.name,templateId:editingChecklistTemplate.templateId,columnsJson:editingChecklistTemplate.columnsJson})})
+                  setChecklistTemplates(p=>p.map(c=>c.id===res.id?res:c));setEditingChecklistTemplate(null)}}>
+                  <h4>Checkliste bearbeiten: {editingChecklistTemplate.name}</h4>
+                  <div className="form-grid">
+                    <label>Name<input value={editingChecklistTemplate.name} onChange={e=>setEditingChecklistTemplate(p=>p?{...p,name:e.target.value}:p)} /></label>
+                    <label>Audit-Vorlage<select value={editingChecklistTemplate.templateId} onChange={e=>setEditingChecklistTemplate(p=>p?{...p,templateId:parseInt(e.target.value)}:p)}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                  </div>
+                  <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
+                    <button type="submit" className="primary-button">Speichern</button>
+                    <button type="button" className="secondary-button" onClick={()=>setEditingChecklistTemplate(null)}>Abbrechen</button>
+                  </div>
+                </form>
+              ) : (
+                <div className="form-card">
+                  <h4>Neue Checkliste erstellen</h4>
+                  <div className="form-grid">
+                    <label>Name<input value={newChecklistName} onChange={e=>setNewChecklistName(e.target.value)} placeholder="z.B. Abnahme-Checkliste" /></label>
+                    <label>Audit-Vorlage<select value={newChecklistTemplateId} onChange={e=>setNewChecklistTemplateId(e.target.value)}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                  </div>
+                  <div style={{marginTop:'16px'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
+                      <strong>Spalten</strong>
+                      <div style={{display:'flex',gap:'6px'}}>
+                        <button type="button" className="secondary-button" style={{padding:'5px 8px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Raum',source:'room',inputType:'text',order:p.length+1}])}>+ Raumname</button>
+                        <button type="button" className="secondary-button" style={{padding:'5px 8px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Neue Spalte',source:'custom',inputType:'checkbox',order:p.length+1}])}>+ Freie Spalte</button>
+                      </div>
+                    </div>
+                    <div className="field-builder">
+                      {checklistColumns.map((col,idx)=>(
+                        <div key={col.id} className="field-builder-row">
+                          <span className="field-order">{col.order}</span>
+                          <input className="field-name-input" placeholder="Spaltenname" value={col.label} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,label:e.target.value}:c))} />
+                          <select className="field-type-select" value={col.inputType} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,inputType:e.target.value as 'text'|'number'|'checkbox'}:c))}>
+                            <option value="text">Text</option><option value="number">Zahl</option><option value="checkbox">Checkbox</option>
+                          </select>
+                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setChecklistColumns(p=>p.filter((_,i)=>i!==idx).map((c,i)=>({...c,order:i+1})))}>✕</button>
+                        </div>
+                      ))}
+                      {checklistColumns.length===0&&<p className="empty-hint">Noch keine Spalten.</p>}
                     </div>
                   </div>
-                  <div className="field-builder">
-                    {checklistColumns.map((col,idx)=>(
-                      <div key={col.id} className="field-builder-row">
-                        <span className="field-order">{col.order}</span>
-                        <input className="field-name-input" placeholder="Spaltenname" value={col.label} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,label:e.target.value}:c))} />
-                        {col.source==='field'&&(
-                          <select value={col.fieldName||''} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,fieldName:e.target.value,label:e.target.value}:c))}>
-                            {(templates.find(t=>t.id===parseInt(newChecklistTemplateId))?.fields||[]).map(f=><option key={f.id} value={f.name}>{f.name}</option>)}
-                          </select>
-                        )}
-                        <select value={col.inputType} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,inputType:e.target.value as 'text'|'number'|'checkbox'}:c))}>
-                          <option value="text">Text</option>
-                          <option value="number">Zahl</option>
-                          <option value="checkbox">Checkbox</option>
-                        </select>
-                        <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setChecklistColumns(p=>p.filter((_,i)=>i!==idx).map((c,i)=>({...c,order:i+1})))}>✕</button>
-                      </div>
-                    ))}
-                    {checklistColumns.length===0&&<p className="empty-hint">Noch keine Spalten. Füge Spalten hinzu.</p>}
-                  </div>
+                  <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={async()=>{
+                    if(!session||!newChecklistName)return;
+                    const res=await apiRequest<ChecklistTemplate>('/api/checklisttemplates',session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newChecklistName,templateId:parseInt(newChecklistTemplateId),columnsJson:JSON.stringify(checklistColumns)})})
+                    setChecklistTemplates(p=>[...p,res]);setNewChecklistName('');setChecklistColumns([])
+                  }}>Checkliste speichern</button>
                 </div>
-                <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={async()=>{
-                  if (!session||!newChecklistName) return
-                  try {
-                    const res = await apiRequest<ChecklistTemplate>('/api/checklisttemplates', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newChecklistName,templateId:parseInt(newChecklistTemplateId),columnsJson:JSON.stringify(checklistColumns)})})
-                    setChecklistTemplates(p=>[...p,res])
-                    setNewChecklistName(''); setChecklistColumns([])
-                  } catch { setError('Checkliste konnte nicht gespeichert werden.') }
-                }}>Checkliste speichern</button>
-              </div>
+              )}
               <div style={{marginTop:'24px'}}>
-                <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Checklisten ({checklistTemplates.length})</h4>
                 {checklistTemplates.length===0?<p className="empty-hint">Noch keine Checklisten.</p>:(
-                  <table><thead><tr><th>Name</th><th>Vorlage</th><th>Spalten</th><th>Aktion</th></tr></thead>
+                  <table><thead><tr><th>Name</th><th>Vorlage</th><th>Spalten</th><th>Aktionen</th></tr></thead>
                     <tbody>{checklistTemplates.map(c=>{
-                      const cols: ChecklistColumn[] = (() => { try { return JSON.parse(c.columnsJson) } catch { return [] } })()
-                      return <tr key={c.id}><td>{c.name}</td><td>{templates.find(t=>t.id===c.templateId)?.name??'-'}</td><td>{cols.length} Spalten</td>
-                        <td><button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/checklisttemplates/${c.id}`,session,{method:'DELETE'});setChecklistTemplates(p=>p.filter(x=>x.id!==c.id))}}>Löschen</button></td>
+                      const cols: ChecklistColumn[]=(()=>{try{return JSON.parse(c.columnsJson)}catch{return[]}})()
+                      return <tr key={c.id}><td>{c.name}</td><td>{templates.find(t=>t.id===c.templateId)?.name??'-'}</td><td>{cols.length}</td>
+                        <td><div style={{display:'flex',gap:'6px'}}>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>setEditingChecklistTemplate(c)}>✏️ Bearbeiten</button>
+                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/checklisttemplates/${c.id}`,session,{method:'DELETE'});setChecklistTemplates(p=>p.filter(x=>x.id!==c.id))}}>✕ Löschen</button>
+                        </div></td>
                       </tr>
                     })}</tbody>
                   </table>
@@ -1811,7 +1956,34 @@ function App() {
             </section>
           ):null}
 
-          {page==='admin-logs'&&isAdmin?(<section className="panel"><div className="page-header"><h3>System-Logs</h3></div><p className="empty-hint">Logs werden in einer späteren Version angezeigt.</p></section>):null}
+          {page==='admin-logs'&&isAdmin?(
+            <section className="panel">
+              <div className="page-header">
+                <h3>System-Logs</h3>
+                <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem',marginLeft:'auto'}} onClick={async()=>{if(!session)return;const res=await apiRequest<Array<{timestamp:string;action:string;details?:string;userId:number}>>('/api/admin/logs',session);setLogs(res)}}>
+                  🔄 Neu laden
+                </button>
+              </div>
+              <div style={{marginBottom:'12px'}}>
+                <input value={logFilter} onChange={e=>setLogFilter(e.target.value)} placeholder="Filtern nach Aktion, Benutzer, Details..." style={{width:'100%',padding:'8px 12px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'8px',color:'var(--text-h)',fontSize:'0.9rem'}} />
+              </div>
+              {logs.length===0?(
+                <p className="empty-hint">Keine Logs vorhanden. Klick auf "Neu laden".</p>
+              ):(
+                <table>
+                  <thead><tr><th>Zeitpunkt</th><th>Benutzer-ID</th><th>Aktion</th><th>Details</th></tr></thead>
+                  <tbody>{logs.filter(l=>!logFilter||l.action.toLowerCase().includes(logFilter.toLowerCase())||(l.details||'').toLowerCase().includes(logFilter.toLowerCase())).map((log,idx)=>(
+                    <tr key={idx}>
+                      <td style={{whiteSpace:'nowrap',fontSize:'0.85rem'}}>{new Date(log.timestamp).toLocaleString('de-DE')}</td>
+                      <td><span className="status-badge">#{log.userId}</span></td>
+                      <td><strong style={{fontSize:'0.9rem'}}>{log.action}</strong></td>
+                      <td style={{fontSize:'0.85rem',color:'var(--muted)',maxWidth:'300px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{log.details||'-'}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              )}
+            </section>
+          ):null}
 
 
 
@@ -1926,4 +2098,3 @@ async function apiRequest<T>(path: string, session: Session, init?: RequestInit)
 }
 
 export default App
-
