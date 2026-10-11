@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.9.0] - 2026-10-11
+
+### Checklisten-Live-Sync, vereinheitlichte Audit/PDF-Erstellung, Dokumente-Ordnerverschiebung, Datenexport mit Bildern, Lösch-Bestätigungen & Testdaten-Bereinigung
+
+#### Neu: Checklisten-Reiter im Audit-Bereich mit 10-Sekunden-Live-Sync
+- Im Standort-Bereich unter Audits gibt es jetzt neben „🏠 Räume/Objekte", „📋 Grunddaten" und „📄 Dokumente" einen vierten Reiter „✅ Checklisten"
+- Dort werden alle Checklisten-Vorlagen angezeigt, die der aktuell gewählten Audit-Vorlage zugeordnet sind — eine Tabelle pro Checkliste, eine Zeile pro live erfasstem Raum, Spalten exakt im beim Erstellen der Checkliste definierten Layout
+- Je nach Spaltentyp werden Werte automatisch aus dem Raumnamen (`source: room`) oder den Raum-Datenfeldern (`source: field`) schreibgeschützt angezeigt, oder als frei editierbares Feld (`source: custom`, Text/Zahl/Checkbox) dauerhaft gespeichert
+- Alle Nutzer sehen Änderungen anderer Nutzer spätestens nach 10 Sekunden automatisch (Hintergrund-Polling), ohne die Seite neu laden zu müssen; Texteingaben während des Tippens werden durch das Polling nicht überschrieben (Commit erst bei Verlassen des Feldes, Checkboxen sofort)
+
+#### Dokumente im Audit-Bereich: Audit-Erstellung und PDF-Generierung zusammengeführt
+- Statt getrennter „Audit erfassen"-Tabelle und separatem PDF-Erzeugen-Dialog gibt es jetzt ein einziges Formular „Neues Audit erfassen & PDF erzeugen": Titel, PDF-Design und Dokumenttitel werden in einem Schritt erfasst — der aktuelle Stand aller Räume/Grunddaten des Standorts wird dabei als unveränderlicher Audit-Snapshot gesichert **und** sofort als PDF in die Dokumentenablage geschrieben
+- Zusätzliche Dokumente lassen sich wie bisher über „📄 Weiteres Dokument erzeugen" je Audit nachträglich erstellen
+- Neuer Button „✕ Audit löschen" je Audit-Zeile (mit Lösch-Bestätigung) entfernt das Audit inkl. aller zugehörigen Dokumente
+- Das Eingabefeld „Neuer Ordnername" ist jetzt einheitlich im `.styled-input`-Design gestaltet
+- **Neu:** Dokumente lassen sich per Dropdown direkt in der Aktionsspalte in einen anderen Ordner verschieben (oder zurück ins Hauptverzeichnis) — live getestet inkl. Anlegen, Verschieben, Löschen von Ordnern und Dokumenten
+
+#### Löschbestätigungen als Modal statt Browser-`confirm()`
+- Raum löschen (Audit-Bereich), Dokument löschen und Ordner löschen fragen jetzt über das app-eigene, gestylte Bestätigungs-Modal („Ja"/„Nein") nach, statt über den nativen Browser-Dialog
+
+#### Datenexport (Admin Page) liefert jetzt Raumdaten und Bilder statt JSON
+- Export je Standort und Gesamtexport enthalten jetzt pro Standort eine `Raeume.csv` (UTF-8 mit BOM, semikolon-getrennt, alle Datenfelder der Vorlage als Spalten) sowie einen Unterordner je Raum mit den zugehörigen Bildern als echte Bilddateien
+- Nur noch **aktuell existierende (live) Räume** werden berücksichtigt — bereits gelöschte Räume tauchen im Export nicht mehr auf
+- Live getestet: Einzelexport (Steinweg Berufsschule) und Gesamtexport beide erfolgreich heruntergeladen, entpackt und geprüft (BOM korrekt, CSV-Spalten inkl. Vorlagen-Felder wie „Whiteboard"/„Wand"/„Tafelgröße", Bilder korrekt je Raumordner zugeordnet)
+
+#### Testdaten bereinigt
+- Das versehentlich im System verbliebene Testaudit „Testaudit Automatisiert" (inkl. zugehöriger Dokumente und Raum-Snapshots) wurde entfernt
+
+#### Logs zeigen jetzt den Benutzernamen statt der ID
+- Statt „#1"/„#2" in der Spalte „Benutzer" wird jetzt der tatsächliche Benutzername (z. B. „superadmin") angezeigt; Systemaktionen ohne Benutzerbezug zeigen „System"
+
 ## [1.8.0] - 2026-10-11
 
 ### Dokumentenverwaltung, Datenablage-Drilldown, Backup-Überarbeitung & Passwort-Sicherheit

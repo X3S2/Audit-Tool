@@ -179,6 +179,14 @@ type ChecklistColumn = {
   order: number
 }
 
+type ChecklistValue = {
+  id: number
+  checklistTemplateId: number
+  roomId: number
+  dataJson: string
+  updatedAtUtc: string
+}
+
 const SESSION_KEY = 'audit-tool-session'
 const THEME_KEY = 'audit-tool-theme'
 const API_BASE = 'http://localhost:5050'
@@ -305,7 +313,7 @@ function App() {
   const [auditView, setAuditView] = useState<'categories' | 'standorte' | 'standort'>('categories')
   const [auditSelectedCategory, setAuditSelectedCategory] = useState<Category | null>(null)
   const [auditSelectedSite, setAuditSelectedSite] = useState<Site | null>(null)
-  const [auditTab, setAuditTab] = useState<'raume' | 'grunddaten' | 'dokumente'>('raume')
+  const [auditTab, setAuditTab] = useState<'raume' | 'grunddaten' | 'checklisten' | 'dokumente'>('raume')
   const [auditSelectedTemplate, setAuditSelectedTemplate] = useState<Template | null>(null)
   // Datenablage drill-down state
   const [datenablageView, setDatenablageView] = useState<'categories' | 'standorte' | 'standort'>('categories')
@@ -335,7 +343,7 @@ function App() {
   const [editingSite, setEditingSite] = useState<Site | null>(null)
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null)
   // Logs state
-  const [logs, setLogs] = useState<Array<{timestamp: string; action: string; details?: string; userId: number}>>([])
+  const [logs, setLogs] = useState<Array<{timestamp: string; action: string; details?: string; userId: number; userName: string}>>([])
   const [logFilter, setLogFilter] = useState('')
   // Vorlagen field builder state
   const [templateFields, setTemplateFields] = useState<EditableTemplateField[]>(DEFAULT_TEMPLATE_FIELDS)
@@ -395,8 +403,16 @@ function App() {
     description: ''
   })
   const [auditForm, setAuditForm] = useState({ siteId: '1', templateId: '1', title: '' })
+  const [newAuditPdfDesignId, setNewAuditPdfDesignId] = useState('')
+  const [newAuditDocTitle, setNewAuditDocTitle] = useState('')
   const [checklistForm, setChecklistForm] = useState({ auditId: '', question: '', answer: '', status: 'offen' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
+  // Generisches Bestätigungs-Modal (ersetzt window.confirm für Raum-/Dokument-/Audit-Löschung)
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null)
+  const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm })
+  // Checklisten-Livewerte (10s-Sync der "freien" Spalten je Raum)
+  const [checklistValues, setChecklistValues] = useState<ChecklistValue[]>([])
+  const [checklistCellOverrides, setChecklistCellOverrides] = useState<Record<string, string>>({})
 
   useEffect(() => {
     document.body.dataset.theme = theme
@@ -485,13 +501,81 @@ function App() {
   }
 
   // Navigiert von der Datenablage zur Audits-Seite (ohne spezifischen Raum), z.B. um Grunddaten/Vorlage zu korrigieren
-  const goToAuditsSite = (site: Site, tab: 'raume' | 'grunddaten' | 'dokumente' = 'raume') => {
+  const goToAuditsSite = (site: Site, tab: 'raume' | 'grunddaten' | 'checklisten' | 'dokumente' = 'raume') => {
     setPage('audits')
     setAuditSelectedCategory(categories.find(c => c.id === site.categoryId) ?? null)
     setAuditSelectedSite(site)
     setAuditView('standort')
     setAuditTab(tab)
   }
+
+  // Checklisten-Vorlage(n), die zur aktuell gewählten Audit-Vorlage passen
+  const activeChecklistTemplates = auditSelectedTemplate
+    ? checklistTemplates.filter(c => c.templateId === auditSelectedTemplate.id)
+    : []
+
+  const getChecklistValueMap = (checklistTemplateId: number, roomId: number): Record<string, string> => {
+    const entry = checklistValues.find(v => v.checklistTemplateId === checklistTemplateId && v.roomId === roomId)
+    return entry ? parseStringMap(entry.dataJson) : {}
+  }
+
+  const getChecklistCellValue = (checklistTemplateId: number, roomId: number, colId: string): string => {
+    const overrideKey = `${checklistTemplateId}:${roomId}:${colId}`
+    if (overrideKey in checklistCellOverrides) return checklistCellOverrides[overrideKey]
+    return getChecklistValueMap(checklistTemplateId, roomId)[colId] ?? ''
+  }
+
+  const setChecklistCellOverride = (checklistTemplateId: number, roomId: number, colId: string, value: string) => {
+    setChecklistCellOverrides(previous => ({ ...previous, [`${checklistTemplateId}:${roomId}:${colId}`]: value }))
+  }
+
+  const saveChecklistValue = async (checklistTemplateId: number, roomId: number, data: Record<string, string>) => {
+    if (!session) return
+    try {
+      const updated = await apiRequest<ChecklistValue>('/api/checklist-values', session, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checklistTemplateId, roomId, dataJson: JSON.stringify(data) })
+      })
+      setChecklistValues(previous => {
+        const exists = previous.some(v => v.checklistTemplateId === checklistTemplateId && v.roomId === roomId)
+        return exists
+          ? previous.map(v => (v.checklistTemplateId === checklistTemplateId && v.roomId === roomId ? updated : v))
+          : [...previous, updated]
+      })
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Checklisten-Wert konnte nicht gespeichert werden.')
+    }
+  }
+
+  const commitChecklistCell = (checklistTemplateId: number, roomId: number, colId: string, value: string) => {
+    const merged = { ...getChecklistValueMap(checklistTemplateId, roomId), [colId]: value }
+    saveChecklistValue(checklistTemplateId, roomId, merged)
+    setChecklistCellOverrides(previous => {
+      const next = { ...previous }
+      delete next[`${checklistTemplateId}:${roomId}:${colId}`]
+      return next
+    })
+  }
+
+  // Live-Sync: Checklisten-Werte alle 10s neu laden, solange der Checklisten-Tab aktiv ist
+  useEffect(() => {
+    if (!session || auditTab !== 'checklisten' || activeChecklistTemplates.length === 0) return
+    let cancelled = false
+    const loadAll = async () => {
+      try {
+        const results = await Promise.all(activeChecklistTemplates.map(c =>
+          apiRequest<ChecklistValue[]>(`/api/checklist-values?checklistTemplateId=${c.id}`, session)
+        ))
+        if (!cancelled) setChecklistValues(results.flat())
+      } catch {
+        // Stille Fehlerbehandlung beim Hintergrund-Polling, um die Eingabe nicht zu stören
+      }
+    }
+    loadAll()
+    const interval = setInterval(loadAll, 10000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [session, auditTab, auditSelectedTemplate?.id])
 
   useEffect(() => {
     setDatenablageSelectedRoomName(null)
@@ -622,7 +706,7 @@ function App() {
 
     const loadLogs = async () => {
       try {
-        const res = await apiRequest<Array<{ timestamp: string; action: string; details?: string; userId: number }>>('/api/admin/logs', session)
+        const res = await apiRequest<Array<{ timestamp: string; action: string; details?: string; userId: number; userName: string }>>('/api/admin/logs', session)
         setLogs(res)
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Logs konnten nicht geladen werden.')
@@ -795,13 +879,14 @@ function App() {
     }
   }
 
-  const exportAuditZip = async () => {
+  const exportAuditZip = async (mode: 'site' | 'all' = 'site') => {
     if (!session) {
       return
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/admin/export/zip?siteId=${encodeURIComponent(exportSiteId)}`, {
+      const query = mode === 'site' ? `?siteId=${encodeURIComponent(exportSiteId)}` : ''
+      const response = await fetch(`${API_BASE}/api/admin/export/zip${query}`, {
         headers: {
           Authorization: `Bearer ${session.token}`
         }
@@ -919,29 +1004,6 @@ function App() {
     }
   }
 
-  const createAudit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!session) {
-      return
-    }
-
-    try {
-      const audit = await apiRequest<AuditInstance>('/api/audits', session, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          siteId: Number(auditForm.siteId),
-          templateId: Number(auditForm.templateId),
-          title: auditForm.title
-        })
-      })
-      setAudits((previous) => [audit, ...previous])
-      setAuditForm({ siteId: '1', templateId: '1', title: '' })
-    } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'Audit konnte nicht gespeichert werden.')
-    }
-  }
-
   const addChecklistEntry = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!session || !checklistForm.auditId) {
@@ -1018,22 +1080,65 @@ function App() {
     }
   }
 
-  const generateDocument = async (auditId: number) => {
-    if (!session || !docGenTitle.trim() || !docGenPdfDesignId) return
+  const generateDocument = async (auditId: number, titleOverride?: string, pdfDesignIdOverride?: string) => {
+    const title = (titleOverride ?? docGenTitle).trim()
+    const pdfDesignId = pdfDesignIdOverride ?? docGenPdfDesignId
+    if (!session || !title || !pdfDesignId) return null
     setDocGenInProgress(true)
     try {
       const doc = await apiRequest<AuditDocument>(`/api/audits/${auditId}/documents/generate`, session, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: docGenTitle.trim(), pdfDesignId: parseInt(docGenPdfDesignId), folderId: docCurrentFolderId || undefined })
+        body: JSON.stringify({ title, pdfDesignId: parseInt(pdfDesignId), folderId: docCurrentFolderId || undefined })
       })
       setDocuments(p => [doc, ...p])
       setDocGenTitle('')
+      return doc
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht erstellt werden.')
+      return null
     } finally {
       setDocGenInProgress(false)
     }
+  }
+
+  // Einheitlicher Workflow: Audit anlegen UND direkt das erste PDF-Dokument dafür erzeugen
+  const createAuditAndGenerateDocument = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!session || !auditSelectedSite || !auditSelectedTemplate || !newAuditPdfDesignId) return
+    try {
+      const audit = await apiRequest<AuditInstance>('/api/audits', session, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          siteId: auditSelectedSite.id,
+          templateId: auditSelectedTemplate.id,
+          title: auditForm.title
+        })
+      })
+      setAudits(previous => [audit, ...previous])
+      const design = pdfDesigns.find(d => String(d.id) === newAuditPdfDesignId)
+      const docTitle = newAuditDocTitle.trim() || (design ? `${design.name} – ${audit.title}` : audit.title)
+      await generateDocument(audit.id, docTitle, newAuditPdfDesignId)
+      setAuditForm({ siteId: '1', templateId: '1', title: '' })
+      setNewAuditPdfDesignId('')
+      setNewAuditDocTitle('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Audit konnte nicht gespeichert werden.')
+    }
+  }
+
+  const deleteAuditEntry = (audit: AuditInstance) => {
+    if (!session) return
+    askConfirm(`Audit "${audit.title}" wirklich endgültig löschen? Alle zugehörigen Dokumente werden ebenfalls gelöscht.`, async () => {
+      try {
+        await apiRequest(`/api/audits/${audit.id}`, session, { method: 'DELETE' })
+        setAudits(previous => previous.filter(a => a.id !== audit.id))
+        setDocuments(previous => previous.filter(d => d.auditId !== audit.id))
+      } catch (apiError) {
+        setError(apiError instanceof Error ? apiError.message : 'Audit konnte nicht gelöscht werden.')
+      }
+    })
   }
 
   const openOrDownloadDocument = async (doc: AuditDocument, mode: 'view' | 'download') => {
@@ -1075,14 +1180,15 @@ function App() {
 
   const deleteDocFolder = async (id: number) => {
     if (!session) return
-    if (!confirm('Ordner wirklich löschen? Enthaltene Dokumente werden ins Hauptverzeichnis verschoben.')) return
-    try {
-      await apiRequest(`/api/folders/${id}`, session, { method: 'DELETE' })
-      setFolders(p => p.filter(f => f.id !== id))
-      setDocuments(p => p.map(d => d.folderId === id ? { ...d, folderId: 0 } : d))
-    } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'Ordner konnte nicht gelöscht werden.')
-    }
+    askConfirm('Ordner wirklich löschen? Enthaltene Dokumente werden ins Hauptverzeichnis verschoben.', async () => {
+      try {
+        await apiRequest(`/api/folders/${id}`, session, { method: 'DELETE' })
+        setFolders(p => p.filter(f => f.id !== id))
+        setDocuments(p => p.map(d => d.folderId === id ? { ...d, folderId: 0 } : d))
+      } catch (apiError) {
+        setError(apiError instanceof Error ? apiError.message : 'Ordner konnte nicht gelöscht werden.')
+      }
+    })
   }
 
   const saveDocumentRename = async (id: number) => {
@@ -1108,12 +1214,23 @@ function App() {
 
   const deleteDocumentEntry = async (id: number) => {
     if (!session) return
-    if (!confirm('Dokument wirklich endgültig löschen?')) return
+    askConfirm('Dokument wirklich endgültig löschen?', async () => {
+      try {
+        await apiRequest(`/api/documents/${id}`, session, { method: 'DELETE' })
+        setDocuments(p => p.filter(d => d.id !== id))
+      } catch (apiError) {
+        setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht gelöscht werden.')
+      }
+    })
+  }
+
+  const moveDocumentToFolder = async (id: number, folderId: number) => {
+    if (!session) return
     try {
-      await apiRequest(`/api/documents/${id}`, session, { method: 'DELETE' })
-      setDocuments(p => p.filter(d => d.id !== id))
+      const doc = await apiRequest<AuditDocument>(`/api/documents/${id}`, session, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId }) })
+      setDocuments(p => p.map(d => d.id === doc.id ? doc : d))
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht gelöscht werden.')
+      setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht verschoben werden.')
     }
   }
 
@@ -1556,6 +1673,7 @@ function App() {
     const siteFolders = folders.filter(f => f.siteId === siteId && f.parentFolderId === docCurrentFolderId)
     const currentFolder = docCurrentFolderId ? folders.find(f => f.id === docCurrentFolderId) : null
     const siteDocuments = documents.filter(d => d.siteId === siteId && d.folderId === docCurrentFolderId && d.isArchived === showDocArchive)
+    const allSiteFolders = folders.filter(f => f.siteId === siteId)
     return (
       <div style={{ marginTop: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
@@ -1569,7 +1687,7 @@ function App() {
         </div>
         {!readOnly && (
           <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <input placeholder="Neuer Ordnername" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} style={{ maxWidth: '220px' }} />
+            <input className="styled-input" placeholder="Neuer Ordnername" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} style={{ maxWidth: '240px' }} />
             <button type="button" className="secondary-button" onClick={() => createDocFolder(siteId)}>+ Ordner anlegen</button>
             <label className="secondary-button" style={{ cursor: 'pointer', margin: 0 }}>
               📤 Datei hochladen
@@ -1616,6 +1734,10 @@ function App() {
                       {!readOnly && (
                         <>
                           <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => { setRenamingDocId(d.id); setRenamingDocTitle(d.title) }}>✏️</button>
+                          <select value={d.folderId || 0} onChange={e => moveDocumentToFolder(d.id, Number(e.target.value))} style={{ padding: '4px 6px', fontSize: '0.8rem' }} title="In Ordner verschieben">
+                            <option value={0}>📂 Hauptverzeichnis</option>
+                            {allSiteFolders.map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
+                          </select>
                           <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => toggleArchiveDocument(d)}>{d.isArchived ? '↩ Dearchivieren' : '🗄 Archivieren'}</button>
                           <button type="button" className="danger-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => deleteDocumentEntry(d.id)}>✕</button>
                         </>
@@ -1856,9 +1978,9 @@ function App() {
                   ) : (
                     <>
                       <div className="tab-bar">
-                        {(['raume','grunddaten','dokumente'] as const).map(tab=>(
+                        {(['raume','grunddaten','checklisten','dokumente'] as const).map(tab=>(
                           <button key={tab} type="button" className={`tab-btn${auditTab===tab?' active':''}`} onClick={()=>setAuditTab(tab)}>
-                            {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':'📄 Dokumente'}
+                            {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':tab==='checklisten'?'✅ Checklisten':'📄 Dokumente'}
                           </button>
                         ))}
                       </div>
@@ -2002,11 +2124,12 @@ function App() {
                                                     setRoomFieldValues(parseStringMap(r.fieldsJson))
                                                     window.scrollTo({top:0,behavior:'smooth'})
                                                   }}>✏️</button>
-                                                  <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={async()=>{
+                                                  <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>{
                                                     if(!session)return
-                                                    if(!confirm(`Raum "${r.name}" wirklich löschen?`))return
-                                                    await apiRequest(`/api/rooms/${r.id}`,session,{method:'DELETE'})
-                                                    setRooms(p=>p.filter(x=>x.id!==r.id))
+                                                    askConfirm(`Raum "${r.name}" wirklich löschen?`, async()=>{
+                                                      await apiRequest(`/api/rooms/${r.id}`,session,{method:'DELETE'})
+                                                      setRooms(p=>p.filter(x=>x.id!==r.id))
+                                                    })
                                                   }}>✕</button>
                                                 </div>
                                               </td>
@@ -2094,19 +2217,100 @@ function App() {
                           )}
                         </div>
                       )}
-                      {auditTab==='dokumente'&&(
+                      {auditTab==='checklisten'&&(
                         <div className="tab-content">
-                          <form className="form-card" onSubmit={createAudit}>
-                            <h4>Neues Audit erfassen</h4>
-                            <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong> — beim Anlegen werden die aktuellen Räume/Grunddaten des Standorts als unveränderlicher Stand dieses Audits gesichert.</p>
-                            <div className="form-grid">
-                              <label>Titel / Bezeichnung<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value,siteId:String(auditSelectedSite.id),templateId:String(auditSelectedTemplate.id)}))} required /></label>
-                            </div>
-                            <button type="submit" className="primary-button">📋 Audit anlegen</button>
+                          {activeChecklistTemplates.length===0 ? (
+                            <p className="empty-hint">Für die Vorlage „{auditSelectedTemplate.name}" ist keine Checkliste hinterlegt. Checklisten können unter Einstellungen → Checklisten angelegt und einer Audit-Vorlage zugewiesen werden.</p>
+                          ) : (
+                            activeChecklistTemplates.map(checklistTemplate => {
+                              const columns: ChecklistColumn[] = (() => { try { return JSON.parse(checklistTemplate.columnsJson) } catch { return [] } })().sort((a: ChecklistColumn, b: ChecklistColumn) => a.order - b.order)
+                              const liveRooms = rooms.filter(r => r.siteId === auditSelectedSite.id && r.auditId === 0)
+                              return (
+                                <div key={checklistTemplate.id} style={{marginBottom:'24px'}}>
+                                  <h4 style={{margin:'0 0 10px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>{checklistTemplate.name} <span style={{fontWeight:400,textTransform:'none',letterSpacing:'normal'}}>· synchronisiert alle 10s</span></h4>
+                                  {columns.length===0 || liveRooms.length===0 ? (
+                                    <p className="empty-hint">{columns.length===0 ? 'Diese Checkliste hat noch keine Spalten.' : 'Noch keine Räume/Objekte für diesen Standort vorhanden.'}</p>
+                                  ) : (
+                                    <div style={{overflowX:'auto'}}>
+                                      <table>
+                                        <thead><tr>{columns.map(col=><th key={col.id} style={col.width?{width:`${col.width}px`}:undefined}>{col.label}</th>)}</tr></thead>
+                                        <tbody>
+                                          {liveRooms.map(room=>{
+                                            const roomFieldMap = parseStringMap(room.fieldsJson)
+                                            return (
+                                              <tr key={room.id}>
+                                                {columns.map(col=>{
+                                                  if (col.source==='room') {
+                                                    return <td key={col.id}><strong>{room.name}</strong></td>
+                                                  }
+                                                  if (col.source==='field') {
+                                                    const val = col.fieldName ? (roomFieldMap[col.fieldName] ?? '') : ''
+                                                    return <td key={col.id} style={{color:'var(--muted)'}}>{val || '—'}</td>
+                                                  }
+                                                  const cellValue = getChecklistCellValue(checklistTemplate.id, room.id, col.id)
+                                                  if (col.inputType==='checkbox') {
+                                                    return (
+                                                      <td key={col.id} style={{textAlign:'center'}}>
+                                                        <input type="checkbox" checked={cellValue==='true'} onChange={e=>commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.checked?'true':'false')} />
+                                                      </td>
+                                                    )
+                                                  }
+                                                  return (
+                                                    <td key={col.id}>
+                                                      <input
+                                                        type={col.inputType==='number'?'number':'text'}
+                                                        value={cellValue}
+                                                        onChange={e=>setChecklistCellOverride(checklistTemplate.id, room.id, col.id, e.target.value)}
+                                                        onBlur={e=>commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.value)}
+                                                        style={{minWidth:'90px'}}
+                                                      />
+                                                    </td>
+                                                  )
+                                                })}
+                                              </tr>
+                                            )
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      )}
+                      {auditTab==='dokumente'&&(() => {
+                        const eligibleDesignsForNew = pdfDesigns.filter(d=>getDesignTemplateIds(d).includes(auditSelectedTemplate.id))
+                        return (
+                        <div className="tab-content">
+                          <form className="form-card" onSubmit={createAuditAndGenerateDocument}>
+                            <h4>Neues Audit erfassen &amp; PDF erzeugen</h4>
+                            <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong> — beim Anlegen werden die aktuellen Räume/Grunddaten des Standorts als unveränderlicher Stand dieses Audits gesichert und direkt als PDF-Dokument erzeugt.</p>
+                            {eligibleDesignsForNew.length===0 ? (
+                              <p className="empty-hint">Kein PDF-Design ist der Vorlage „{auditSelectedTemplate.name}" zugewiesen. Bitte im PDF-Designer zuweisen, bevor ein Audit angelegt werden kann.</p>
+                            ) : (
+                              <>
+                                <div className="form-grid">
+                                  <label>Titel / Bezeichnung des Audits<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value,siteId:String(auditSelectedSite.id),templateId:String(auditSelectedTemplate.id)}))} required /></label>
+                                  <label>PDF-Design<select value={newAuditPdfDesignId} onChange={e=>{
+                                    const id=e.target.value
+                                    setNewAuditPdfDesignId(id)
+                                    const design=eligibleDesignsForNew.find(d=>String(d.id)===id)
+                                    if(design && auditForm.title) setNewAuditDocTitle(`${design.name} – ${auditForm.title}`)
+                                  }} required>
+                                    <option value="">Design wählen...</option>
+                                    {eligibleDesignsForNew.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+                                  </select></label>
+                                  <label>Titel des Dokuments<input value={newAuditDocTitle} onChange={e=>setNewAuditDocTitle(e.target.value)} placeholder="Dokumententitel (optional)" /></label>
+                                </div>
+                                <button type="submit" className="primary-button" disabled={docGenInProgress || !newAuditPdfDesignId}>{docGenInProgress ? '⏳ Wird erstellt...' : '📋 Audit anlegen & PDF erzeugen'}</button>
+                              </>
+                            )}
                           </form>
                           {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length>0 && (
                             <table style={{marginTop:'16px'}}>
-                              <thead><tr><th>Audit</th><th>Status</th><th>Erstellt</th><th>Aktion</th></tr></thead>
+                              <thead><tr><th>Audit</th><th>Status</th><th>Erstellt</th><th>Aktionen</th></tr></thead>
                               <tbody>{audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).map(audit=>{
                                 const eligibleDesigns = pdfDesigns.filter(d=>getDesignTemplateIds(d).includes(auditSelectedTemplate.id))
                                 return (
@@ -2115,12 +2319,17 @@ function App() {
                                     <td>{audit.title}</td>
                                     <td><span className="status-badge">{audit.status}</span></td>
                                     <td>{new Date(audit.createdAtUtc).toLocaleDateString('de-DE')}</td>
-                                    <td><button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{
-                                      if(docGenAuditId===audit.id){setDocGenAuditId(null);return}
-                                      setDocGenAuditId(audit.id)
-                                      setDocGenPdfDesignId('')
-                                      setDocGenTitle('')
-                                    }}>📄 Dokument erstellen</button></td>
+                                    <td>
+                                      <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+                                        <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{
+                                          if(docGenAuditId===audit.id){setDocGenAuditId(null);return}
+                                          setDocGenAuditId(audit.id)
+                                          setDocGenPdfDesignId('')
+                                          setDocGenTitle('')
+                                        }}>📄 Weiteres Dokument erzeugen</button>
+                                        <button type="button" className="danger-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>deleteAuditEntry(audit)}>✕ Audit löschen</button>
+                                      </div>
+                                    </td>
                                   </tr>
                                   {docGenAuditId===audit.id && (
                                     <tr>
@@ -2162,7 +2371,7 @@ function App() {
                           {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length===0&&<p className="empty-hint">Noch kein Audit für diesen Standort mit dieser Vorlage.</p>}
                           {renderDocumentManager(auditSelectedSite.id, false)}
                         </div>
-                      )}
+                      )})()}
                     </>
                   )}
                 </>
@@ -2888,13 +3097,13 @@ function App() {
                     <label>Kategorie<select onChange={e=>{const id=parseInt(e.target.value);const s=sites.find(x=>x.categoryId===id);if(s)setExportSiteId(String(s.id))}}><option value="">Alle</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
                     <label>Standort<select value={exportSiteId} onChange={e=>setExportSiteId(e.target.value)}>{sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
                   </div>
-                  <button type="button" className="primary-button" onClick={exportAuditZip}>📦 ZIP erstellen & herunterladen</button>
+                  <button type="button" className="primary-button" onClick={()=>exportAuditZip('site')}>📦 ZIP erstellen & herunterladen</button>
                 </div>
               ):(
                 <div className="form-card">
                   <h4>Gesamtexport</h4>
                   <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'16px'}}>Exportiert alle Kategorien, Standorte, Räume und Audits in einer hierarchischen ZIP-Struktur.<br/><code style={{fontSize:'0.82rem',background:'rgba(148,163,184,0.1)',padding:'2px 6px',borderRadius:'4px'}}>Kategorie → Standort → Raum → Dateien</code></p>
-                  <button type="button" className="primary-button" onClick={()=>exportAuditZip()}>📦 Gesamtexport herunterladen</button>
+                  <button type="button" className="primary-button" onClick={()=>exportAuditZip('all')}>📦 Gesamtexport herunterladen</button>
                 </div>
               )}
             </section>
@@ -2904,7 +3113,7 @@ function App() {
             <section className="panel">
               <div className="page-header">
                 <h3>System-Logs</h3>
-                <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem',marginLeft:'auto'}} onClick={async()=>{if(!session)return;const res=await apiRequest<Array<{timestamp:string;action:string;details?:string;userId:number}>>('/api/admin/logs',session);setLogs(res)}}>
+                <button type="button" className="secondary-button" style={{padding:'6px 12px',fontSize:'0.85rem',marginLeft:'auto'}} onClick={async()=>{if(!session)return;const res=await apiRequest<Array<{timestamp:string;action:string;details?:string;userId:number;userName:string}>>('/api/admin/logs',session);setLogs(res)}}>
                   🔄 Neu laden
                 </button>
               </div>
@@ -2915,11 +3124,11 @@ function App() {
                 <p className="empty-hint">Keine Logs vorhanden. Klick auf "Neu laden".</p>
               ):(
                 <table>
-                  <thead><tr><th>Zeitpunkt</th><th>Benutzer-ID</th><th>Aktion</th><th>Details</th></tr></thead>
-                  <tbody>{logs.filter(l=>!logFilter||l.action.toLowerCase().includes(logFilter.toLowerCase())||(l.details||'').toLowerCase().includes(logFilter.toLowerCase())).map((log,idx)=>(
+                  <thead><tr><th>Zeitpunkt</th><th>Benutzer</th><th>Aktion</th><th>Details</th></tr></thead>
+                  <tbody>{logs.filter(l=>!logFilter||l.action.toLowerCase().includes(logFilter.toLowerCase())||(l.details||'').toLowerCase().includes(logFilter.toLowerCase())||l.userName.toLowerCase().includes(logFilter.toLowerCase())).map((log,idx)=>(
                     <tr key={idx}>
                       <td style={{whiteSpace:'nowrap',fontSize:'0.85rem'}}>{new Date(log.timestamp).toLocaleString('de-DE')}</td>
-                      <td><span className="status-badge">#{log.userId}</span></td>
+                      <td><span className="status-badge">{log.userName}</span></td>
                       <td><strong style={{fontSize:'0.9rem'}}>{log.action}</strong></td>
                       <td style={{fontSize:'0.85rem',color:'var(--muted)',maxWidth:'300px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{log.details||'-'}</td>
                     </tr>
@@ -3052,6 +3261,19 @@ function App() {
                 </div>
               </div>
               <button className="gallery-nav-btn" disabled={galleryModalIndex===galleryModalImages.length-1} onClick={()=>{setGalleryModalIndex(i=>i+1);resetGalleryZoom()}}>›</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generisches Bestätigungs-Modal */}
+      {confirmDialog && (
+        <div className="confirm-modal-overlay" onClick={() => setConfirmDialog(null)}>
+          <div className="confirm-modal" onClick={e => e.stopPropagation()}>
+            <p>{confirmDialog.message}</p>
+            <div className="confirm-modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setConfirmDialog(null)}>Nein</button>
+              <button type="button" className="danger-button" onClick={() => { const action = confirmDialog.onConfirm; setConfirmDialog(null); action() }}>Ja</button>
             </div>
           </div>
         </div>

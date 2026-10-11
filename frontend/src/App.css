@@ -2352,3 +2352,44 @@ table { margin-top: 0; }
   .gallery-modal { width: 100vw; height: 100vh; border-radius: 0; }
   .gallery-modal-image-wrap { padding: 44px 8px 8px; }
 }
+
+/* ===== STYLED STANDALONE INPUT (außerhalb von .form-grid, z.B. "Neuer Ordnername") ===== */
+.styled-input {
+  padding: var(--input-padding);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--input-border-radius);
+  color: var(--text-h);
+  font-size: var(--input-font-size);
+  font-family: inherit;
+  transition: var(--input-transition);
+  box-sizing: border-box;
+}
+.styled-input:focus {
+  outline: none;
+  border-color: rgba(96,165,250,0.6);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+
+/* ===== GENERISCHES BESTÄTIGUNGS-MODAL (ersetzt window.confirm) ===== */
+.confirm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.confirm-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: min(440px, 100%);
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+}
+.confirm-modal h4 { margin: 0 0 12px; font-size: 1.05rem; color: var(--text-h); }
+.confirm-modal p { margin: 0 0 22px; color: var(--muted); font-size: 0.92rem; line-height: 1.5; }
+.confirm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }

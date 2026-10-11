@@ -524,6 +524,26 @@ app.MapGet("/api/audits/{auditId:int}", [Authorize] (AuditStore store, int audit
     return audit is null ? Results.NotFound() : Results.Ok(audit);
 });
 
+app.MapDelete("/api/audits/{auditId:int}", [Authorize] async (int auditId, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
+{
+    var audit = store.Audits.FirstOrDefault(a => a.Id == auditId);
+    if (audit is null) return Results.NotFound();
+
+    // Dokumentdateien der Festplatte vor dem Entfernen der Datensätze löschen (best-effort).
+    var removedDocuments = store.DeleteAudit(auditId);
+    foreach (var doc in removedDocuments)
+    {
+        var fullPath = Path.Combine(documentsDirectory, doc.FileName);
+        if (File.Exists(fullPath))
+        {
+            try { File.Delete(fullPath); } catch { /* best-effort */ }
+        }
+    }
+
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Audit gelöscht", $"Audit \"{audit.Title}\" (ID {auditId}) inkl. {removedDocuments.Count} zugehörigem(n) Dokument(en)");
+    return Results.Ok(new { message = "Audit gelöscht." });
+});
+
 app.MapGet("/api/audits/{auditId:int}/pdf", [Authorize] (AuditStore store, int auditId) =>
 {
     var audit = store.Audits.FirstOrDefault(item => item.Id == auditId);
@@ -644,6 +664,24 @@ app.MapDelete("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAd
     store.DeleteChecklistTemplate(id);
     await logger.LogActionAsync(ResolveUserId(httpContext), "Checklisten-Vorlage gelöscht", tmpl is null ? $"Checkliste ID {id}" : $"Checkliste \"{tmpl.Name}\" (ID {id})");
     return Results.Ok(new { message = "Checkliste gelöscht." });
+});
+
+// Checkliste Live-Werte (die "freien" Spaltenwerte je Raum, 10s-Polling im Frontend für den Mehrbenutzer-Sync)
+app.MapGet("/api/checklist-values", [Authorize] (AuditStore store, int? checklistTemplateId) =>
+{
+    var values = checklistTemplateId.HasValue
+        ? store.ChecklistValues.Where(v => v.ChecklistTemplateId == checklistTemplateId.Value)
+        : store.ChecklistValues;
+    return Results.Ok(values.ToList());
+});
+app.MapPut("/api/checklist-values", [Authorize] (AuditStore store, UpsertChecklistValueRequest request) =>
+{
+    if (request.ChecklistTemplateId <= 0 || request.RoomId <= 0)
+    {
+        return Results.BadRequest(new { message = "Checkliste und Raum sind erforderlich." });
+    }
+    var value = store.UpsertChecklistValue(request.ChecklistTemplateId, request.RoomId, request.DataJson ?? "{}");
+    return Results.Ok(value);
 });
 
 // Dokumentenablage: Ordner
@@ -1003,10 +1041,20 @@ app.MapPost("/api/admin/backups/upload", [Authorize(Policy = "RequireAdminAccess
     return Results.Ok(backup);
 });
 
-app.MapGet("/api/admin/logs", [Authorize(Policy = "RequireAdminAccess")] async (AuditLogger logger, int? limit) =>
+app.MapGet("/api/admin/logs", [Authorize(Policy = "RequireAdminAccess")] async (AuditLogger logger, UserStore users, int? limit) =>
 {
     var logs = await logger.GetLogsAsync(limit: limit ?? 200);
-    return Results.Ok(logs.OrderByDescending(l => l.Timestamp).ToList());
+    var userNames = users.All.ToDictionary(u => u.Id, u => u.UserName);
+    var enriched = logs.OrderByDescending(l => l.Timestamp).Select(l => new
+    {
+        l.Timestamp,
+        l.UserId,
+        userName = l.UserId == 0 ? "System" : (userNames.TryGetValue(l.UserId, out var name) ? name : $"Benutzer #{l.UserId}"),
+        l.Action,
+        l.Details,
+        l.IpAddress
+    }).ToList();
+    return Results.Ok(enriched);
 });
 
 app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int? siteId, HttpContext httpContext) =>
@@ -1014,9 +1062,19 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
     var exportDirectory = Path.Combine(builder.Environment.ContentRootPath, "..", "storage", "exports");
     Directory.CreateDirectory(exportDirectory);
 
-    var siteFilter = siteId ?? store.Sites.FirstOrDefault()?.Id;
+    // Kein übergebener siteId => echter Gesamtexport (alle Standorte), statt wie zuvor versehentlich auf
+    // den ersten Standort der Liste zu filtern.
+    var siteFilter = siteId;
     var fileName = $"audit-export-{DateTime.UtcNow:yyyyMMdd_HHmmss}.zip";
     var path = Path.Combine(exportDirectory, fileName);
+
+    static string CsvEscape(string? value)
+    {
+        var v = value ?? string.Empty;
+        return (v.Contains(';') || v.Contains('"') || v.Contains('\n') || v.Contains('\r'))
+            ? "\"" + v.Replace("\"", "\"\"") + "\""
+            : v;
+    }
 
     using (var archiveStream = File.Create(path))
     using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
@@ -1025,22 +1083,67 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
         {
             foreach (var site in store.Sites.Where(s => s.CategoryId == category.Id && (!siteFilter.HasValue || s.Id == siteFilter.Value)))
             {
-                var roomFolder = $"{category.Name}/{site.Name}";
-                foreach (var room in store.Rooms.Where(r => r.SiteId == site.Id))
-                {
-                    var roomPath = $"{roomFolder}/{room.Name}";
-                    using var roomEntryStream = archive.CreateEntry($"{roomPath}/details.json").Open();
-                    using var roomWriter = new StreamWriter(roomEntryStream, Encoding.UTF8);
-                    roomWriter.Write(JsonSerializer.Serialize(new
+                var siteFolder = $"{BackupStore.SanitizeFileName(category.Name)}/{BackupStore.SanitizeFileName(site.Name)}";
+
+                // Nur Live-Räume (AuditId == 0) exportieren - eingefrorene Audit-Snapshots sind historische
+                // Duplikate bereits bearbeiteter/gelöschter Räume und gehören nicht in den Datenexport.
+                var roomFields = store.Rooms.Where(r => r.SiteId == site.Id && r.AuditId == 0)
+                    .Select(r =>
                     {
-                        room.Id,
-                        room.Name,
-                        room.Description,
-                        room.Capacity,
-                        room.Area,
-                        room.Notes,
-                        objects = store.Objects.Where(o => o.RoomId == room.Id).ToList()
-                    }, new JsonSerializerOptions { WriteIndented = true }));
+                        Dictionary<string, string> fields;
+                        try { fields = JsonSerializer.Deserialize<Dictionary<string, string>>(r.FieldsJson) ?? new(); }
+                        catch { fields = new(); }
+                        return (Room: r, Fields: fields);
+                    })
+                    .ToList();
+
+                // Alle nicht-Bild-Feldnamen über alle Räume sammeln, für eine einheitliche CSV-Kopfzeile.
+                var textFieldNames = roomFields
+                    .SelectMany(x => x.Fields)
+                    .Where(kv => !kv.Value.Contains("data:image", StringComparison.OrdinalIgnoreCase))
+                    .Select(kv => kv.Key)
+                    .Distinct()
+                    .ToList();
+
+                if (roomFields.Count > 0)
+                {
+                    var csv = new StringBuilder();
+                    csv.Append("Raumname;Beschreibung;Kapazität;Fläche;Notizen");
+                    foreach (var fieldName in textFieldNames) csv.Append(';').Append(CsvEscape(fieldName));
+                    csv.Append("\r\n");
+
+                    foreach (var (room, fields) in roomFields)
+                    {
+                        csv.Append(CsvEscape(room.Name)).Append(';')
+                           .Append(CsvEscape(room.Description)).Append(';')
+                           .Append(CsvEscape(room.Capacity)).Append(';')
+                           .Append(CsvEscape(room.Area)).Append(';')
+                           .Append(CsvEscape(room.Notes));
+                        foreach (var fieldName in textFieldNames)
+                        {
+                            csv.Append(';').Append(CsvEscape(fields.TryGetValue(fieldName, out var fieldValue) ? fieldValue : ""));
+                        }
+                        csv.Append("\r\n");
+                    }
+
+                    var csvEntry = archive.CreateEntry($"{siteFolder}/Raeume.csv");
+                    using var csvStream = new StreamWriter(csvEntry.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+                    csvStream.Write(csv.ToString());
+                }
+
+                // Bilder je Raum in einen eigenen Unterordner je Raum extrahieren (echte Dateien statt Base64 in der CSV/JSON).
+                foreach (var (room, fields) in roomFields)
+                {
+                    var roomImageFolder = $"{siteFolder}/{BackupStore.SanitizeFileName(room.Name)}";
+                    foreach (var (key, value) in fields)
+                    {
+                        if (string.IsNullOrWhiteSpace(value) || !value.Contains("data:image", StringComparison.OrdinalIgnoreCase)) continue;
+                        var images = value.Split("||", StringSplitOptions.RemoveEmptyEntries);
+                        for (var i = 0; i < images.Length; i++)
+                        {
+                            BackupStore.WriteDataUrlImage(archive, roomImageFolder, BackupStore.SanitizeFileName(key), i, images[i]);
+                        }
+                    }
                 }
             }
         }
@@ -1055,7 +1158,7 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
                 generatedUtc = DateTime.UtcNow,
                 categories = store.Categories,
                 sites = store.Sites,
-                rooms = store.Rooms,
+                rooms = store.Rooms.Where(r => r.AuditId == 0),
                 objects = store.Objects,
                 audits = store.Audits
             }, new JsonSerializerOptions { WriteIndented = true }));
@@ -1194,6 +1297,7 @@ public sealed class AuditStore
     private readonly List<ChecklistTemplate> _checklistTemplates;
     private readonly List<AuditDocument> _documents;
     private readonly List<DocumentFolder> _folders;
+    private readonly List<ChecklistValue> _checklistValues;
 
     public AuditStore(AppDatabase database)
     {
@@ -1209,6 +1313,7 @@ public sealed class AuditStore
         _checklistTemplates = _database.Load("checklist_templates", new List<ChecklistTemplate>());
         _documents = _database.Load("audit_documents", new List<AuditDocument>());
         _folders = _database.Load("document_folders", new List<DocumentFolder>());
+        _checklistValues = _database.Load("checklist_values", new List<ChecklistValue>());
 
         RemoveLegacySeedAudits();
     }
@@ -1235,6 +1340,7 @@ public sealed class AuditStore
     public IReadOnlyList<AuditInstance> Audits => _audits;
     public IReadOnlyList<AuditDocument> Documents => _documents;
     public IReadOnlyList<DocumentFolder> Folders => _folders;
+    public IReadOnlyList<ChecklistValue> ChecklistValues => _checklistValues;
 
     private void Persist()
     {
@@ -1249,6 +1355,7 @@ public sealed class AuditStore
         _database.Save("checklist_templates", _checklistTemplates);
         _database.Save("audit_documents", _documents);
         _database.Save("document_folders", _folders);
+        _database.Save("checklist_values", _checklistValues);
     }
 
     // Re-reads every collection from the (possibly just restored) database file. Used after a backup restore.
@@ -1265,6 +1372,7 @@ public sealed class AuditStore
         ReplaceAll(_checklistTemplates, _database.Load("checklist_templates", new List<ChecklistTemplate>()));
         ReplaceAll(_documents, _database.Load("audit_documents", new List<AuditDocument>()));
         ReplaceAll(_folders, _database.Load("document_folders", new List<DocumentFolder>()));
+        ReplaceAll(_checklistValues, _database.Load("checklist_values", new List<ChecklistValue>()));
     }
 
     private static void ReplaceAll<T>(List<T> target, List<T> source)
@@ -1351,6 +1459,23 @@ public sealed class AuditStore
         return audit;
     }
 
+    // Löscht ein Audit vollständig samt allem, was ausschließlich daran hängt: der zum Erstellzeitpunkt
+    // eingefrorene Raum-Snapshot (AuditId == id), seine Checklisten-Einträge und die daraus generierten/
+    // zugeordneten Dokumente. Live-Räume (AuditId == 0) und andere Audits bleiben unberührt. Gibt die
+    // gelöschten Dokumente zurück, damit der Aufrufer auch ihre Dateien auf der Festplatte entfernen kann.
+    public IReadOnlyList<AuditDocument> DeleteAudit(int id)
+    {
+        var removedDocuments = _documents.Where(d => d.AuditId == id).ToList();
+        if (_audits.RemoveAll(a => a.Id == id) > 0)
+        {
+            _rooms.RemoveAll(r => r.AuditId == id);
+            _checklistEntries.RemoveAll(e => e.AuditId == id);
+            _documents.RemoveAll(d => d.AuditId == id);
+            Persist();
+        }
+        return removedDocuments;
+    }
+
     public AuditChecklistEntry AddChecklistEntry(int auditId, string question, string answer, string status)
     {
         var id = _checklistEntries.Count == 0 ? 1 : _checklistEntries.Max(x => x.Id) + 1;
@@ -1426,6 +1551,27 @@ public sealed class AuditStore
     }
 
     public void DeleteChecklistTemplate(int id) { _checklistTemplates.RemoveAll(t => t.Id == id); Persist(); }
+
+    // Speichert/aktualisiert die "freien" Spaltenwerte (source:'custom') einer Checkliste für einen Raum.
+    // Spalten mit source 'room'/'field' werden nicht hier gespeichert - sie werden live aus den Raumdaten
+    // abgeleitet und müssen daher nicht persistiert werden.
+    public ChecklistValue UpsertChecklistValue(int checklistTemplateId, int roomId, string dataJson)
+    {
+        var idx = _checklistValues.FindIndex(v => v.ChecklistTemplateId == checklistTemplateId && v.RoomId == roomId);
+        if (idx >= 0)
+        {
+            var updated = _checklistValues[idx] with { DataJson = dataJson, UpdatedAtUtc = DateTime.UtcNow };
+            _checklistValues[idx] = updated;
+            Persist();
+            return updated;
+        }
+
+        var id = _checklistValues.Count == 0 ? 1 : _checklistValues.Max(v => v.Id) + 1;
+        var value = new ChecklistValue(id, checklistTemplateId, roomId, dataJson, DateTime.UtcNow);
+        _checklistValues.Add(value);
+        Persist();
+        return value;
+    }
 
     public DocumentFolder CreateFolder(int siteId, string name, int parentFolderId)
     {
@@ -1713,7 +1859,9 @@ public sealed class BackupStore
         }
     }
 
-    private static string SanitizeFileName(string name)
+    // Public: auch vom Admin-Datenexport-Endpunkt (/api/admin/export/zip) genutzt, um Raumbilder in echte
+    // Dateien je Raumordner aufzuteilen, statt sie als Base64 in einer JSON-Datei zu belassen.
+    public static string SanitizeFileName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
         var cleaned = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
@@ -1761,7 +1909,7 @@ public sealed class BackupStore
         }
     }
 
-    private static void WriteDataUrlImage(ZipArchive archive, string folderPath, string fieldName, int index, string dataUrl)
+    public static void WriteDataUrlImage(ZipArchive archive, string folderPath, string fieldName, int index, string dataUrl)
     {
         var commaIndex = dataUrl.IndexOf(',');
         if (commaIndex < 0) return;
@@ -2158,6 +2306,7 @@ public sealed record TemplateField(int Id, string Name, string Type, int Order, 
 public sealed record AuditTemplate(int Id, string Name, string Description, IEnumerable<TemplateField> Fields);
 public sealed record PdfDesign(int Id, string Name, string Description, string ConfigJson, DateTime CreatedAtUtc);
 public sealed record ChecklistTemplate(int Id, string Name, int TemplateId, string ColumnsJson, DateTime CreatedAtUtc);
+public sealed record ChecklistValue(int Id, int ChecklistTemplateId, int RoomId, string DataJson, DateTime UpdatedAtUtc);
 public sealed record UserSummary(int Id, string UserName, string DisplayName, string Role, bool IsActive);
 public sealed record BackupRecord(string Id, string FileName, DateTime CreatedAtUtc, long SizeBytes, string Type);
 public sealed record DocumentFolder(int Id, int SiteId, int ParentFolderId, string Name, DateTime CreatedAtUtc);
@@ -2185,6 +2334,7 @@ public sealed record UpdateSiteRequest(int CategoryId, string? Name, string? Add
 public sealed record UpdateGroundDataRequest(string? GroundDataJson);
 public sealed record CreatePdfDesignRequest(string Name, string? Description, string? ConfigJson);
 public sealed record CreateChecklistTemplateRequest(string Name, int? TemplateId, string? ColumnsJson);
+public sealed record UpsertChecklistValueRequest(int ChecklistTemplateId, int RoomId, string? DataJson);
 public sealed record GenerateDocumentRequest(string Title, int? PdfDesignId, int? FolderId);
 public sealed record UpdateDocumentRequest(string? Title, int? FolderId, bool? IsArchived);
 public sealed record CreateFolderRequest(string Name, int? ParentFolderId);
