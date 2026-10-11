@@ -434,6 +434,19 @@ function App() {
   // Generisches Bestätigungs-Modal (ersetzt window.confirm für Raum-/Dokument-/Audit-Löschung)
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null)
   const askConfirm = (message: string, onConfirm: () => void) => setConfirmDialog({ message, onConfirm })
+  // Generisches Detail-Modal für abgekürzte lange Texte in Tabellenzellen (Räume, Checklisten)
+  const [detailModal, setDetailModal] = useState<{ title: string; text: string } | null>(null)
+  const TRUNCATE_LENGTH = 60
+  const renderTruncatable = (label: string, value: string) => {
+    if (!value) return <em style={{ color: 'var(--muted)' }}>—</em>
+    if (value.length <= TRUNCATE_LENGTH) return <>{value}</>
+    return (
+      <>
+        {value.slice(0, TRUNCATE_LENGTH)}…{' '}
+        <button type="button" className="link-button" onClick={() => setDetailModal({ title: label, text: value })}>mehr Details…</button>
+      </>
+    )
+  }
   // Checklisten-Livewerte (10s-Sync der "freien" Spalten je Raum)
   const [checklistValues, setChecklistValues] = useState<ChecklistValue[]>([])
   const [checklistCellOverrides, setChecklistCellOverrides] = useState<Record<string, string>>({})
@@ -651,11 +664,11 @@ function App() {
                               }
                               if (col.source === 'field') {
                                 const val = col.fieldName ? (roomFieldMap[col.fieldName] ?? '') : ''
-                                return <td key={col.id} style={{ color: 'var(--muted)' }}>{val || '—'}</td>
+                                return <td key={col.id} style={{ color: 'var(--muted)' }}>{renderTruncatable(`${room.name} — ${col.label}`, val)}</td>
                               }
                               const cellValue = getChecklistCellValue(checklistTemplate.id, room.id, col.id)
                               if (readOnly) {
-                                return <td key={col.id} style={{ color: 'var(--muted)' }}>{col.inputType === 'checkbox' ? (cellValue === 'true' ? '✓' : '✗') : (cellValue || '—')}</td>
+                                return <td key={col.id} style={{ color: 'var(--muted)' }}>{col.inputType === 'checkbox' ? (cellValue === 'true' ? '✓' : '✗') : renderTruncatable(`${room.name} — ${col.label}`, cellValue)}</td>
                               }
                               if (col.inputType === 'checkbox') {
                                 return (
@@ -2347,7 +2360,7 @@ function App() {
                                               {textFields.slice(0,3).map(f=>{
                                                 const {baseType} = parseTemplateFieldType(f.type)
                                                 const val = fieldMap[f.name] ?? ''
-                                                return <td key={f.id} style={{fontSize:'0.88rem'}}>{baseType==='checkbox'?(val==='true'?'✓':'✗'):val||<em style={{color:'var(--muted)'}}>—</em>}</td>
+                                                return <td key={f.id} style={{fontSize:'0.88rem'}}>{baseType==='checkbox'?(val==='true'?'✓':'✗'):renderTruncatable(`${r.name} — ${f.name}`, val)}</td>
                                               })}
                                               {hasImages && (
                                                 <td>
@@ -3506,6 +3519,19 @@ function App() {
             <div className="confirm-modal-actions">
               <button type="button" className="secondary-button" onClick={() => setConfirmDialog(null)}>Nein</button>
               <button type="button" className="danger-button" onClick={() => { const action = confirmDialog.onConfirm; setConfirmDialog(null); action() }}>Ja</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail-Modal für abgekürzte lange Texte aus Tabellenzellen */}
+      {detailModal && (
+        <div className="confirm-modal-overlay" onClick={() => setDetailModal(null)}>
+          <div className="confirm-modal detail-text-modal" onClick={e => e.stopPropagation()}>
+            <h4>{detailModal.title}</h4>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{detailModal.text}</p>
+            <div className="confirm-modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setDetailModal(null)}>Schließen</button>
             </div>
           </div>
         </div>

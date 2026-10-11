@@ -1,6 +1,21 @@
 # Changelog
 
-## [1.10.3] - 2026-10-11
+## [1.10.4] - 2026-10-11
+
+### Wiederholblock-Datenstand & lange Texte in Tabellen (fix007.md)
+
+#### Fix: Wiederholblock im PDF-Designer zeigte nur den ersten Datensatz / iterierte nicht über alle Räume
+- Root Cause gefunden: Beim Anlegen eines Audits wird der Raumbestand des Standorts einmalig als Schnappschuss eingefroren (damit spätere Live-Raum-Änderungen bereits erzeugte Audit-Dokumente nicht nachträglich verändern) — dieser Schnappschuss wurde aber **nie wieder aktualisiert**, selbst wenn danach neue Räume am Standort angelegt, bestehende bearbeitet oder gelöscht wurden. Dadurch hat der Wiederholblock zwar technisch korrekt über *alle Datensätze im Schnappschuss* iteriert, aber der Schnappschuss selbst enthielt veraltete/zu wenige Räume (z. B. nur 1 statt 3) — keine Fehlfunktion des PDF-Renderers, sondern veraltete Grunddaten
+- Jeder eingefrorene Raum-Datensatz merkt sich jetzt (`OriginLiveRoomId`), aus welchem Live-Raum er ursprünglich erzeugt wurde
+- Neuer automatischer Abgleich (`SyncAuditRoomSnapshot`), der unmittelbar vor jeder PDF-/Dokumentengenerierung eines laufenden Audits ausgeführt wird und den eingefrorenen Raumbestand mit dem aktuellen Live-Bestand des Standorts abgleicht: neu hinzugekommene Räume werden ergänzt, gelöschte Räume werden entfernt, bearbeitete Räume werden mit ihren aktuellen Feldwerten aktualisiert; bereits bestehende (ältere) Schnappschüsse werden dabei einmalig automatisch anhand des Raumnamens mit ihrem Live-Raum verknüpft
+- Dadurch zeigen automatisch befüllte Tabellen und Wiederholblöcke im PDF jetzt immer den tatsächlich aktuellen Raumbestand des Standorts zum Zeitpunkt der Dokumentenerstellung
+- Live verifiziert: Audit mit zuvor veraltetem 1-Raum-Schnappschuss zeigt nach erneuter Dokumentengenerierung korrekt alle 3 aktuell vorhandenen Räume (Tabelle: 3 Zeilen; Wiederholblock: 3 Seiten, je eine pro Raum)
+
+#### Lange Texte in Tabellen werden jetzt gekürzt mit „mehr Details…“-Link
+- Lange Textwerte in den Tabellen der Checklisten sowie der Räume/Objekte-Übersicht werden ab einer bestimmten Länge nicht mehr unformatiert in voller Länge angezeigt (was das Tabellenlayout gesprengt hat), sondern auf ca. 60 Zeichen gekürzt mit einem anklickbaren „mehr Details…“-Link
+- Klick öffnet ein zentriertes Detail-Modal mit dem vollständigen Text (Raum- und Spaltenname als Titel, Schließen-Button)
+
+
 
 ### Daten-Refresh, Superadmin-Rollenverwaltung, Checkbox-Ausrichtung & PDF-Designer-Fixes (fix006.md)
 

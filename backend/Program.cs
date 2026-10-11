@@ -728,6 +728,11 @@ app.MapPost("/api/audits/{auditId:int}/documents/generate", [Authorize] async (i
     var design = store.PdfDesigns.FirstOrDefault(d => d.Id == request.PdfDesignId.Value);
     if (design is null) return Results.NotFound(new { message = "PDF-Design nicht gefunden." });
 
+    // Eingefrorenen Raum-Snapshot des Audits vor der Generierung mit dem aktuellen Live-Bestand abgleichen,
+    // damit nachträglich hinzugefügte/bearbeitete/gelöschte Räume in Tabellen und Wiederholblöcken erscheinen.
+    // Nur für laufende Audits relevant - abgeschlossene/historische Audits sollen unverändert bleiben.
+    if (audit.Status == "In Bearbeitung") store.SyncAuditRoomSnapshot(auditId);
+
     var site = store.Sites.FirstOrDefault(s => s.Id == audit.SiteId);
     var category = site is null ? null : store.Categories.FirstOrDefault(c => c.Id == site.CategoryId);
     var template = store.Templates.FirstOrDefault(t => t.Id == audit.TemplateId);
@@ -1502,12 +1507,84 @@ public sealed class AuditStore
         var nextRoomId = _rooms.Count == 0 ? 1 : _rooms.Max(r => r.Id) + 1;
         foreach (var liveRoom in liveRooms)
         {
-            var snapshot = liveRoom with { Id = nextRoomId++, AuditId = id };
+            var snapshot = liveRoom with { Id = nextRoomId++, AuditId = id, OriginLiveRoomId = liveRoom.Id };
             _rooms.Add(snapshot);
         }
 
         Persist();
         return audit;
+    }
+
+    // Gleicht den beim Erstellen eingefrorenen Raum-Snapshot eines Audits (AuditId == auditId) nachträglich
+    // mit dem aktuellen Live-Bestand der Räume des zugehörigen Standorts ab. Wird verzögert (lazy) direkt vor
+    // der PDF-/Dokumentengenerierung aufgerufen, damit Räume, die NACH dem Anlegen des Audits noch hinzugefügt,
+    // bearbeitet oder gelöscht wurden, trotzdem korrekt in automatisch befüllten Tabellen/Wiederholblöcken
+    // auftauchen - ohne bei jeder einzelnen Raum-Änderung synchronisieren zu müssen.
+    public bool SyncAuditRoomSnapshot(int auditId)
+    {
+        var audit = _audits.FirstOrDefault(a => a.Id == auditId);
+        if (audit is null) return false;
+
+        var liveRooms = _rooms.Where(r => r.SiteId == audit.SiteId && r.AuditId == 0).ToList();
+        var snapshotRooms = _rooms.Where(r => r.AuditId == auditId).ToList();
+        var changed = false;
+
+        // 1) Alte/unverknüpfte Schnappschuss-Zeilen (aus Audits vor Einführung von OriginLiveRoomId) anhand
+        // des Raumnamens einmalig an einen noch nicht verknüpften Live-Raum binden (Name = de-facto Primärschlüssel).
+        var claimedLiveIds = new HashSet<int>(snapshotRooms.Where(s => s.OriginLiveRoomId != 0).Select(s => s.OriginLiveRoomId));
+        foreach (var snap in snapshotRooms.Where(s => s.OriginLiveRoomId == 0).ToList())
+        {
+            var match = liveRooms.FirstOrDefault(lr => !claimedLiveIds.Contains(lr.Id) && lr.Name == snap.Name);
+            if (match is null) continue;
+            var idx = _rooms.FindIndex(r => r.Id == snap.Id);
+            if (idx < 0) continue;
+            _rooms[idx] = snap with { OriginLiveRoomId = match.Id };
+            claimedLiveIds.Add(match.Id);
+            changed = true;
+        }
+
+        // Nach dem Verknüpfen die Liste neu laden, damit die nachfolgenden Schritte den aktuellen Stand sehen.
+        snapshotRooms = _rooms.Where(r => r.AuditId == auditId).ToList();
+
+        // 2) Schnappschuss-Zeilen entfernen, deren verknüpfter Live-Raum inzwischen gelöscht wurde.
+        var liveRoomIds = new HashSet<int>(liveRooms.Select(lr => lr.Id));
+        var orphaned = snapshotRooms.Where(s => s.OriginLiveRoomId != 0 && !liveRoomIds.Contains(s.OriginLiveRoomId)).ToList();
+        foreach (var orphan in orphaned)
+        {
+            _rooms.RemoveAll(r => r.Id == orphan.Id);
+            changed = true;
+        }
+        snapshotRooms = _rooms.Where(r => r.AuditId == auditId).ToList();
+
+        // 3) Feldwerte von Schnappschuss-Zeilen auffrischen, deren Live-Raum sich seitdem geändert hat.
+        foreach (var snap in snapshotRooms.Where(s => s.OriginLiveRoomId != 0))
+        {
+            var live = liveRooms.FirstOrDefault(lr => lr.Id == snap.OriginLiveRoomId);
+            if (live is null) continue;
+            if (live.Name == snap.Name && live.Description == snap.Description && live.Capacity == snap.Capacity
+                && live.Area == snap.Area && live.Notes == snap.Notes && live.FieldsJson == snap.FieldsJson) continue;
+            var idx = _rooms.FindIndex(r => r.Id == snap.Id);
+            if (idx < 0) continue;
+            _rooms[idx] = snap with { Name = live.Name, Description = live.Description, Capacity = live.Capacity, Area = live.Area, Notes = live.Notes, FieldsJson = live.FieldsJson };
+            changed = true;
+        }
+
+        // 4) Neue Schnappschuss-Zeilen für Live-Räume anlegen, die noch keinen Schnappschuss in diesem Audit haben
+        // (deckt den Fall ab, dass Räume ERST NACH dem Anlegen des Audits hinzugefügt wurden).
+        var snapshottedLiveIds = new HashSet<int>(snapshotRooms.Where(s => s.OriginLiveRoomId != 0).Select(s => s.OriginLiveRoomId));
+        var missingLiveRooms = liveRooms.Where(lr => !snapshottedLiveIds.Contains(lr.Id)).ToList();
+        if (missingLiveRooms.Count > 0)
+        {
+            var nextId = _rooms.Count == 0 ? 1 : _rooms.Max(r => r.Id) + 1;
+            foreach (var liveRoom in missingLiveRooms)
+            {
+                _rooms.Add(liveRoom with { Id = nextId++, AuditId = auditId, OriginLiveRoomId = liveRoom.Id });
+                changed = true;
+            }
+        }
+
+        if (changed) Persist();
+        return changed;
     }
 
     // Löscht ein Audit vollständig samt allem, was ausschließlich daran hängt: der zum Erstellzeitpunkt
@@ -2359,6 +2436,9 @@ public sealed record AuditRoom(int Id, int SiteId, string Name, string Descripti
 {
     public string FieldsJson { get; init; } = "{}";
     public int AuditId { get; init; } = 0;
+    // Verknüpft eine eingefrorene Audit-Schnappschuss-Zeile mit dem Live-Raum, aus dem sie erzeugt wurde.
+    // 0 bedeutet: entweder ein Live-Raum selbst (AuditId==0) oder ein alter/unverknüpfter Schnappschuss.
+    public int OriginLiveRoomId { get; init; } = 0;
 }
 
 public sealed record AuditObject(int Id, int RoomId, string Name, string ObjectType, string Status, string Notes);
