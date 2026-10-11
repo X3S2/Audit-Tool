@@ -125,8 +125,19 @@ app.MapGet("/api/health", () => Results.Ok(new
 
 static int ResolveUserId(HttpContext httpContext)
 {
-    var rawUserId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
-    return int.TryParse(rawUserId, out var userId) ? userId : 0;
+    // Der Token enthält sowohl einen "sub"-Claim (Benutzername, wird vom JWT-Handler
+    // ebenfalls auf ClaimTypes.NameIdentifier gemappt) als auch die echte numerische
+    // Benutzer-ID unter demselben Claim-Typ. Daher alle Treffer durchsuchen und den
+    // ersten numerisch parsebaren Wert verwenden, statt blind den ersten zu nehmen.
+    foreach (var claim in httpContext.User.FindAll(ClaimTypes.NameIdentifier))
+    {
+        if (int.TryParse(claim.Value, out var userId))
+        {
+            return userId;
+        }
+    }
+
+    return 0;
 }
 
 app.MapPost("/api/auth/login", (LoginRequest request, UserStore users, RefreshTokenStore refreshTokens) =>
@@ -572,46 +583,56 @@ app.MapGet("/api/pdfdesigns/{id:int}", [Authorize] (AuditStore store, int id) =>
     var design = store.PdfDesigns.FirstOrDefault(d => d.Id == id);
     return design is null ? Results.NotFound() : Results.Ok(design);
 });
-app.MapPost("/api/pdfdesigns", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, CreatePdfDesignRequest request) =>
+app.MapPost("/api/pdfdesigns", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, CreatePdfDesignRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
     var design = store.CreatePdfDesign(request.Name, request.Description ?? string.Empty, request.ConfigJson ?? "{}");
+    await logger.LogActionAsync(ResolveUserId(httpContext), "PDF-Design erstellt", $"Design \"{design.Name}\" (ID {design.Id})");
     return Results.Ok(design);
 });
-app.MapPut("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id, CreatePdfDesignRequest request) =>
+app.MapPut("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, int id, CreatePdfDesignRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
     var design = store.UpdatePdfDesign(id, request.Name ?? string.Empty, request.Description ?? string.Empty, request.ConfigJson ?? "{}");
-    return design is null ? Results.NotFound() : Results.Ok(design);
+    if (design is null) return Results.NotFound();
+    await logger.LogActionAsync(ResolveUserId(httpContext), "PDF-Design bearbeitet", $"Design \"{design.Name}\" (ID {design.Id})");
+    return Results.Ok(design);
 });
-app.MapDelete("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id) =>
+app.MapDelete("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, int id, AuditLogger logger, HttpContext httpContext) =>
 {
+    var design = store.PdfDesigns.FirstOrDefault(d => d.Id == id);
     store.DeletePdfDesign(id);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "PDF-Design gelöscht", design is null ? $"Design ID {id}" : $"Design \"{design.Name}\" (ID {id})");
     return Results.Ok(new { message = "Design gelöscht." });
 });
 
 // Checkliste Templates
 app.MapGet("/api/checklisttemplates", [Authorize] (AuditStore store) => Results.Ok(store.ChecklistTemplates));
-app.MapPost("/api/checklisttemplates", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, CreateChecklistTemplateRequest request) =>
+app.MapPost("/api/checklisttemplates", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, CreateChecklistTemplateRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
     var tmpl = store.CreateChecklistTemplate(request.Name, request.TemplateId ?? 0, request.ColumnsJson ?? "[]");
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Checklisten-Vorlage erstellt", $"Checkliste \"{tmpl.Name}\" (ID {tmpl.Id})");
     return Results.Ok(tmpl);
 });
-app.MapPut("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id, CreateChecklistTemplateRequest request) =>
+app.MapPut("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, int id, CreateChecklistTemplateRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
     var tmpl = store.UpdateChecklistTemplate(id, request.Name ?? string.Empty, request.TemplateId ?? 0, request.ColumnsJson ?? "[]");
-    return tmpl is null ? Results.NotFound() : Results.Ok(tmpl);
+    if (tmpl is null) return Results.NotFound();
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Checklisten-Vorlage bearbeitet", $"Checkliste \"{tmpl.Name}\" (ID {tmpl.Id})");
+    return Results.Ok(tmpl);
 });
-app.MapDelete("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (AuditStore store, int id) =>
+app.MapDelete("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, int id, AuditLogger logger, HttpContext httpContext) =>
 {
+    var tmpl = store.ChecklistTemplates.FirstOrDefault(c => c.Id == id);
     store.DeleteChecklistTemplate(id);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Checklisten-Vorlage gelöscht", tmpl is null ? $"Checkliste ID {id}" : $"Checkliste \"{tmpl.Name}\" (ID {id})");
     return Results.Ok(new { message = "Checkliste gelöscht." });
 });
 
 app.MapGet("/api/users", [Authorize(Policy = "RequireAdminAccess")] (UserStore users) =>
     Results.Ok(users.All.Select(u => new UserSummary(u.Id, u.UserName, u.DisplayName, u.Role, u.IsActive))));
 
-app.MapPost("/api/users", [Authorize(Policy = "RequireAdminAccess")] (CreateUserRequest request, UserStore users) =>
+app.MapPost("/api/users", [Authorize(Policy = "RequireAdminAccess")] async (CreateUserRequest request, UserStore users, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.UserName) || string.IsNullOrWhiteSpace(request.Password))
     {
@@ -625,10 +646,11 @@ app.MapPost("/api/users", [Authorize(Policy = "RequireAdminAccess")] (CreateUser
     }
 
     var user = users.Create(request.UserName, request.Password, request.DisplayName, request.Role);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Benutzer erstellt", $"Benutzer \"{user.UserName}\" (ID {user.Id}, Rolle {user.Role})");
     return Results.Ok(new { user = new UserSummary(user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive) });
 });
 
-app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdminAccess")] (int userId, ResetPasswordRequest request, UserStore users, HttpContext httpContext) =>
+app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdminAccess")] async (int userId, ResetPasswordRequest request, UserStore users, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.NewPassword))
     {
@@ -648,6 +670,7 @@ app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdmin
     }
 
     users.UpdatePassword(userId, request.NewPassword);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Passwort zurückgesetzt", $"Benutzer \"{targetUser.UserName}\" (ID {targetUser.Id})");
     return Results.Ok(new { message = "Passwort erfolgreich zurückgesetzt.", success = true });
 });
 
@@ -680,7 +703,7 @@ app.MapPut("/api/users/{userId:int}/change-password", [Authorize] (int userId, C
     return Results.Ok(new { message = "Passwort erfolgreich geändert.", success = true });
 });
 
-app.MapPut("/api/users/{userId:int}/toggle", [Authorize(Policy = "RequireAdminAccess")] (int userId, UserStore users, HttpContext httpContext) =>
+app.MapPut("/api/users/{userId:int}/toggle", [Authorize(Policy = "RequireAdminAccess")] async (int userId, UserStore users, AuditLogger logger, HttpContext httpContext) =>
 {
     var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
     var targetUser = users.GetById(userId);
@@ -696,10 +719,11 @@ app.MapPut("/api/users/{userId:int}/toggle", [Authorize(Policy = "RequireAdminAc
 
     users.ToggleActive(userId);
     var updated = users.GetById(userId);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Benutzerstatus geändert", $"Benutzer \"{updated!.UserName}\" (ID {updated.Id}) ist jetzt {(updated.IsActive ? "aktiv" : "inaktiv")}");
     return Results.Ok(new { user = new UserSummary(updated!.Id, updated.UserName, updated.DisplayName, updated.Role, updated.IsActive) });
 });
 
-app.MapDelete("/api/users/{userId:int}", [Authorize(Policy = "RequireAdminAccess")] (int userId, UserStore users, HttpContext httpContext) =>
+app.MapDelete("/api/users/{userId:int}", [Authorize(Policy = "RequireAdminAccess")] async (int userId, UserStore users, AuditLogger logger, HttpContext httpContext) =>
 {
     var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
     var targetUser = users.GetById(userId);
@@ -719,6 +743,7 @@ app.MapDelete("/api/users/{userId:int}", [Authorize(Policy = "RequireAdminAccess
     }
 
     users.Delete(userId);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Benutzer gelöscht", $"Benutzer \"{targetUser.UserName}\" (ID {userId})");
     return Results.Ok(new { message = "Benutzer erfolgreich gelöscht." });
 });
 

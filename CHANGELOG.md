@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.7.9] - 2026-10-11
+
+### Logs-Fix, Fehler-Styling, zweigeteilter Feld-Builder, UI-Politur
+
+#### Logs zeigten immer userId 0 — behoben
+- Root-Cause: Das JWT enthält **zwei Claims vom Typ `ClaimTypes.NameIdentifier`** (einmal den Benutzernamen aus `sub`, einmal die echte numerische User-ID) — `FindFirstValue()` griff nicht-deterministisch auf den ersten Treffer zu und lieferte oft den Benutzernamen statt der ID, was bei `int.TryParse` fehlschlug und `userId: 0` ergab
+- `ResolveUserId()` durchsucht jetzt **alle** `NameIdentifier`-Claims und nimmt den ersten, der sich als Ganzzahl parsen lässt
+- Logging-Abdeckung erweitert auf bisher ungeloggte Aktionen: PDF-Designs (Erstellen/Bearbeiten/Löschen), Checklisten-Vorlagen (Erstellen/Bearbeiten/Löschen), Benutzer (Anlegen, Passwort zurücksetzen, Aktiv/Inaktiv umschalten, Löschen)
+- Frontend: Logs-Seite lädt die Einträge jetzt **automatisch** beim Öffnen der Seite (vorher nur per manuellem „🔄 Neu laden"-Klick)
+
+#### Fehlermeldungen waren unformatierter Rohtext — behoben
+- Root-Cause: Die `.alert`-CSS-Klassen für die `<Alert>`-Komponente fehlten **komplett** in `App.css` — dadurch wurden alle Fehler-/Erfolgs-/Hinweis-Banner app-weit (nicht nur bei Audit-Vorlagen) als unformatierter Text mit ❌/× dargestellt
+- Neue Styles für `.alert`, `.alert-error`, `.alert-success`, `.alert-info`, `.alert-warning` ergänzt (roter/grüner/blauer Kasten mit Icon und Schließen-Button, analog zum Login-Fehler)
+- Speichern-Handler für Audit-Vorlagen (Erstellen & Bearbeiten) in try/catch gekapselt und löschen den Fehler-Banner nun zuverlässig bei erfolgreichem Speichern
+
+#### Stale Zustand beim Seitenwechsel behoben
+- Die Datenfelder einer zuvor bearbeiteten Vorlage blieben nach Seitenwechsel und Rückkehr zur Vorlagen-Seite sichtbar, obwohl Name/Beschreibung bereits geleert wurden
+- Der Seitenwechsel-Effekt setzt die Feld-Liste jetzt ebenfalls auf die Standardfelder zurück, sodass „Neue Vorlage" wirklich frisch startet
+
+#### Audit-Vorlagen — zwei getrennte Feld-Bereiche statt Scope-Dropdown
+- Statt eines Dropdowns pro Feld gibt es jetzt **zwei eigenständige Karten**: „🏠 Datenfelder für Räume/Objekte" und „📋 Datenfelder für Grunddaten"
+- Jede Karte hat einen eigenen „+ Feld"-Button (weist automatisch den passenden Scope zu) sowie eigene ↑/↓-Reihenfolge-Pfeile
+- Die Reihenfolge lässt sich jetzt sowohl beim **Erstellen** als auch beim **Bearbeiten** einer Vorlage ändern (vorher nur beim Bearbeiten)
+
+#### Grunddaten — visuelle Trennung
+- Die aus der Vorlage befüllten Grunddaten-Felder sind jetzt in einer eigenen, optisch abgesetzten Karte (`.ground-data-card`) unterhalb der festen Standort-Infotabelle dargestellt — sowohl im Audit-Bereich als auch in der Datenablage
+
+#### Sonstiges
+- Persistenz von Kategorien und PDF-Designs über `docker-compose down/up --build` hinweg erneut verifiziert (funktioniert korrekt; das einmalige „Design verschwunden"-Erlebnis war durch die Einführung des Storage-Volumes in der Vorversion verursacht und tritt nicht erneut auf)
+
 ## [1.7.8] - 2026-10-11
 
 ### Grunddaten-Felder, Raumliste Tabelle, Bilder-Fix, Logging, Persistenz

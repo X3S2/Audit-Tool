@@ -10,5 +10,6 @@ backend/obj/
 storage/backups/*
 storage/exports/*
 storage/*.db
+storage/refresh_tokens.json
 !storage/backups/.gitkeep
 !storage/exports/.gitkeep

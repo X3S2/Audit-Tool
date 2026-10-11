@@ -220,6 +220,10 @@ const encodeTemplateFieldType = (field: EditableTemplateField) => {
   return encoded
 }
 
+const DEFAULT_TEMPLATE_FIELDS: EditableTemplateField[] = [
+  { name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }
+]
+
 const parseStringMap = (raw: string | undefined) => {
   if (!raw) {
     return {} as Record<string, string>
@@ -276,9 +280,7 @@ function App() {
   const [logs, setLogs] = useState<Array<{timestamp: string; action: string; details?: string; userId: number}>>([])
   const [logFilter, setLogFilter] = useState('')
   // Vorlagen field builder state
-  const [templateFields, setTemplateFields] = useState<EditableTemplateField[]>([
-    { name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }
-  ])
+  const [templateFields, setTemplateFields] = useState<EditableTemplateField[]>(DEFAULT_TEMPLATE_FIELDS)
   // Export mode
   const [exportMode, setExportMode] = useState<'site' | 'all'>('site')
   // PDF Designer state
@@ -361,6 +363,9 @@ function App() {
     setRoomFieldValues({})
     setSiteGroundDataValues({})
     setEditingRoomId(null)
+    // Reset Vorlagen-Feldbuilder, sonst bleiben Datenfelder einer zuvor bearbeiteten
+    // Vorlage sichtbar, obwohl Name/Beschreibung bereits zurückgesetzt wurden
+    setTemplateFields(DEFAULT_TEMPLATE_FIELDS)
   }, [page])
 
   useEffect(() => {
@@ -485,6 +490,23 @@ function App() {
 
     void loadUsers()
   }, [session])
+
+  useEffect(() => {
+    if (!session || page !== 'admin-logs' || !canManageUsers(session.user.role)) {
+      return
+    }
+
+    const loadLogs = async () => {
+      try {
+        const res = await apiRequest<Array<{ timestamp: string; action: string; details?: string; userId: number }>>('/api/admin/logs', session)
+        setLogs(res)
+      } catch (apiError) {
+        setError(apiError instanceof Error ? apiError.message : 'Logs konnten nicht geladen werden.')
+      }
+    }
+
+    void loadLogs()
+  }, [session, page])
 
   const handleLogin = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -1016,10 +1038,75 @@ function App() {
 
       setTemplates((previous) => [...previous, template])
       setTemplateForm({ name: '', description: '' })
-      setTemplateFields([{ name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }])
+      setTemplateFields(DEFAULT_TEMPLATE_FIELDS)
+      setError('')
+      setShowErrorBanner(false)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Vorlage konnte nicht gespeichert werden.')
     }
+  }
+
+  const moveTemplateFieldInScope = (idx: number, direction: -1 | 1) => {
+    setTemplateFields((prev) => {
+      const scope = prev[idx].scope
+      const sameScopeIndices = prev.map((_, i) => i).filter((i) => prev[i].scope === scope)
+      const posInScope = sameScopeIndices.indexOf(idx)
+      const swapWithPos = posInScope + direction
+      if (swapWithPos < 0 || swapWithPos >= sameScopeIndices.length) {
+        return prev
+      }
+      const swapIdx = sameScopeIndices[swapWithPos]
+      const next = [...prev]
+      ;[next[idx], next[swapIdx]] = [next[swapIdx], next[idx]]
+      return next.map((f, i) => ({ ...f, order: i + 1 }))
+    })
+  }
+
+  const renderTemplateFieldBuilderSection = (scope: TemplateFieldScope) => {
+    const indices = templateFields.map((_, i) => i).filter((i) => templateFields[i].scope === scope)
+    return (
+      <div className="field-builder-section">
+        <div className="field-builder-section-header">
+          <strong>{scope === 'room' ? '🏠 Datenfelder für Räume/Objekte' : '📋 Datenfelder für Grunddaten'}</strong>
+          <button type="button" className="secondary-button" style={{ padding: '5px 10px', fontSize: '0.82rem' }}
+            onClick={() => setTemplateFields((p) => [...p, { name: '', type: 'text', order: p.length + 1, required: true, dropdownOptions: '', scope }])}>+ Feld</button>
+        </div>
+        <div className="field-builder">
+          {indices.length === 0 && <p className="empty-hint">Noch keine Felder.</p>}
+          {indices.map((idx, pos) => {
+            const field = templateFields[idx]
+            return (
+              <div key={idx} className="field-builder-item">
+                <div className="field-builder-row">
+                  <span className="field-order" style={{ cursor: pos === 0 ? 'default' : 'pointer', opacity: pos === 0 ? 0.3 : 1, userSelect: 'none' }} title="Nach oben"
+                    onClick={() => moveTemplateFieldInScope(idx, -1)}>↑</span>
+                  <span className="field-order" style={{ cursor: pos === indices.length - 1 ? 'default' : 'pointer', opacity: pos === indices.length - 1 ? 0.3 : 1, userSelect: 'none' }} title="Nach unten"
+                    onClick={() => moveTemplateFieldInScope(idx, 1)}>↓</span>
+                  <span className="field-order">{pos + 1}</span>
+                  <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e => setTemplateFields(p => p.map((f, i) => i === idx ? { ...f, name: e.target.value } : f))} />
+                  <select className="field-type-select" value={field.type} onChange={e => setTemplateFields(p => p.map((f, i) => i === idx ? { ...f, type: e.target.value } : f))}>
+                    <option value="text">Text</option>
+                    <option value="number">Zahl</option>
+                    <option value="dropdown">▼ Auswahl</option>
+                    <option value="textarea">Langer Text</option>
+                    <option value="checkbox">☑ Checkbox</option>
+                    <option value="image">📷 Bild</option>
+                  </select>
+                  <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e => setTemplateFields(p => p.map((f, i) => i === idx ? { ...f, required: e.target.checked } : f))} />Pflicht</label>
+                  <button type="button" className="danger-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => setTemplateFields(p => p.filter((_, i) => i !== idx).map((f, i) => ({ ...f, order: i + 1 })))}>✕</button>
+                </div>
+                {field.type === 'dropdown' && (
+                  <div className="dropdown-options-row">
+                    <span style={{ fontSize: '0.82rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>Optionen:</span>
+                    <input placeholder="Option 1, Option 2..." value={field.dropdownOptions} onChange={e => setTemplateFields(p => p.map((f, i) => i === idx ? { ...f, dropdownOptions: e.target.value } : f))} style={{ flex: 1, padding: '5px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '7px', color: 'var(--text-h)', fontSize: '0.88rem' }} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   const isAdmin = session ? canManageUsers(session.user.role) : false
@@ -1533,7 +1620,7 @@ function App() {
                           </div>
                           {/* Vorlage-Grunddatenfelder (scope:site) */}
                           {auditSelectedTemplate.fields.filter(f=>parseTemplateFieldType(f.type).scope==='site').length > 0 && (
-                            <div style={{marginTop:'24px',paddingTop:'20px',borderTop:'1px solid var(--border)'}}>
+                            <div className="ground-data-card">
                               <h4 style={{margin:'0 0 14px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Grunddaten-Felder aus Vorlage „{auditSelectedTemplate.name}"</h4>
                               <div className="form-grid">
                                 {auditSelectedTemplate.fields.filter(f=>parseTemplateFieldType(f.type).scope==='site').map(field=>{
@@ -1708,7 +1795,7 @@ function App() {
                         const keys = Object.keys(groundData).filter(k=>groundData[k])
                         if (keys.length === 0) return null
                         return (
-                          <div style={{marginTop:'20px',paddingTop:'16px',borderTop:'1px solid var(--border)'}}>
+                          <div className="ground-data-card">
                             <h4 style={{margin:'0 0 12px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Erfasste Grunddaten</h4>
                             <div className="info-grid">
                               {keys.map(key=>(
@@ -1852,44 +1939,8 @@ function App() {
                     <label>Beschreibung<input value={editingTemplate.description} onChange={e=>setEditingTemplate(p=>p?{...p,description:e.target.value}:p)} /></label>
                   </div>
                   <div style={{marginTop:'16px'}}>
-                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                      <strong>Datenfelder</strong>
-                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:'',scope:'room'}])}>+ Feld</button>
-                    </div>
-                    <div className="field-builder">
-                      {templateFields.map((field,idx)=>(
-                        <div key={idx} className="field-builder-item">
-                          <div className="field-builder-row">
-                            <span className="field-order" style={{cursor:'pointer',userSelect:'none'}} title="Nach oben"
-                              onClick={()=>setTemplateFields(p=>{if(idx===0)return p;const n=[...p];[n[idx-1],n[idx]]=[n[idx],n[idx-1]];return n.map((f,i)=>({...f,order:i+1}))})}>↑</span>
-                            <span className="field-order" style={{cursor:'pointer',userSelect:'none'}} title="Nach unten"
-                              onClick={()=>setTemplateFields(p=>{if(idx===p.length-1)return p;const n=[...p];[n[idx],n[idx+1]]=[n[idx+1],n[idx]];return n.map((f,i)=>({...f,order:i+1}))})}>↓</span>
-                            <span className="field-order">{field.order}</span>
-                            <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
-                            <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
-                              <option value="text">Text</option>
-                              <option value="number">Zahl</option>
-                              <option value="dropdown">▼ Auswahl</option>
-                              <option value="textarea">Langer Text</option>
-                              <option value="checkbox">☑ Checkbox</option>
-                              <option value="image">📷 Bild</option>
-                            </select>
-                            <select className="field-scope-select" value={field.scope} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,scope:e.target.value as TemplateFieldScope}:f))}>
-                              <option value="room">Räume/Objekte</option>
-                              <option value="site">Grunddaten</option>
-                            </select>
-                            <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />Pflicht</label>
-                            <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
-                          </div>
-                          {field.type==='dropdown'&&(
-                            <div className="dropdown-options-row">
-                              <span style={{fontSize:'0.82rem',color:'var(--muted)',whiteSpace:'nowrap'}}>Optionen:</span>
-                              <input placeholder="Option 1, Option 2..." value={field.dropdownOptions} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,dropdownOptions:e.target.value}:f))} style={{flex:1,padding:'5px 10px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'7px',color:'var(--text-h)',fontSize:'0.88rem'}} />
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    {renderTemplateFieldBuilderSection('room')}
+                    {renderTemplateFieldBuilderSection('site')}
                   </div>
                   <div style={{display:'flex',gap:'8px',marginTop:'16px'}}>
                     <button type="button" className="primary-button" onClick={async()=>{
@@ -1898,17 +1949,25 @@ function App() {
                         setError('Der Vorlagenname ist erforderlich.')
                         return
                       }
-                      const fields=templateFields
-                        .filter(f=>f.name.trim())
-                        .map((f,index)=>({name:f.name.trim(),type:encodeTemplateFieldType(f),order:index+1,relevantForProgress:f.required}))
-                      const res=await apiRequest<Template>(`/api/templates/${editingTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingTemplate.name.trim(),description:editingTemplate.description.trim(),fields})})
-                      setTemplates(p=>p.map(t=>t.id===res.id?res:t))
-                      setEditingTemplate(null)
-                      setTemplateFields([{ name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }])
+                      try {
+                        const fields=templateFields
+                          .filter(f=>f.name.trim())
+                          .map((f,index)=>({name:f.name.trim(),type:encodeTemplateFieldType(f),order:index+1,relevantForProgress:f.required}))
+                        const res=await apiRequest<Template>(`/api/templates/${editingTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingTemplate.name.trim(),description:editingTemplate.description.trim(),fields})})
+                        setTemplates(p=>p.map(t=>t.id===res.id?res:t))
+                        setEditingTemplate(null)
+                        setTemplateFields(DEFAULT_TEMPLATE_FIELDS)
+                        setError('')
+                        setShowErrorBanner(false)
+                      } catch (apiError) {
+                        setError(apiError instanceof Error ? apiError.message : 'Vorlage konnte nicht gespeichert werden.')
+                      }
                     }}>Speichern</button>
                     <button type="button" className="secondary-button" onClick={()=>{
                       setEditingTemplate(null)
-                      setTemplateFields([{ name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }])
+                      setTemplateFields(DEFAULT_TEMPLATE_FIELDS)
+                      setError('')
+                      setShowErrorBanner(false)
                     }}>Abbrechen</button>
                   </div>
                 </div>
@@ -1920,31 +1979,8 @@ function App() {
                     <label>Beschreibung<input value={templateForm.description} onChange={e=>setTemplateForm(p=>({...p,description:e.target.value}))} placeholder="Kurze Beschreibung" /></label>
                   </div>
                   <div style={{marginTop:'16px'}}>
-                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                      <strong>Datenfelder</strong>
-                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:'',scope:'room'}])}>+ Feld</button>
-                    </div>
-                    <div className="field-builder">
-                      {templateFields.map((field,idx)=>(
-                        <div key={idx} className="field-builder-item">
-                          <div className="field-builder-row">
-                            <span className="field-order">{field.order}</span>
-                            <input className="field-name-input" placeholder="Feldname" value={field.name} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,name:e.target.value}:f))} />
-                            <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
-                              <option value="text">Text</option><option value="number">Zahl</option><option value="dropdown">▼ Auswahl</option><option value="textarea">Langer Text</option><option value="checkbox">☑ Checkbox</option><option value="image">📷 Bild</option>
-                            </select>
-                            <select className="field-scope-select" value={field.scope} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,scope:e.target.value as TemplateFieldScope}:f))}>
-                              <option value="room">Räume/Objekte</option>
-                              <option value="site">Grunddaten</option>
-                            </select>
-                            <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />Pflicht</label>
-                            <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
-                          </div>
-                          {field.type==='dropdown'&&(<div className="dropdown-options-row"><span style={{fontSize:'0.82rem',color:'var(--muted)',whiteSpace:'nowrap'}}>Optionen:</span><input placeholder="Option 1, Option 2..." value={field.dropdownOptions} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,dropdownOptions:e.target.value}:f))} style={{flex:1,padding:'5px 10px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'7px',color:'var(--text-h)',fontSize:'0.88rem'}} /></div>)}
-                        </div>
-                      ))}
-                      {templateFields.length===0&&<p className="empty-hint">Noch keine Felder.</p>}
-                    </div>
+                    {renderTemplateFieldBuilderSection('room')}
+                    {renderTemplateFieldBuilderSection('site')}
                   </div>
                   <button type="submit" className="primary-button" style={{marginTop:'16px'}}>Vorlage speichern</button>
                 </form>
