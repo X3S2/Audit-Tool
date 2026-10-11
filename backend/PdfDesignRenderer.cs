@@ -167,6 +167,15 @@ public static class PdfDesignRenderer
         var footerText = ResolveFooter(page, config);
         headerFooterMap[pdfDocument.GetPageNumber(pdfPage)] = (headerText ?? "", footerText ?? "", ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
 
+        // All repeat-blocks on this logical page are iterated together in lock-step (same room index, shared
+        // page-break decisions), so that two or more repeat-blocks placed on one page (e.g. via "Block duplizieren")
+        // always stay in sync instead of each independently looping over every room and creating its own pages.
+        var repeatBlocksOnPage = page.Elements.Where(e => e.Type == "repeat-block").ToList();
+        if (repeatBlocksOnPage.Count > 0)
+        {
+            RenderRepeatBlocksForPage(pdfDocument, pdfPage, page, repeatBlocksOnPage, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
+        }
+
         foreach (var element in page.Elements)
         {
             switch (element.Type)
@@ -175,7 +184,7 @@ public static class PdfDesignRenderer
                     RenderTable(pdfDocument, pdfPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
                     break;
                 case "repeat-block":
-                    RenderRepeatBlock(pdfDocument, pdfPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
+                    // Handled once, together with any sibling repeat-blocks, via RenderRepeatBlocksForPage above.
                     break;
                 case "divider":
                     RenderDivider(pdfPage, element, pageHeight);
@@ -424,162 +433,170 @@ public static class PdfDesignRenderer
         _ => key
     };
 
-    private static void RenderRepeatBlock(
-        PdfDocument pdfDocument, PdfPage startPage, PageDesign page, DesignElement element,
+    /// <summary>
+    /// Renders every repeat-block on a logical page together, in lock-step: all blocks render the same room on the
+    /// same iteration, and a page-break is shared (if any block would overflow, ALL blocks move to a new page at
+    /// once). This keeps two or more repeat-blocks placed on one page (e.g. via "Block duplizieren") visually in
+    /// sync instead of each one independently looping over every room and creating its own, unrelated pages - which
+    /// previously caused scrambled/duplicated output when more than one repeat-block existed on the same page.
+    /// Each block restarts at its own originally-designed vertical position on every new page (not a shared
+    /// top-of-page offset), so the layout the user designed is preserved across page breaks.
+    /// </summary>
+    private static void RenderRepeatBlocksForPage(
+        PdfDocument pdfDocument, PdfPage startPage, PageDesign page, List<DesignElement> blocks,
         Dictionary<string, string> variables, List<RoomRenderData> rooms, Dictionary<string, string> fieldTypesByName,
         PageSize pageSize, Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap, DesignConfig config)
     {
-        if (rooms.Count == 0) return;
-
-        if (element.Children is { Count: > 0 })
-        {
-            RenderRepeatBlockFreeForm(pdfDocument, startPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
-            return;
-        }
-
-        var fields = element.Fields ?? new List<string>();
-        if (fields.Count == 0) return;
+        if (rooms.Count == 0 || blocks.Count == 0) return;
 
         var currentPage = startPage;
-        var rect = ToRect(element, pageSize.GetHeight());
-        var blockHeight = rect.GetHeight();
-        var y = rect.GetY() + rect.GetHeight();
         var bottomLimit = Margin + FooterBandHeight;
+
+        // Precompute each block's rect/height and its own starting Y (the vertical position it was designed at).
+        var rects = blocks.ToDictionary(b => b, b => ToRect(b, pageSize.GetHeight()));
+        var heights = blocks.ToDictionary(b => b, b => rects[b].GetHeight());
+        var startY = blocks.ToDictionary(b => b, b => rects[b].GetY() + rects[b].GetHeight());
+        var cursorY = blocks.ToDictionary(b => b, b => startY[b]);
 
         foreach (var room in rooms)
         {
-            if (y - blockHeight < bottomLimit)
+            var needsNewPage = blocks.Any(b => cursorY[b] - heights[b] < bottomLimit);
+            if (needsNewPage)
             {
                 currentPage = pdfDocument.AddNewPage(pageSize);
                 headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (ResolveHeader(page, config), ResolveFooter(page, config), ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
-                y = pageSize.GetHeight() - Margin - HeaderBandHeight - 8;
+                foreach (var b in blocks) cursorY[b] = startY[b];
             }
 
-            var blockRect = new Rectangle(rect.GetX(), y - blockHeight, rect.GetWidth(), blockHeight);
-            using (var borderCanvas = new Canvas(currentPage, blockRect))
+            foreach (var block in blocks)
             {
-                var pdfCanvas = borderCanvas.GetPdfCanvas();
-                pdfCanvas.SaveState();
-                pdfCanvas.SetStrokeColor(ColorFromHex("#e2e8f0"));
-                pdfCanvas.Rectangle(blockRect.GetX(), blockRect.GetY(), blockRect.GetWidth(), blockRect.GetHeight());
-                pdfCanvas.Stroke();
-                pdfCanvas.RestoreState();
-            }
+                var rect = rects[block];
+                var blockHeight = heights[block];
+                var blockRect = new Rectangle(rect.GetX(), cursorY[block] - blockHeight, rect.GetWidth(), blockHeight);
 
-            // Determine if one of the selected fields is an image field -> render it as a photo on the left.
-            var imageField = fields.FirstOrDefault(f => fieldTypesByName.TryGetValue(f, out var t) && t == "image");
-            var textFields = fields.Where(f => f != imageField).ToList();
-            var photoWidth = imageField != null ? Math.Min(blockHeight * 1.2f, rect.GetWidth() * 0.35f) : 0f;
-
-            if (imageField != null)
-            {
-                var images = SplitImageValue(ResolveFieldValue(room, imageField, variables));
-                if (images.Count > 0)
+                if (block.Children is { Count: > 0 })
                 {
-                    try
+                    RenderFreeFormBlockIteration(currentPage, block, blockRect, room, variables, fieldTypesByName);
+                }
+                else
+                {
+                    var fields = block.Fields ?? new List<string>();
+                    if (fields.Count > 0)
                     {
-                        var bytes = DecodeDataUrl(images[0]);
-                        var img = new Image(ImageDataFactory.Create(bytes));
-                        var imgRect = new Rectangle(blockRect.GetX() + 6, blockRect.GetY() + 6, photoWidth - 12, blockHeight - 12);
-                        img.ScaleToFit(imgRect.GetWidth(), imgRect.GetHeight());
-                        using var imgCanvas = new Canvas(currentPage, imgRect);
-                        imgCanvas.Add(img);
+                        RenderLegacyBlockIteration(currentPage, fields, blockRect, room, variables, fieldTypesByName);
                     }
-                    catch { /* skip broken image */ }
                 }
-            }
 
-            var textRect = new Rectangle(blockRect.GetX() + photoWidth + 8, blockRect.GetY() + 6, blockRect.GetWidth() - photoWidth - 16, blockHeight - 12);
-            using (var textCanvas = new Canvas(currentPage, textRect))
+                cursorY[block] -= blockHeight;
+            }
+        }
+    }
+
+    /// <summary>Renders exactly one room's data into the legacy auto-layout (border + optional photo on the left + stacked "Label: value" lines) for a single repeat-block iteration.</summary>
+    private static void RenderLegacyBlockIteration(
+        PdfPage currentPage, List<string> fields, Rectangle blockRect, RoomRenderData room,
+        Dictionary<string, string> variables, Dictionary<string, string> fieldTypesByName)
+    {
+        var blockHeight = blockRect.GetHeight();
+        using (var borderCanvas = new Canvas(currentPage, blockRect))
+        {
+            var pdfCanvas = borderCanvas.GetPdfCanvas();
+            pdfCanvas.SaveState();
+            pdfCanvas.SetStrokeColor(ColorFromHex("#e2e8f0"));
+            pdfCanvas.Rectangle(blockRect.GetX(), blockRect.GetY(), blockRect.GetWidth(), blockRect.GetHeight());
+            pdfCanvas.Stroke();
+            pdfCanvas.RestoreState();
+        }
+
+        // Determine if one of the selected fields is an image field -> render it as a photo on the left.
+        var imageField = fields.FirstOrDefault(f => fieldTypesByName.TryGetValue(f, out var t) && t == "image");
+        var textFields = fields.Where(f => f != imageField).ToList();
+        var photoWidth = imageField != null ? Math.Min(blockHeight * 1.2f, blockRect.GetWidth() * 0.35f) : 0f;
+
+        if (imageField != null)
+        {
+            var images = SplitImageValue(ResolveFieldValue(room, imageField, variables));
+            if (images.Count > 0)
             {
-                foreach (var field in textFields)
+                try
                 {
-                    var value = ResolveFieldValue(room, field, variables);
-                    textCanvas.Add(new Paragraph($"{FieldLabel(field)}: {value}").SetFontSize(10).SetMultipliedLeading(1.2f));
+                    var bytes = DecodeDataUrl(images[0]);
+                    var img = new Image(ImageDataFactory.Create(bytes));
+                    var imgRect = new Rectangle(blockRect.GetX() + 6, blockRect.GetY() + 6, photoWidth - 12, blockHeight - 12);
+                    img.ScaleToFit(imgRect.GetWidth(), imgRect.GetHeight());
+                    using var imgCanvas = new Canvas(currentPage, imgRect);
+                    imgCanvas.Add(img);
                 }
+                catch { /* skip broken image */ }
             }
+        }
 
-            y -= blockHeight;
+        var textRect = new Rectangle(blockRect.GetX() + photoWidth + 8, blockRect.GetY() + 6, blockRect.GetWidth() - photoWidth - 16, blockHeight - 12);
+        using (var textCanvas = new Canvas(currentPage, textRect))
+        {
+            foreach (var field in textFields)
+            {
+                var value = ResolveFieldValue(room, field, variables);
+                textCanvas.Add(new Paragraph($"{FieldLabel(field)}: {value}").SetFontSize(10).SetMultipliedLeading(1.2f));
+            }
         }
     }
 
     /// <summary>
-    /// Free-form repeat-block renderer used when the block has user-arranged sub-elements (<see cref="DesignElement.Children"/>).
-    /// Each child is positioned relative to the block's own top-left corner (a "mini canvas" inside the block) and is
-    /// repeated once per room, with the same page-overflow pagination behaviour as the legacy auto-layout.
+    /// Renders exactly one room's data into a free-form repeat-block's user-arranged sub-elements
+    /// (<see cref="DesignElement.Children"/>), positioned relative to the block's own top-left corner, for a
+    /// single repeat-block iteration.
     /// </summary>
-    private static void RenderRepeatBlockFreeForm(
-        PdfDocument pdfDocument, PdfPage startPage, PageDesign page, DesignElement element,
-        Dictionary<string, string> variables, List<RoomRenderData> rooms, Dictionary<string, string> fieldTypesByName,
-        PageSize pageSize, Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap, DesignConfig config)
+    private static void RenderFreeFormBlockIteration(
+        PdfPage currentPage, DesignElement element, Rectangle blockRect, RoomRenderData room,
+        Dictionary<string, string> variables, Dictionary<string, string> fieldTypesByName)
     {
-        var currentPage = startPage;
-        var rect = ToRect(element, pageSize.GetHeight());
-        var blockHeight = rect.GetHeight();
-        var y = rect.GetY() + rect.GetHeight();
-        var bottomLimit = Margin + FooterBandHeight;
-        var children = element.Children!;
-
-        foreach (var room in rooms)
+        foreach (var child in element.Children!)
         {
-            if (y - blockHeight < bottomLimit)
+            var childRect = ToChildRect(child, blockRect);
+            switch (child.Type)
             {
-                currentPage = pdfDocument.AddNewPage(pageSize);
-                headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (ResolveHeader(page, config), ResolveFooter(page, config), ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
-                y = pageSize.GetHeight() - Margin - HeaderBandHeight - 8;
-            }
-
-            var blockRect = new Rectangle(rect.GetX(), y - blockHeight, rect.GetWidth(), blockHeight);
-
-            foreach (var child in children)
-            {
-                var childRect = ToChildRect(child, blockRect);
-                switch (child.Type)
+                case "divider":
+                    RenderDividerRect(currentPage, child.Style, childRect);
+                    break;
+                case "rectangle":
                 {
-                    case "divider":
-                        RenderDividerRect(currentPage, child.Style, childRect);
-                        break;
-                    case "rectangle":
+                    using var boxCanvas = new Canvas(currentPage, childRect);
+                    ApplyBox(boxCanvas, child.Style, childRect);
+                    break;
+                }
+                case "image-static":
+                    RenderImageInRect(currentPage, child.ImageData, childRect);
+                    break;
+                case "repeat-field":
+                {
+                    var value = ResolveFieldValue(room, child.FieldKey ?? "", variables);
+                    var isImageField = !string.IsNullOrEmpty(child.FieldKey) && fieldTypesByName.TryGetValue(child.FieldKey, out var fType) && fType == "image";
+                    if (isImageField)
                     {
-                        using var boxCanvas = new Canvas(currentPage, childRect);
-                        ApplyBox(boxCanvas, child.Style, childRect);
-                        break;
+                        var images = SplitImageValue(value);
+                        if (images.Count == 0) { if (child.HideIfEmpty) continue; break; }
+                        RenderImageInRect(currentPage, images[0], childRect);
                     }
-                    case "image-static":
-                        RenderImageInRect(currentPage, child.ImageData, childRect);
-                        break;
-                    case "repeat-field":
+                    else
                     {
-                        var value = ResolveFieldValue(room, child.FieldKey ?? "", variables);
-                        var isImageField = !string.IsNullOrEmpty(child.FieldKey) && fieldTypesByName.TryGetValue(child.FieldKey, out var fType) && fType == "image";
-                        if (isImageField)
-                        {
-                            var images = SplitImageValue(value);
-                            if (images.Count == 0) { if (child.HideIfEmpty) continue; break; }
-                            RenderImageInRect(currentPage, images[0], childRect);
-                        }
-                        else
-                        {
-                            if (child.HideIfEmpty && string.IsNullOrWhiteSpace(value)) continue;
-                            var text = $"{child.Content}{value}";
-                            using var canvas = new Canvas(currentPage, childRect);
-                            ApplyBox(canvas, child.Style, childRect);
-                            canvas.Add(BuildStyledParagraph(text, child.Style));
-                        }
-                        break;
-                    }
-                    default: // "text" and any other textual child kind: static text, only global variables substituted
-                    {
-                        var text = Substitute(child.Content, variables);
+                        if (child.HideIfEmpty && string.IsNullOrWhiteSpace(value)) continue;
+                        var text = $"{child.Content}{value}";
                         using var canvas = new Canvas(currentPage, childRect);
                         ApplyBox(canvas, child.Style, childRect);
                         canvas.Add(BuildStyledParagraph(text, child.Style));
-                        break;
                     }
+                    break;
+                }
+                default: // "text" and any other textual child kind: static text, only global variables substituted
+                {
+                    var text = Substitute(child.Content, variables);
+                    using var canvas = new Canvas(currentPage, childRect);
+                    ApplyBox(canvas, child.Style, childRect);
+                    canvas.Add(BuildStyledParagraph(text, child.Style));
+                    break;
                 }
             }
-
-            y -= blockHeight;
         }
     }
 

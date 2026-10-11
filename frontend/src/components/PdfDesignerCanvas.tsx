@@ -176,6 +176,29 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
     setSelectedBand(null)
   }
 
+  const movePage = (idx: number, direction: -1 | 1) => {
+    const targetIdx = idx + direction
+    if (targetIdx < 0 || targetIdx >= pages.length) return
+    const newPages = [...pages]
+    const [moved] = newPages.splice(idx, 1)
+    newPages.splice(targetIdx, 0, moved)
+    onPagesChange(newPages)
+    setCurrentPageIdx(targetIdx)
+  }
+
+  const duplicateEl = () => {
+    if (!selectedEl) return
+    const clone: DesignElement = JSON.parse(JSON.stringify(selectedEl))
+    clone.id = `el-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    clone.x = Math.min(pageW - clone.width, selectedEl.x + 16)
+    clone.y = Math.min(pageH - clone.height, selectedEl.y + 16)
+    if (clone.children) {
+      clone.children = clone.children.map(c => ({ ...c, id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }))
+    }
+    updateElements([...elements, clone])
+    setSelected(clone.id)
+  }
+
   // Mouse drag handlers
   const onMouseDown = (e: React.MouseEvent, id: string) => {
     if (e.button !== 0) return
@@ -387,6 +410,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <button type="button" className="pdf-tool-btn" onClick={() => setShowGlobalSettings(s => !s)}>⚙ Kopf/Fuß</button>
+          {selected && <button type="button" className="pdf-tool-btn" title="Dieses Element kopieren" onClick={duplicateEl}>⧉ Duplizieren</button>}
           {selected && <button type="button" className="pdf-tool-btn danger" onClick={deleteEl}>🗑 Entfernen</button>}
         </div>
       </div>
@@ -451,20 +475,27 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
               <div className="pdf-page-thumb-preview" style={{ aspectRatio: p.orientation === 'landscape' ? '1.41/1' : '1/1.41' }}>
                 <span style={{ fontSize: 8, color: '#94a3b8', pointerEvents: 'none' }}>{idx + 1}</span>
               </div>
-              <div className="pdf-page-thumb-label">
-                <input
-                  value={p.name}
-                  onChange={e => onPagesChange(pages.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))}
-                  onClick={e => e.stopPropagation()}
-                  style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text-h)', fontSize: '0.8rem', width: '100%' }}
-                />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <div className="pdf-page-thumb-label" style={{ flex: 1, minWidth: 0 }}>
+                  <input
+                    value={p.name}
+                    onChange={e => onPagesChange(pages.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))}
+                    onClick={e => e.stopPropagation()}
+                    style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text-h)', fontSize: '0.8rem', width: '100%' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  <button type="button" title="Seite nach oben verschieben" disabled={idx === 0} onClick={e => { e.stopPropagation(); movePage(idx, -1) }} style={{ background: 'none', border: 'none', color: idx === 0 ? 'var(--border)' : 'var(--muted)', cursor: idx === 0 ? 'default' : 'pointer', padding: '0 4px', fontSize: '0.7rem', lineHeight: 1 }}>▲</button>
+                  <button type="button" title="Seite nach unten verschieben" disabled={idx === pages.length - 1} onClick={e => { e.stopPropagation(); movePage(idx, 1) }} style={{ background: 'none', border: 'none', color: idx === pages.length - 1 ? 'var(--border)' : 'var(--muted)', cursor: idx === pages.length - 1 ? 'default' : 'pointer', padding: '0 4px', fontSize: '0.7rem', lineHeight: 1 }}>▼</button>
+                </div>
+                {pages.length > 1 && (
+                  <button type="button" title="Seite löschen" onClick={e => { e.stopPropagation(); deletePage(idx) }} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: '2px 4px', fontSize: '0.8rem' }}>✕</button>
+                )}
               </div>
-              {pages.length > 1 && (
-                <button type="button" onClick={e => { e.stopPropagation(); deletePage(idx) }} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: '2px 4px', fontSize: '0.8rem' }}>✕</button>
-              )}
             </div>
           ))}
         </div>
+
 
         {/* Canvas area */}
         <div className="pdf-canvas-scroll">

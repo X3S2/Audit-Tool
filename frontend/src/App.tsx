@@ -1,4 +1,4 @@
-﻿import { Fragment, useEffect, useRef, useState } from 'react'
+﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import './theme.css'
 import './App.css'
 import { compressImage } from './imageCompression'
@@ -438,6 +438,32 @@ function App() {
   const [checklistValues, setChecklistValues] = useState<ChecklistValue[]>([])
   const [checklistCellOverrides, setChecklistCellOverrides] = useState<Record<string, string>>({})
 
+  // fix006: Kein vollständiges Live-Sync (wie bei Checklisten), aber ein gezieltes Nachladen von
+  // Kategorien/Standorten/Vorlagen/Räumen/Audits beim Seitenwechsel, beim Betreten eines Standorts und
+  // nach dem eigenen Speichern – damit Änderungen anderer Benutzer sichtbar werden, ohne dass man
+  // die Seite per Strg+R manuell neu laden muss.
+  const refreshCoreData = useCallback(async () => {
+    if (!session) return
+    try {
+      const [categoryData, siteData, templateData, roomData, auditData] = await Promise.all([
+        apiRequest<Category[]>('/api/categories', session),
+        apiRequest<Site[]>('/api/standorte', session),
+        apiRequest<Template[]>('/api/templates', session),
+        apiRequest<Room[]>('/api/rooms?all=true', session),
+        apiRequest<AuditInstance[]>('/api/audits', session)
+      ])
+      setCategories(categoryData)
+      setSites(siteData)
+      setTemplates(templateData)
+      setRooms(roomData)
+      setAudits(auditData)
+      setAuditSelectedSite(previous => previous ? (siteData.find(s => s.id === previous.id) ?? previous) : previous)
+      setDatenablageSite(previous => previous ? (siteData.find(s => s.id === previous.id) ?? previous) : previous)
+    } catch {
+      // Stille Fehlerbehandlung: Hintergrund-Refresh soll bestehende Eingaben nicht stören
+    }
+  }, [session])
+
   useEffect(() => {
     document.body.dataset.theme = theme
     document.documentElement.className = theme
@@ -481,7 +507,10 @@ function App() {
     setNewFolderName('')
     setRenamingDocId(null)
     setShowDocArchive(false)
-  }, [page])
+    // fix006: Beim Wechsel der Subseite aktuelle Daten vom Server nachladen, damit
+    // Änderungen anderer Benutzer sichtbar werden statt nur den Stand vom Login zu zeigen.
+    void refreshCoreData()
+  }, [page, refreshCoreData])
 
   useEffect(() => {
     if (!auditSelectedSite) {
@@ -489,13 +518,41 @@ function App() {
       return
     }
 
+    // Vorläufig den lokal bekannten Stand zeigen, damit die UI nicht leer aufblitzt...
     setSiteGroundDataValues(parseStringMap(auditSelectedSite.groundDataJson))
     setDocGenTitle('')
     setDocGenPdfDesignId('')
     setDocGenAuditId(null)
     setDocCurrentFolderId(0)
     setShowDocArchive(false)
-  }, [auditSelectedSite?.id])
+
+    // fix006: ...und sofort frische Räume/Grunddaten vom Server nachladen (z.B. falls ein Kollege
+    // parallel am selben Standort etwas eingetragen hat), statt auf dem beim Login geladenen,
+    // möglicherweise veralteten Stand sitzen zu bleiben.
+    const siteId = auditSelectedSite.id
+    let cancelled = false
+    if (session) {
+      void (async () => {
+        try {
+          const [roomData, siteData] = await Promise.all([
+            apiRequest<Room[]>('/api/rooms?all=true', session),
+            apiRequest<Site[]>('/api/standorte', session)
+          ])
+          if (cancelled) return
+          setRooms(roomData)
+          setSites(siteData)
+          const freshSite = siteData.find(s => s.id === siteId)
+          if (freshSite) {
+            setAuditSelectedSite(freshSite)
+            setSiteGroundDataValues(parseStringMap(freshSite.groundDataJson))
+          }
+        } catch {
+          // Stille Fehlerbehandlung: lokal bekannter Stand bleibt sichtbar
+        }
+      })()
+    }
+    return () => { cancelled = true }
+  }, [auditSelectedSite?.id, session])
 
   // Deep-Link aus der Datenablage: nach Navigation zur Audits-Seite den Live-Raum zur Bearbeitung öffnen.
   // Läuft bewusst NACH dem Seitenwechsel-Reset-Effekt oben, damit editingRoomId/roomForm nicht sofort wieder geleert werden.
@@ -602,7 +659,7 @@ function App() {
                               }
                               if (col.inputType === 'checkbox') {
                                 return (
-                                  <td key={col.id} style={{ textAlign: 'center' }}>
+                                  <td key={col.id} style={{ textAlign: 'left' }}>
                                     <input type="checkbox" checked={cellValue === 'true'} onChange={e => commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.checked ? 'true' : 'false')} />
                                   </td>
                                 )
@@ -718,7 +775,23 @@ function App() {
   useEffect(() => {
     setDatenablageSelectedRoomName(null)
     setDatenablageChecklistTemplate(null)
-  }, [datenablageSite?.id])
+    // fix006: Auch in der (nur lesenden) Datenablage beim Betreten eines Standorts frische
+    // Räume/Grunddaten nachladen statt den ggf. veralteten Login-Stand zu zeigen.
+    if (session && datenablageSite) {
+      void (async () => {
+        try {
+          const [roomData, siteData] = await Promise.all([
+            apiRequest<Room[]>('/api/rooms?all=true', session),
+            apiRequest<Site[]>('/api/standorte', session)
+          ])
+          setRooms(roomData)
+          setSites(siteData)
+        } catch {
+          // Stille Fehlerbehandlung: lokal bekannter Stand bleibt sichtbar
+        }
+      })()
+    }
+  }, [datenablageSite?.id, session])
 
   // Speichern-Bestätigung im PDF-Designer nach ein paar Sekunden automatisch ausblenden
   useEffect(() => {
@@ -2230,6 +2303,7 @@ function App() {
                                 }
                                 setRoomForm({siteId:String(auditSelectedSite.id),name:'',description:'',capacity:'',area:'',notes:''})
                                 setRoomFieldValues({});setEditingRoomId(null)
+                                void refreshCoreData()
                               }}>{editingRoomId?'Änderungen speichern':'Raum speichern'}</button>
                               {editingRoomId&&<button type="button" className="secondary-button" onClick={()=>{setEditingRoomId(null);setRoomForm({siteId:'1',name:'',description:'',capacity:'',area:'',notes:''});setRoomFieldValues({})}}>Abbrechen</button>}
                             </div>
@@ -2296,6 +2370,7 @@ function App() {
                                                     askConfirm(`Raum "${r.name}" wirklich löschen?`, async()=>{
                                                       await apiRequest(`/api/rooms/${r.id}`,session,{method:'DELETE'})
                                                       setRooms(p=>p.filter(x=>x.id!==r.id))
+                                                      void refreshCoreData()
                                                     })
                                                   }}>✕</button>
                                                 </div>
@@ -2384,6 +2459,8 @@ function App() {
                                   })
                                   const updated = await apiRequest<Site>(`/api/standorte/${auditSelectedSite.id}/grounddata`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groundDataJson:JSON.stringify(effectiveGroundData)})})
                                   setSites(p=>p.map(s=>s.id===updated.id?updated:s))
+                                  setAuditSelectedSite(updated)
+                                  void refreshCoreData()
                                 }catch(err){
                                   setError(err instanceof Error?err.message:'Grunddaten konnten nicht gespeichert werden.')
                                 }
@@ -3118,7 +3195,7 @@ function App() {
                     <label>Benutzername<input value={newUserForm.userName} onChange={e=>setNewUserForm(p=>({...p,userName:e.target.value}))} placeholder="benutzername" required /></label>
                     <label>Anzeigename<input value={newUserForm.displayName} onChange={e=>setNewUserForm(p=>({...p,displayName:e.target.value}))} placeholder="Vor- und Nachname" required /></label>
                     <label>Passwort<input type="password" value={newUserForm.password} onChange={e=>setNewUserForm(p=>({...p,password:e.target.value}))} placeholder="Mindestens 8 Zeichen" required /></label>
-                    <label>Rolle<select value={newUserForm.role} onChange={e=>setNewUserForm(p=>({...p,role:e.target.value}))}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option></select></label>
+                    <label>Rolle<select value={newUserForm.role} onChange={e=>setNewUserForm(p=>({...p,role:e.target.value}))}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option>{activeSession.user.role==='Superadmin'&&<option>Superadmin</option>}</select></label>
                   </div>
                   <button type="submit" className="primary-button">Benutzer anlegen</button>
                 </form>
@@ -3136,7 +3213,7 @@ function App() {
                   <h4>Benutzer bearbeiten: {editingUser.userName}</h4>
                   <div className="form-grid">
                     <label>Anzeigename<input value={editingUser.displayName} onChange={e=>setEditingUser(p=>p?{...p,displayName:e.target.value}:p)} /></label>
-                    <label>Rolle<select value={editingUser.role} onChange={e=>setEditingUser(p=>p?{...p,role:e.target.value}:p)}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option></select></label>
+                    <label>Rolle<select value={editingUser.role} onChange={e=>setEditingUser(p=>p?{...p,role:e.target.value}:p)}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option>{activeSession.user.role==='Superadmin'&&<option>Superadmin</option>}</select></label>
                     <label className="full-width">Passwort zurücksetzen (leer lassen = keine Änderung)
                       <input type="password" id="resetPwInput" placeholder="Neues Passwort eingeben..." onBlur={async e=>{
                         const pw=e.target.value

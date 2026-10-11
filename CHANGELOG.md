@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.10.3] - 2026-10-11
+
+### Daten-Refresh, Superadmin-Rollenverwaltung, Checkbox-Ausrichtung & PDF-Designer-Fixes (fix006.md)
+
+#### Daten-Refresh nach eigenen Speicherungen
+- Nach dem Anlegen, Bearbeiten oder Löschen eines Raums sowie nach dem Speichern der Grunddaten eines Standorts werden die Kerndaten jetzt automatisch neu geladen, statt nur den lokalen UI-Zustand zu aktualisieren — dadurch bleiben auch parallel arbeitende Nutzer/innen beim nächsten Seitenwechsel konsistent auf dem aktuellen Stand
+- Zusätzlich zu den bereits bestehenden Refreshs beim Seitenwechsel und beim Betreten eines Standorts wird jetzt also auch nach jeder eigenen Speicherung aktualisiert
+
+#### Fix: Superadmin konnte eigenes Passwort nicht zurücksetzen & Rolle „Superadmin" fehlte bei der Rollenzuweisung
+- Der Passwort-Zurücksetzen-Dialog für Benutzer funktioniert jetzt zuverlässig auch für Superadmin-Konten
+- Das Rollen-Dropdown beim Anlegen und Bearbeiten eines Benutzers zeigt jetzt korrekt alle vier Rollen inkl. „Superadmin" an (zuvor fehlte diese Option vollständig)
+- Neuer Backend-Endpunkt `PUT /api/users/{userId}` zum Aktualisieren von Anzeigename und Rolle; Admin-Konten dürfen weiterhin keine Benutzer zu Superadmin befördern oder neue Superadmin-Konten anlegen (serverseitig abgesichert)
+
+#### Fix: Checkbox-Datenfelder wurden über die gesamte Feldbreite gestreckt angezeigt
+- Checkbox-Eingabefelder (z. B. „Prüfstatus" in Audit-Vorlagen) nahmen durch das allgemeine Formularraster-Styling fälschlich die volle Feldbreite ein — Checkboxen werden jetzt wieder in ihrer normalen, kompakten Größe links ausgerichtet dargestellt (betrifft Raum-/Grunddaten-Formulare und die Checklisten-Tabelle)
+
+#### PDF-Designer: Mehrere wiederholende Blöcke auf einer Seite liefen nicht mehr synchron
+- Enthielt eine Design-Seite mehr als einen „Wiederholender Block", lief bisher jeder Block unabhängig über alle Datensätze und erzeugte eigenständig neue Seiten — das führte zu vertauschten/duplizierten Ausgaben (z. B. Raum A im ersten Block, Raum B im zweiten Block auf derselben Seite)
+- Alle wiederholenden Blöcke einer Seite werden jetzt gemeinsam im Gleichschritt durchlaufen: derselbe Datensatz-Index pro Durchlauf, ein gemeinsamer Seitenumbruch sobald irgendein Block nicht mehr auf die Seite passt, und alle Blöcke starten auf der neuen Seite wieder exakt an ihrer ursprünglich festgelegten Position (statt an einer generischen Position nahe dem Seitenanfang)
+
+#### PDF-Designer: Elemente duplizieren & Seiten verschieben
+- Neuer Toolbar-Button „⧉ Duplizieren" für das aktuell ausgewählte Element — erstellt eine exakte Kopie (inkl. aller Unterelemente bei freien Layouts) leicht versetzt neben dem Original
+- Neue „▲"/„▼"-Pfeile an jeder Seiten-Miniaturansicht in der Seitenleiste zum Verschieben der Reihenfolge der PDF-Seiten
+
+#### Live verifiziert
+- Superadmin-Rollenzuweisung: Testnutzer zu „Superadmin" befördert (Dropdown + Speichern bestätigt funktionsfähig) und wieder zurückgesetzt
+- Checkbox-Feld „Prüfstatus" beim Raum-Anlegen bestätigt in korrekter, kompakter Breite (13px statt gestreckt)
+- Daten-Refresh bestätigt: über die API angelegter Testraum erschien nach einfachem Seitenwechsel (Dashboard → zurück zum Standort) automatisch in der Raumliste ohne manuellen Reload
+- PDF-Designer: Testseite angelegt, mit „▲"/„▼" erfolgreich verschoben und zurückverschoben; wiederholender Block dupliziert (Versatz 16px bestätigt) und wieder entfernt — beide bestehenden PDF-Designs blieben nach Verlassen ohne Speichern unverändert erhalten
+- Backend-Engine-Fix für synchrone Mehrfachblöcke per direkter PDF-Generierung verifiziert (zuvor vertauschte Ausgabe mit 2 gestapelten Blöcken, danach korrekt synchronisiert über alle Seiten)
+
 ## [1.10.2] - 2026-10-11
 
 ### Echtzeit-Formularvalidierung, Standardwerte für Dropdown-Felder & Wiederholblock-Editor-Fixes (fix005.md)

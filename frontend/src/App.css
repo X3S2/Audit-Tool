@@ -1890,6 +1890,16 @@ tr.row-editing {
   transition: var(--input-transition);
   box-sizing: border-box;
 }
+/* fix006: Checkbox-Datenfelder sollen eine normal große, linksbündige Checkbox direkt
+   gefolgt vom Label zeigen statt über width:100% auf volle Zeilenbreite gestreckt zu
+   werden (dadurch wirkte die Checkbox optisch "mittig" in der Zeile). */
+.form-grid input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0;
+  margin: 0;
+}
 .form-grid input:focus,
 .form-grid select:focus,
 .form-grid textarea:focus {

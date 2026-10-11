@@ -890,9 +890,55 @@ app.MapPost("/api/users", [Authorize(Policy = "RequireAdminAccess")] async (Crea
         return Results.BadRequest(new { message = "Rolle ungültig." });
     }
 
+    var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
+    if (requesterRole == "Admin" && string.Equals(request.Role, "Superadmin", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Forbid();
+    }
+
     var user = users.Create(request.UserName, request.Password, request.DisplayName, request.Role);
     await logger.LogActionAsync(ResolveUserId(httpContext), "Benutzer erstellt", $"Benutzer \"{user.UserName}\" (ID {user.Id}, Rolle {user.Role})");
     return Results.Ok(new { user = new UserSummary(user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive) });
+});
+
+app.MapPut("/api/users/{userId:int}", [Authorize(Policy = "RequireAdminAccess")] async (int userId, UpdateUserRequest request, UserStore users, AuditLogger logger, HttpContext httpContext) =>
+{
+    if (string.IsNullOrWhiteSpace(request.DisplayName))
+    {
+        return Results.BadRequest(new { message = "Anzeigename ist erforderlich." });
+    }
+
+    var validRoles = new[] { "Superadmin", "Admin", "Benutzer", "Azubi" };
+    if (!validRoles.Contains(request.Role, StringComparer.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { message = "Rolle ungültig." });
+    }
+
+    var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
+    var targetUser = users.GetById(userId);
+    if (targetUser is null)
+    {
+        return Results.NotFound(new { message = "Benutzer nicht gefunden." });
+    }
+
+    if (requesterRole == "Admin" && targetUser.Role == "Superadmin")
+    {
+        return Results.Forbid();
+    }
+
+    if (requesterRole == "Admin" && string.Equals(request.Role, "Superadmin", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Forbid();
+    }
+
+    if (targetUser.UserName.Equals("superadmin", StringComparison.OrdinalIgnoreCase) && !string.Equals(request.Role, "Superadmin", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { message = "Die Rolle des Superadmin-Accounts kann nicht geändert werden." });
+    }
+
+    var updated = users.UpdateDisplayNameAndRole(userId, request.DisplayName, request.Role);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Benutzer bearbeitet", $"Benutzer \"{updated!.UserName}\" (ID {updated.Id}) aktualisiert: Anzeigename=\"{updated.DisplayName}\", Rolle={updated.Role}");
+    return Results.Ok(new { user = new UserSummary(updated!.Id, updated.UserName, updated.DisplayName, updated.Role, updated.IsActive) });
 });
 
 app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdminAccess")] async (int userId, ResetPasswordRequest request, UserStore users, AuditLogger logger, HttpContext httpContext) =>
@@ -2243,6 +2289,21 @@ public sealed class UserStore
         return user;
     }
 
+    public AppUser? UpdateDisplayNameAndRole(int userId, string displayName, string role)
+    {
+        var user = _users.FirstOrDefault(u => u.Id == userId);
+        if (user is null)
+        {
+            return null;
+        }
+
+        var index = _users.IndexOf(user);
+        var updated = user with { DisplayName = displayName, Role = role };
+        _users[index] = updated;
+        _database.Save("app_users", _users);
+        return updated;
+    }
+
     public void UpdatePassword(int userId, string newPassword)
     {
         var user = _users.FirstOrDefault(u => u.Id == userId);
@@ -2318,6 +2379,7 @@ public sealed record DocumentFolder(int Id, int SiteId, int ParentFolderId, stri
 public sealed record AuditDocument(int Id, int AuditId, int SiteId, string Title, int? PdfDesignId, string? PdfDesignName, string FileName, long SizeBytes, DateTime CreatedAtUtc, bool IsArchived, bool IsUploaded, int FolderId);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record CreateUserRequest(string UserName, string Password, string Role, string DisplayName);
+public sealed record UpdateUserRequest(string DisplayName, string Role);
 public sealed record ResetPasswordRequest(string NewPassword);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateCategoryRequest(string Name, string Description);
