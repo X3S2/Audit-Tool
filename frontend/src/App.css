@@ -1839,9 +1839,39 @@ tr.row-editing {
   font-weight: 500;
   color: var(--muted);
   margin-bottom: 0;
+  border-left: 3px solid transparent;
+  padding-left: 8px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
 }
 
 .form-grid label.full-width { grid-column: 1 / -1; }
+
+/* fix005: Bild-Upload-Felder sind kein <label>, sondern ein <div class="full-width"> —
+   brauchen daher die gleiche Basis-Einrückung wie oben, um die Pflichtfeld-Markierung
+   (siehe .field-required-* unten) ebenfalls zeigen zu können. */
+.form-grid > div.full-width {
+  border-left: 3px solid transparent;
+  padding-left: 8px;
+  box-sizing: border-box;
+}
+
+/* fix005: Echtzeit-Formularvalidierung für Pflichtfelder.
+   Rot = Pflichtfeld noch leer, Grün = Pflichtfeld ausgefüllt,
+   Gelb = Sonderfall Raumname bereits am Standort vergeben. */
+.form-grid label.field-required-missing,
+.form-grid > div.full-width.field-required-missing { border-left-color: #ef4444; }
+.form-grid label.field-required-ok,
+.form-grid > div.full-width.field-required-ok { border-left-color: #22c55e; }
+.form-grid label.field-required-duplicate,
+.form-grid > div.full-width.field-required-duplicate { border-left-color: #eab308; }
+
+.field-hint-warning {
+  font-size: 0.78rem;
+  color: #eab308;
+  font-weight: 500;
+  margin-top: 2px;
+}
 
 /* Einheitliches Input-Styling für form-grid, unabhängig vom umgebenden Container
    (z.B. Grunddaten-Karte, die kein .form-card ist) */

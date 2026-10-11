@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.10.2] - 2026-10-11
+
+### Echtzeit-Formularvalidierung, Standardwerte für Dropdown-Felder & Wiederholblock-Editor-Fixes (fix005.md)
+
+#### Neu: Echtzeit-Farbmarkierung für Pflichtfelder (Raum anlegen, Grunddaten)
+- Pflichtfelder werden jetzt links farbig markiert: Rot (fehlt) solange leer, Grün (ausgefüllt) sobald ein gültiger Wert eingegeben wurde — statt eines reinen „*"-Sternchens, das jetzt entfernt wurde
+- Das Raumname-Feld prüft zusätzlich live auf bereits vergebene Raumnamen am selben Standort: Bei einem Duplikat erscheint eine gelbe Markierung statt Rot/Grün sowie ein Warnhinweis „⚠️ Ein Raum mit diesem Namen existiert bereits für diesen Standort."
+
+#### Neu: Standardwert für Auswahl-Datenfelder (Dropdown) in Audit-Vorlagen
+- Beim Anlegen oder Bearbeiten eines „Auswahl (Dropdown)"-Datenfelds in einer Audit-Vorlage kann jetzt ein „Standardwert" aus den definierten Optionen gewählt werden (oder „-- kein Standardwert --")
+- Der Standardwert wird beim Anlegen eines neuen Raums bzw. der Grunddaten eines Standorts automatisch vorausgewählt (und als bereits ausgefüllt/grün markiert) und beim Speichern korrekt übernommen, auch wenn das Dropdown nicht manuell angefasst wurde
+
+#### Dashboard: Schnellzugriff-Kachel „Standorte" entfernt
+- Da das schnelle Anlegen eines neuen Standorts kein typischer Schnellzugriffs-Anwendungsfall ist, wurde die entsprechende Kachel aus dem Dashboard entfernt — „Audits" und „Datenablage" bleiben verfügbar
+
+#### PDF-Designer: Wiederholblock-Editor — Auswahl bleibt erhalten, Bild-Felder werden korrekt als Bild angezeigt
+- Im freien Layout-Editor des wiederholenden Blocks führte ein Klick auf ein Element bisher dazu, dass die Auswahl sofort wieder aufgehoben wurde (ein über `mousedown` ausgelöster, aber erst beim nachfolgenden `click`-Event aufsteigender Hintergrund-Klick löschte die Auswahl) — die Auswahl bleibt jetzt stabil erhalten, bis bewusst auf eine leere Stelle der Zeichenfläche geklickt wird
+- Felder vom Typ „Bild" (z. B. das Bilder-Datenfeld eines Raums) wurden im Editor bisher als Textzeile mit automatisch generiertem Label („Bilder: ") dargestellt — sie erscheinen jetzt korrekt als gestricheltes Bild-Platzhalter-Element ohne Label-Präfix, passend zur tatsächlichen PDF-Ausgabe (die bereits zuvor korrekt Bilder statt Text gerendert hat)
+- Das Label-Präfix-Eingabefeld im Eigenschaften-Panel wird für Bild-Felder jetzt ausgeblendet, da es dort nicht anwendbar ist
+
+#### Live verifiziert
+- Rot/Grün/Gelb-Farbmarkierung inkl. Duplikat-Warnhinweis am Raumname-Feld der Vorlage „Prowise Begehung" getestet
+- Standardwert „Stein" für das Dropdown-Feld „Wand" gesetzt, gespeichert, und beim Anlegen eines neuen Raums als vorausgewählt/grün bestätigt sowie nach dem Speichern in der Datenbank persistiert bestätigt (Testdatensatz anschließend wieder entfernt)
+- „Standorte"-Kachel im Dashboard bestätigt entfernt
+- Wiederholblock-Editor: Element-Auswahl bleibt nach Klick erhalten, Hintergrund-Klick hebt Auswahl weiterhin korrekt auf, Bild-Feld „Bilder" zeigt gestrichelten 🖼-Platzhalter ohne Label-Präfix-Eingabe
+
 ## [1.10.1] - 2026-10-11
 
 ### Wiederholblock-Vorbelegung, Kopfzeilen-Druckbereich & Mobile-Optimierungen (fix004.md)

@@ -236,6 +236,7 @@ type EditableTemplateField = {
   order: number
   required: boolean
   dropdownOptions: string
+  defaultValue: string
   scope: TemplateFieldScope
 }
 
@@ -243,18 +244,22 @@ const parseTemplateFieldType = (typeValue: string) => {
   const parts = typeValue.split('|').map((part) => part.trim()).filter(Boolean)
   const baseType = parts[0] ?? 'text'
   const optionsText = parts.find((part) => part.startsWith('options:'))?.replace('options:', '').trim() ?? ''
+  const defaultValue = parts.find((part) => part.startsWith('default:'))?.replace('default:', '').trim() ?? ''
   const scope: TemplateFieldScope = parts.some((part) => part === 'scope:site') ? 'site' : 'room'
   const options = optionsText
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
-  return { baseType, optionsText, options, scope }
+  return { baseType, optionsText, options, defaultValue, scope }
 }
 
 const encodeTemplateFieldType = (field: EditableTemplateField) => {
   let encoded = field.type
   if (field.type === 'dropdown' && field.dropdownOptions.trim()) {
     encoded += `|options:${field.dropdownOptions.trim()}`
+    if (field.defaultValue.trim()) {
+      encoded += `|default:${field.defaultValue.trim()}`
+    }
   }
   if (field.scope === 'site') {
     encoded += '|scope:site'
@@ -263,8 +268,15 @@ const encodeTemplateFieldType = (field: EditableTemplateField) => {
 }
 
 const DEFAULT_TEMPLATE_FIELDS: EditableTemplateField[] = [
-  { name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }
+  { name: '', type: 'text', order: 1, required: true, dropdownOptions: '', defaultValue: '', scope: 'room' }
 ]
+
+// fix005: Echtzeit-Formularvalidierung für Pflichtfelder — Klasse für farbliche Markierung
+// (rot = Pflichtfeld leer, grün = Pflichtfeld ausgefüllt). Nicht-Pflichtfelder bleiben neutral.
+const fieldStatusClass = (required: boolean, filled: boolean): string => {
+  if (!required) return ''
+  return filled ? 'field-required-ok' : 'field-required-missing'
+}
 
 const parseStringMap = (raw: string | undefined) => {
   if (!raw) {
@@ -1576,7 +1588,7 @@ function App() {
         <div className="field-builder-section-header">
           <strong>{scope === 'room' ? '🏠 Datenfelder für Räume/Objekte' : '📋 Datenfelder für Grunddaten'}</strong>
           <button type="button" className="secondary-button" style={{ padding: '5px 10px', fontSize: '0.82rem' }}
-            onClick={() => setTemplateFields((p) => [...p, { name: '', type: 'text', order: p.length + 1, required: true, dropdownOptions: '', scope }])}>+ Feld</button>
+            onClick={() => setTemplateFields((p) => [...p, { name: '', type: 'text', order: p.length + 1, required: true, dropdownOptions: '', defaultValue: '', scope }])}>+ Feld</button>
         </div>
         <div className="field-builder">
           {indices.length === 0 && <p className="empty-hint">Noch keine Felder.</p>}
@@ -1606,6 +1618,15 @@ function App() {
                   <div className="dropdown-options-row">
                     <span style={{ fontSize: '0.82rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>Optionen:</span>
                     <input placeholder="Option 1, Option 2..." value={field.dropdownOptions} onChange={e => setTemplateFields(p => p.map((f, i) => i === idx ? { ...f, dropdownOptions: e.target.value } : f))} style={{ flex: 1, padding: '5px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '7px', color: 'var(--text-h)', fontSize: '0.88rem' }} />
+                  </div>
+                )}
+                {field.type === 'dropdown' && (
+                  <div className="dropdown-options-row">
+                    <span style={{ fontSize: '0.82rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>Standardwert:</span>
+                    <select value={field.defaultValue} onChange={e => setTemplateFields(p => p.map((f, i) => i === idx ? { ...f, defaultValue: e.target.value } : f))} style={{ flex: 1, padding: '5px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '7px', color: 'var(--text-h)', fontSize: '0.88rem' }}>
+                      <option value="">-- kein Standardwert --</option>
+                      {field.dropdownOptions.split(',').map(o => o.trim()).filter(Boolean).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
                   </div>
                 )}
               </div>
@@ -1701,8 +1722,8 @@ function App() {
       return next.join('||')
     })
     return (
-      <div key={key} className="full-width">
-        <label>{label}{required ? ' *' : ''}</label>
+      <div key={key} className={`full-width ${fieldStatusClass(required, imageList.length > 0)}`}>
+        <label>{label}</label>
         <div className="room-image-upload">
           <label className="image-upload-btn">
             📷 Bilder hinzufügen
@@ -1994,13 +2015,6 @@ function App() {
                     <span className="card-name">Datenablage</span>
                     <span className="card-count">Aufgenommene Daten einsehen</span>
                   </button>
-                  {isAdmin && (
-                    <button type="button" className="card-item" onClick={()=>setPage('einstellungen-standorte')}>
-                      <span className="card-icon">📍</span>
-                      <span className="card-name">Standorte</span>
-                      <span className="card-count">Standorte verwalten</span>
-                    </button>
-                  )}
                 </div>
               </div>
             </section>
@@ -2123,11 +2137,22 @@ function App() {
                           {/* Raumformular mit Template-Feldern */}
                           <div className="form-card">
                             <h4>{editingRoomId ? '✏️ Raum bearbeiten' : 'Neuen Raum anlegen'}</h4>
-                            <div className="form-grid">
-                              <label className="full-width">Raumname *
-                                <input value={roomForm.name} onChange={e=>setRoomForm(p=>({...p,name:e.target.value,siteId:String(auditSelectedSite.id)}))} placeholder="z.B. Klassenraum 1.01" required />
-                              </label>
-                            </div>
+                            {(() => {
+                              const trimmedRoomName = roomForm.name.trim()
+                              const siblingRoomNames = rooms
+                                .filter(r=>r.siteId===auditSelectedSite.id && r.auditId===0 && r.id!==editingRoomId)
+                                .map(r=>r.name.trim().toLowerCase())
+                              const roomNameIsDuplicate = trimmedRoomName !== '' && siblingRoomNames.includes(trimmedRoomName.toLowerCase())
+                              const roomNameStatusClass = trimmedRoomName === '' ? 'field-required-missing' : roomNameIsDuplicate ? 'field-required-duplicate' : 'field-required-ok'
+                              return (
+                                <div className="form-grid">
+                                  <label className={`full-width ${roomNameStatusClass}`}>Raumname
+                                    <input value={roomForm.name} onChange={e=>setRoomForm(p=>({...p,name:e.target.value,siteId:String(auditSelectedSite.id)}))} placeholder="z.B. Klassenraum 1.01" required />
+                                    {roomNameIsDuplicate && <span className="field-hint-warning">⚠️ Ein Raum mit diesem Namen existiert bereits für diesen Standort.</span>}
+                                  </label>
+                                </div>
+                              )
+                            })()}
                             {/* Template-Felder */}
                             {auditSelectedTemplate.fields.length > 0 && (
                               <div style={{marginTop:'16px'}}>
@@ -2135,7 +2160,7 @@ function App() {
                                 <div className="form-grid">
                                   {auditSelectedTemplate.fields.map(field=>{
                                     const val = roomFieldValues[field.name] || ''
-                                    const { baseType, options, scope } = parseTemplateFieldType(field.type)
+                                    const { baseType, options, scope, defaultValue } = parseTemplateFieldType(field.type)
                                     if (scope !== 'room') {
                                       return null
                                     }
@@ -2150,9 +2175,10 @@ function App() {
                                       )
                                     }
                                     if (baseType === 'dropdown' && options.length > 0) {
+                                      const effectiveVal = val || defaultValue
                                       return (
-                                        <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
-                                          <select value={val} onChange={e=>setRoomFieldValues(p=>({...p,[field.name]:e.target.value}))}>
+                                        <label key={field.id} className={fieldStatusClass(field.relevantForProgress, effectiveVal !== '')}>{field.name}
+                                          <select value={effectiveVal} onChange={e=>setRoomFieldValues(p=>({...p,[field.name]:e.target.value}))}>
                                             <option value="">-- wählen --</option>
                                             {options.map(opt=><option key={opt} value={opt}>{opt}</option>)}
                                           </select>
@@ -2161,21 +2187,21 @@ function App() {
                                     }
                                     if (baseType === 'checkbox') {
                                       return (
-                                        <label key={field.id} style={{flexDirection:'row',alignItems:'center',gap:'8px',cursor:'pointer'}}>
+                                        <label key={field.id} className={fieldStatusClass(field.relevantForProgress, val==='true')} style={{flexDirection:'row',alignItems:'center',gap:'8px',cursor:'pointer'}}>
                                           <input type="checkbox" checked={val==='true'} onChange={e=>setRoomFieldValues(p=>({...p,[field.name]:e.target.checked?'true':'false'}))} />
-                                          {field.name}{field.relevantForProgress?' *':''}
+                                          {field.name}
                                         </label>
                                       )
                                     }
                                     if (baseType === 'textarea') {
                                       return (
-                                        <label key={field.id} className="full-width">{field.name}{field.relevantForProgress?' *':''}
+                                        <label key={field.id} className={`full-width ${fieldStatusClass(field.relevantForProgress, val.trim()!=='')}`}>{field.name}
                                           <textarea rows={3} value={val} onChange={e=>setRoomFieldValues(p=>({...p,[field.name]:e.target.value}))} style={{resize:'vertical'}} />
                                         </label>
                                       )
                                     }
                                     return (
-                                      <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
+                                      <label key={field.id} className={fieldStatusClass(field.relevantForProgress, val.trim()!=='')}>{field.name}
                                         <input type={baseType==='number'?'number':'text'} value={val} onChange={e=>setRoomFieldValues(p=>({...p,[field.name]:e.target.value}))} />
                                       </label>
                                     )
@@ -2186,7 +2212,14 @@ function App() {
                             <div style={{display:'flex',gap:'8px',marginTop:'16px'}}>
                               <button type="button" className="primary-button" onClick={async()=>{
                                 if(!session||!roomForm.name.trim())return
-                                const fieldsJson=JSON.stringify(roomFieldValues)
+                                const effectiveFieldValues = { ...roomFieldValues }
+                                auditSelectedTemplate.fields.forEach(f=>{
+                                  const { baseType, scope, defaultValue } = parseTemplateFieldType(f.type)
+                                  if (scope==='room' && baseType==='dropdown' && !effectiveFieldValues[f.name] && defaultValue) {
+                                    effectiveFieldValues[f.name] = defaultValue
+                                  }
+                                })
+                                const fieldsJson=JSON.stringify(effectiveFieldValues)
                                 const body={siteId:auditSelectedSite.id,name:roomForm.name,description:'',capacity:'',area:'',notes:'',fieldsJson}
                                 if(editingRoomId){
                                   const res=await apiRequest<Room>(`/api/rooms/${editingRoomId}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
@@ -2295,7 +2328,7 @@ function App() {
                               <h4 style={{margin:'0 0 14px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Grunddaten-Felder aus Vorlage „{auditSelectedTemplate.name}"</h4>
                               <div className="form-grid">
                                 {auditSelectedTemplate.fields.filter(f=>parseTemplateFieldType(f.type).scope==='site').map(field=>{
-                                  const {baseType, options} = parseTemplateFieldType(field.type)
+                                  const {baseType, options, defaultValue} = parseTemplateFieldType(field.type)
                                   const val = siteGroundDataValues[field.name] ?? ''
                                   if (baseType === 'image') {
                                     return renderImageUploadField(
@@ -2307,9 +2340,10 @@ function App() {
                                     )
                                   }
                                   if (baseType === 'dropdown' && options.length > 0) {
+                                    const effectiveVal = val || defaultValue
                                     return (
-                                      <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
-                                        <select value={val} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))}>
+                                      <label key={field.id} className={fieldStatusClass(field.relevantForProgress, effectiveVal !== '')}>{field.name}
+                                        <select value={effectiveVal} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))}>
                                           <option value="">-- wählen --</option>
                                           {options.map(opt=><option key={opt} value={opt}>{opt}</option>)}
                                         </select>
@@ -2318,21 +2352,21 @@ function App() {
                                   }
                                   if (baseType === 'checkbox') {
                                     return (
-                                      <label key={field.id} style={{flexDirection:'row',alignItems:'center',gap:'8px',cursor:'pointer'}}>
+                                      <label key={field.id} className={fieldStatusClass(field.relevantForProgress, val==='true')} style={{flexDirection:'row',alignItems:'center',gap:'8px',cursor:'pointer'}}>
                                         <input type="checkbox" checked={val==='true'} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.checked?'true':'false'}))} />
-                                        {field.name}{field.relevantForProgress?' *':''}
+                                        {field.name}
                                       </label>
                                     )
                                   }
                                   if (baseType === 'textarea') {
                                     return (
-                                      <label key={field.id} className="full-width">{field.name}{field.relevantForProgress?' *':''}
+                                      <label key={field.id} className={`full-width ${fieldStatusClass(field.relevantForProgress, val.trim()!=='')}`}>{field.name}
                                         <textarea rows={3} value={val} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))} style={{resize:'vertical'}} />
                                       </label>
                                     )
                                   }
                                   return (
-                                    <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
+                                    <label key={field.id} className={fieldStatusClass(field.relevantForProgress, val.trim()!=='')}>{field.name}
                                       <input type={baseType==='number'?'number':'text'} value={val} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))} />
                                     </label>
                                   )
@@ -2341,7 +2375,14 @@ function App() {
                               <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={async()=>{
                                 if(!session)return
                                 try{
-                                  const updated = await apiRequest<Site>(`/api/standorte/${auditSelectedSite.id}/grounddata`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groundDataJson:JSON.stringify(siteGroundDataValues)})})
+                                  const effectiveGroundData = { ...siteGroundDataValues }
+                                  auditSelectedTemplate.fields.forEach(f=>{
+                                    const { baseType, scope, defaultValue } = parseTemplateFieldType(f.type)
+                                    if (scope==='site' && baseType==='dropdown' && !effectiveGroundData[f.name] && defaultValue) {
+                                      effectiveGroundData[f.name] = defaultValue
+                                    }
+                                  })
+                                  const updated = await apiRequest<Site>(`/api/standorte/${auditSelectedSite.id}/grounddata`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groundDataJson:JSON.stringify(effectiveGroundData)})})
                                   setSites(p=>p.map(s=>s.id===updated.id?updated:s))
                                 }catch(err){
                                   setError(err instanceof Error?err.message:'Grunddaten konnten nicht gespeichert werden.')
@@ -2838,6 +2879,7 @@ function App() {
                                 order: f.order ?? index + 1,
                                 required: f.relevantForProgress,
                                 dropdownOptions: parsed.optionsText,
+                                defaultValue: parsed.defaultValue,
                                 scope: parsed.scope
                               }
                             }))

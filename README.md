@@ -1,4 +1,4 @@
-# 🎯 Audit-Tool v1.10.1 – Professionelles Audit-Management
+# 🎯 Audit-Tool v1.10.2 – Professionelles Audit-Management
 
 **Enterprise-Ready | Deutsch | React + TypeScript + ASP.NET Core + PostgreSQL | Docker**
 
@@ -8,7 +8,7 @@
 
 **Audit-Tool** ist eine professionelle, deutschsprachige Web-Anwendung zur Verwaltung von Audits, Standorten, Räumen, Objekten, Bildern und Checklisten. Das System bietet vollständiges Account-Management, PDF-Designer, Checklisten, Datenbankbackups und ein sicheres Token-basiertes Authentifizierungssystem.
 
-### 🎯 Kernfunktionen (v1.10.1)
+### 🎯 Kernfunktionen (v1.10.2)
 
 | Feature | Status |
 |---------|--------|
@@ -16,8 +16,9 @@
 | **Passwort-Sicherheit** | ✅ PBKDF2-Hashing, transparente Migration von Altkonten |
 | **Benutzerverwaltung** | ✅ Anlegen, Bearbeiten, Passwort-Reset, Rollen |
 | **Audit Management** | ✅ Hierarchisch: Kategorie → Standort → Raum |
-| **Template-basierte Räume** | ✅ Felder aus Vorlage (scope: Räume/Grunddaten) |
+| **Template-basierte Räume** | ✅ Felder aus Vorlage (scope: Räume/Grunddaten), Standardwerte für Dropdown-Felder |
 | **Grunddaten-Felder** | ✅ Vorlage definiert scope:site Felder, erfassbar im Grunddaten-Tab |
+| **Formularvalidierung** | ✅ Echtzeit Rot/Grün-Markierung für Pflichtfelder, Gelb-Warnung bei doppeltem Raumnamen |
 | **Raumliste als Tabelle** | ✅ Kompakte Tabellenansicht mit Bilderbutton |
 | **Bildverwaltung** | ✅ Upload in Feldwerte (Base64/||), Galerie-Modal mit Zoom |
 | **Dokumentenverwaltung** | ✅ PDF-Generierung je Audit, Ordner, Umbenennen, Archivieren, Download |
@@ -125,4 +126,4 @@ docker-compose up -d --build
 
 Alle Änderungen sind im [CHANGELOG.md](CHANGELOG.md) dokumentiert.
 
-**Aktuelle Version:** v1.10.1
+**Aktuelle Version:** v1.10.2

@@ -14,6 +14,8 @@ interface Props {
 const fieldScope = (typeValue: string): 'room' | 'site' =>
   typeValue.split('|').map(p => p.trim()).includes('scope:site') ? 'site' : 'room'
 
+const fieldBaseType = (typeValue: string): string => typeValue.split('|')[0]?.trim() || 'text'
+
 const defaultChildStyle = (): DesignElement['style'] => ({
   fontSize: 10, fontWeight: 'normal', fontStyle: 'normal', textDecoration: 'none',
   align: 'left', verticalAlign: 'top', color: '#1a1a2e', background: 'transparent',
@@ -53,6 +55,14 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
   ]
   const allFieldOptions = [...roomFieldOptions, ...siteFieldOptions]
 
+  // fix005: Bild-Upload-Felder (Vorlagenfeldtyp "image") brauchen weder ein "Label: "-Präfix noch
+  // eine Textzeilen-Vorschau — sie sollen stattdessen als Bild-Platzhalter dargestellt werden.
+  const isImageField = (key?: string): boolean => {
+    if (!key) return false
+    const tf = templateFields.find(f => f.name === key)
+    return !!tf && fieldBaseType(tf.type) === 'image'
+  }
+
   // Beim ersten Öffnen (noch kein eigenes Layout gespeichert) werden die vorher in der einfachen
   // Feldliste markierten Datenfelder als bereits sortierbare Feld-Elemente übernommen, statt mit
   // einem leeren Canvas zu starten — der Nutzer soll sie nur noch anordnen, nicht neu auswählen müssen.
@@ -69,7 +79,7 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
       const label = allFieldOptions.find(f => f.key === key)?.label || key
       const child = makeChild('repeat-field')
       child.fieldKey = key
-      child.content = `${label}: `
+      child.content = isImageField(key) ? '' : `${label}: `
       child.x = 10
       child.y = 10 + i * (rowHeight + rowGap)
       child.width = width
@@ -186,13 +196,23 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
         : <div style={{ width: '100%', height: '100%', border: '2px dashed #94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#94a3b8' }}>📷 Bild</div>
     } else if (c.type === 'repeat-field') {
       const label = allFieldOptions.find(f => f.key === c.fieldKey)?.label || c.fieldKey || '?'
-      inner = (
-        <div style={{ fontSize: Math.max(7, s.fontSize * scale), fontWeight: s.fontWeight, color: s.color, textAlign: s.align, padding: 2, width: '100%', height: '100%', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-          {c.content}
-          <span style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.3)', borderRadius: 3, padding: '0 3px', fontStyle: 'italic', color: '#7c3aed' }}>⟨{label}⟩</span>
-          {c.hideIfEmpty && <span title="Wird ausgeblendet wenn leer" style={{ marginLeft: 4 }}>👁️</span>}
-        </div>
-      )
+      if (isImageField(c.fieldKey)) {
+        inner = (
+          <div style={{ width: '100%', height: '100%', border: '2px dashed #7c3aed', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: Math.max(7, s.fontSize * scale), color: '#7c3aed', textAlign: 'center', overflow: 'hidden' }}>
+            <span style={{ fontSize: Math.max(12, 16 * scale) }}>🖼</span>
+            <span style={{ fontStyle: 'italic' }}>⟨{label}⟩</span>
+            {c.hideIfEmpty && <span title="Wird ausgeblendet wenn leer">👁️</span>}
+          </div>
+        )
+      } else {
+        inner = (
+          <div style={{ fontSize: Math.max(7, s.fontSize * scale), fontWeight: s.fontWeight, color: s.color, textAlign: s.align, padding: 2, width: '100%', height: '100%', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            {c.content}
+            <span style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.3)', borderRadius: 3, padding: '0 3px', fontStyle: 'italic', color: '#7c3aed' }}>⟨{label}⟩</span>
+            {c.hideIfEmpty && <span title="Wird ausgeblendet wenn leer" style={{ marginLeft: 4 }}>👁️</span>}
+          </div>
+        )
+      }
     } else {
       inner = (
         <div style={{ fontSize: Math.max(7, s.fontSize * scale), fontWeight: s.fontWeight, fontStyle: s.fontStyle, textDecoration: s.textDecoration, color: s.color, textAlign: s.align, padding: 2, width: '100%', height: '100%', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
@@ -237,7 +257,7 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
         <div className="repeat-block-modal-body">
           <div
             className="repeat-block-modal-canvas"
-            onClick={() => setSelectedId(null)}
+            onClick={e => { if (e.target === e.currentTarget) setSelectedId(null) }}
             style={{ width: blockW * scale, height: blockH * scale }}
           >
             {children.map(renderChild)}
@@ -258,7 +278,10 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
                 {selected.type === 'repeat-field' && (
                   <div className="pdf-prop-group">
                     <label>Feld
-                      <select value={selected.fieldKey ?? ''} onChange={e => updateChild(selected.id, { fieldKey: e.target.value })}>
+                      <select value={selected.fieldKey ?? ''} onChange={e => {
+                        const key = e.target.value
+                        updateChild(selected.id, { fieldKey: key, content: isImageField(key) ? '' : selected.content })
+                      }}>
                         <optgroup label="Raum/Objekt-Datenfelder">
                           {roomFieldOptions.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
                         </optgroup>
@@ -267,7 +290,9 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
                         </optgroup>
                       </select>
                     </label>
-                    <label>Label-Präfix (z.B. "Wand besteht aus: ")<input value={selected.content} onChange={e => updateChild(selected.id, { content: e.target.value })} /></label>
+                    {!isImageField(selected.fieldKey) && (
+                      <label>Label-Präfix (z.B. "Wand besteht aus: ")<input value={selected.content} onChange={e => updateChild(selected.id, { content: e.target.value })} /></label>
+                    )}
                     <label className="pdf-checkbox-row">
                       <input type="checkbox" checked={!!selected.hideIfEmpty} onChange={e => updateChild(selected.id, { hideIfEmpty: e.target.checked })} />
                       Ausblenden wenn leer (optionale Felder)
