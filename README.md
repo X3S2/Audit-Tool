@@ -1,4 +1,4 @@
-# 🎯 Audit-Tool v1.10.0 – Professionelles Audit-Management
+# 🎯 Audit-Tool v1.10.1 – Professionelles Audit-Management
 
 **Enterprise-Ready | Deutsch | React + TypeScript + ASP.NET Core + PostgreSQL | Docker**
 
@@ -8,7 +8,7 @@
 
 **Audit-Tool** ist eine professionelle, deutschsprachige Web-Anwendung zur Verwaltung von Audits, Standorten, Räumen, Objekten, Bildern und Checklisten. Das System bietet vollständiges Account-Management, PDF-Designer, Checklisten, Datenbankbackups und ein sicheres Token-basiertes Authentifizierungssystem.
 
-### 🎯 Kernfunktionen (v1.10.0)
+### 🎯 Kernfunktionen (v1.10.1)
 
 | Feature | Status |
 |---------|--------|
@@ -125,4 +125,4 @@ docker-compose up -d --build
 
 Alle Änderungen sind im [CHANGELOG.md](CHANGELOG.md) dokumentiert.
 
-**Aktuelle Version:** v1.10.0
+**Aktuelle Version:** v1.10.1

@@ -1031,7 +1031,25 @@ th {
 
   .form-grid { grid-template-columns: 1fr; }
 
-  table { display: block; overflow-x: auto; }
+  /* Tabellen dürfen den Body nicht in die Breite drücken - eigener horizontaler Scrollbereich */
+  .main-panel table {
+    display: block;
+    overflow-x: auto;
+    overflow-y: visible;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Tab-Leiste (Räume/Grunddaten/Checklisten/Dokumente) soll umbrechen statt zu überlaufen */
+  .tab-bar {
+    flex-wrap: wrap;
+  }
+  .tab-btn {
+    flex: 1 1 auto;
+    text-align: center;
+    padding: 8px 10px;
+    font-size: 0.82rem;
+  }
 }
 
 /* ===== PAGE LAYOUT HELPERS ===== */
@@ -1350,6 +1368,8 @@ th {
   text-align: left;
   color: var(--text-h);
   width: 100%;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .list-item:hover {
@@ -1358,9 +1378,26 @@ th {
 }
 
 .list-icon { font-size: 1.1rem; flex-shrink: 0; }
-.list-name { flex: 1; font-weight: 500; font-size: 0.95rem; }
-.list-meta { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
-.list-arrow { color: var(--muted); font-size: 1rem; margin-left: 4px; }
+.list-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 0.95rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-arrow { color: var(--muted); font-size: 1rem; margin-left: 4px; flex-shrink: 0; }
 
 /* ===== VIEW TOGGLE ===== */
 .page-header-actions { display: flex; gap: 4px; margin-left: auto; }
@@ -2097,6 +2134,11 @@ table { margin-top: 0; }
   .dashboard-quick .card-grid {
     grid-template-columns: 1fr;
   }
+
+  /* Auf sehr schmalen Bildschirmen reicht kein Platz mehr für Metatext (Adresse/Beschreibung) */
+  .list-meta {
+    display: none;
+  }
 }
 
 /* ===== ROOM CARD (template-based room display) ===== */
@@ -2431,5 +2473,25 @@ table { margin-top: 0; }
   background: #fff;
   border: 1px solid #cbd5e1;
   flex-shrink: 0;
+}
+
+/* ===== PDF-DESIGNER MOBILE HINWEIS ===== */
+/* Am Ende der Datei platziert, damit die Regel unabhängig von der Deklarationsreihenfolge
+   die Basisregel `.pdf-canvas-wrapper { display: flex; }` zuverlässig überschreibt. */
+@media (max-width: 900px) {
+  .pdf-canvas-wrapper { display: none; }
+  .pdf-designer::after {
+    content: "🖥️ Der PDF-Designer ist für die Bearbeitung auf einem PC oder Tablet mit größerem Bildschirm ausgelegt. Bitte wechseln Sie das Gerät, um Designs zu erstellen oder zu bearbeiten.";
+    display: block;
+    margin-top: 16px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    color: var(--muted);
+    font-size: 0.95rem;
+    text-align: center;
+    line-height: 1.5;
+  }
 }
 

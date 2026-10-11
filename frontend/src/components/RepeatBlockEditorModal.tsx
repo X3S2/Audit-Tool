@@ -42,7 +42,43 @@ const makeChild = (type: DesignElement['type']): DesignElement => {
  * this editor — only the per-iteration layout changes from the old fixed auto-layout).
  */
 export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields, onClose, onSave }) => {
-  const [children, setChildren] = useState<DesignElement[]>(() => (block.children ?? []).map(c => ({ ...c, style: { ...c.style } })))
+  const roomFieldOptions: FieldOption[] = [
+    { key: 'roomName', label: 'Raumname' },
+    { key: 'category', label: 'Kategorie' },
+    ...templateFields.filter(f => fieldScope(f.type) !== 'site').map(f => ({ key: f.name, label: f.name }))
+  ]
+  const siteFieldOptions: FieldOption[] = [
+    { key: 'siteName', label: 'Standortname' },
+    ...templateFields.filter(f => fieldScope(f.type) === 'site').map(f => ({ key: f.name, label: f.name }))
+  ]
+  const allFieldOptions = [...roomFieldOptions, ...siteFieldOptions]
+
+  // Beim ersten Öffnen (noch kein eigenes Layout gespeichert) werden die vorher in der einfachen
+  // Feldliste markierten Datenfelder als bereits sortierbare Feld-Elemente übernommen, statt mit
+  // einem leeren Canvas zu starten — der Nutzer soll sie nur noch anordnen, nicht neu auswählen müssen.
+  const buildInitialChildren = (): DesignElement[] => {
+    if (block.children && block.children.length > 0) {
+      return block.children.map(c => ({ ...c, style: { ...c.style } }))
+    }
+    const preselected = block.fields ?? []
+    if (preselected.length === 0) return []
+    const rowHeight = 22
+    const rowGap = 4
+    const width = Math.max(120, block.width - 20)
+    return preselected.map((key, i) => {
+      const label = allFieldOptions.find(f => f.key === key)?.label || key
+      const child = makeChild('repeat-field')
+      child.fieldKey = key
+      child.content = `${label}: `
+      child.x = 10
+      child.y = 10 + i * (rowHeight + rowGap)
+      child.width = width
+      child.height = rowHeight
+      return child
+    })
+  }
+
+  const [children, setChildren] = useState<DesignElement[]>(buildInitialChildren)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [dragging, setDragging] = useState<{ id: string; ox: number; oy: number; mx: number; my: number } | null>(null)
   const [resizing, setResizing] = useState<{ id: string; ow: number; oh: number; mx: number; my: number } | null>(null)
@@ -123,17 +159,6 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [selectedId, deleteChild])
-
-  const roomFieldOptions: FieldOption[] = [
-    { key: 'roomName', label: 'Raumname' },
-    { key: 'category', label: 'Kategorie' },
-    ...templateFields.filter(f => fieldScope(f.type) !== 'site').map(f => ({ key: f.name, label: f.name }))
-  ]
-  const siteFieldOptions: FieldOption[] = [
-    { key: 'siteName', label: 'Standortname' },
-    ...templateFields.filter(f => fieldScope(f.type) === 'site').map(f => ({ key: f.name, label: f.name }))
-  ]
-  const allFieldOptions = [...roomFieldOptions, ...siteFieldOptions]
 
   const renderChild = (c: DesignElement) => {
     const isSel = selectedId === c.id

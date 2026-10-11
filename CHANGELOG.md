@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.10.1] - 2026-10-11
+
+### Wiederholblock-Vorbelegung, Kopfzeilen-Druckbereich & Mobile-Optimierungen (fix004.md)
+
+#### PDF-Designer: Wiederholender Block übernimmt vorab gewählte Felder in den Layout-Editor
+- Öffnet man den freien Layout-Editor für einen wiederholenden Block, der bereits über die einfache Feld-Listen-Auswahl mit Feldern belegt wurde, erscheinen diese Felder jetzt automatisch als anordenbare/sortierbare Elemente im Editor, statt stillschweigend zu verschwinden
+- Jedes vorab gewählte Feld wird als eigenes „Feld-Variable"-Element mit Label-Präfix (z. B. „Raumname: ") untereinander angelegt und kann anschließend frei verschoben, umsortiert oder angepasst werden
+
+#### PDF-Designer: Kopfzeile wird korrekt außerhalb des Druckbereichs gedruckt
+- Die Kopfzeile wurde bisher innerhalb des oberen Randes des Druckbereichs platziert und konnte sich mit dort platzierten Design-Elementen überschneiden — sie liegt nun wie die Fußzeile sauber außerhalb des Druckbereichs mit Sicherheitsabstand zur physischen Seitenkante
+
+#### Mobile Ansicht: Tabellen überlaufen nicht mehr die Seitenbreite
+- Alle Tabellen (Räume/Objekte, Checklisten, Dokumente, Datenablage, Kategorien, Standorte, Auditvorlagen, Benutzerverwaltung, Backup, Logs) lassen sich im Mobile-Design jetzt innerhalb der Tabelle selbst horizontal scrollen, um z. B. Aktions-Buttons oder Bilder-Spalten zu erreichen, statt die gesamte Seite in die Breite zu drücken
+
+#### Mobile Ansicht: Listen-Einträge (Standorte, Audit-Vorlagen) laufen nicht mehr über
+- Lange Adress- bzw. Beschreibungstexte in den Listen-Einträgen werden jetzt per Ellipsis gekürzt bzw. auf sehr schmalen Bildschirmen vollständig ausgeblendet, statt über den Rahmen des Listen-Eintrags hinauszulaufen
+
+#### Mobile Ansicht: Tab-Leiste (Räume/Grunddaten/Checklisten/Dokumente) bricht um
+- Die Tab-Leiste innerhalb eines Standorts läuft nicht mehr über die Bildschirmbreite hinaus, sondern bricht bei Bedarf in eine zweite Zeile um
+
+#### Mobile Ansicht: PDF-Designer zeigt Hinweis statt komplexer Canvas-Oberfläche
+- Da der PDF-Designer auf eine Maus-/Tastatur-gestützte Bearbeitung auf großen Bildschirmen ausgelegt ist, wird auf mobilen Geräten jetzt ein Hinweis angezeigt, einen PC oder ein Tablet mit größerem Bildschirm zu verwenden, statt die unbedienbare Canvas-Oberfläche darzustellen
+
 ## [1.10.0] - 2026-10-11
 
 ### PDF-Designer: Freier Wiederholblock-Editor, Kopf-/Fußzeilen-Ausrichtung & diverse Bedienbarkeits-Fixes (fix003.md)

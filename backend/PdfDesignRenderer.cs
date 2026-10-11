@@ -216,10 +216,15 @@ public static class PdfDesignRenderer
         var pageHeight = pageSize.GetHeight();
         var pageWidth = pageSize.GetWidth();
 
+        // Kopf-/Fußzeile werden bewusst außerhalb des Druckbereichs positioniert (im oberen/unteren
+        // Seitenrand), damit sie sich nicht mit im Druckbereich platzierten Design-Elementen überschneiden
+        // können — sowohl am Bildschirm (Canvas-Vorschau) als auch beim tatsächlichen Ausdruck.
+        const float bandGapFromPrintArea = 3f;
+
         if (!string.IsNullOrWhiteSpace(texts.header))
         {
             var text = Substitute(texts.header, variables);
-            var rect = new Rectangle(Margin, pageHeight - Margin - HeaderBandHeight, pageWidth - Margin * 2, HeaderBandHeight);
+            var rect = new Rectangle(Margin, pageHeight - Margin + bandGapFromPrintArea, pageWidth - Margin * 2, HeaderBandHeight);
             using var canvas = new Canvas(pdfPage, rect);
             canvas.Add(new Paragraph(text).SetFontSize(9).SetFontColor(ColorFromHex("#64748b")).SetTextAlignment(texts.headerAlign));
         }
@@ -227,7 +232,7 @@ public static class PdfDesignRenderer
         if (!string.IsNullOrWhiteSpace(texts.footer))
         {
             var text = Substitute(texts.footer, variables);
-            var rect = new Rectangle(Margin, Margin - FooterBandHeight, pageWidth - Margin * 2, FooterBandHeight);
+            var rect = new Rectangle(Margin, Margin - bandGapFromPrintArea - FooterBandHeight, pageWidth - Margin * 2, FooterBandHeight);
             using var canvas = new Canvas(pdfPage, rect);
             canvas.Add(new Paragraph(text).SetFontSize(9).SetFontColor(ColorFromHex("#64748b")).SetTextAlignment(texts.footerAlign));
         }
