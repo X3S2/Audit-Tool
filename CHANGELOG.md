@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.7.7] - 2026-10-11
+
+### CRUD-Erweiterungen, Logs, Mobile-Fix, PDF-Ausrichtung
+
+#### PDF Designer — Element-Ausrichtung am Druckbereich
+- Wenn ein Element ausgewählt ist, erscheinen 6 Ausrichtungs-Buttons in der Toolbar:
+  - `⇤` Links am Druckbereich ausrichten
+  - `↔` Horizontal zentrieren
+  - `⇥` Rechts am Druckbereich ausrichten
+  - `⇡` Oben am Druckbereich ausrichten
+  - `↕` Vertikal zentrieren
+  - `⇣` Unten am Druckbereich ausrichten
+
+#### Backend — neue Endpoints
+- `PUT/DELETE /api/categories/{id}` — Kategorie bearbeiten/löschen
+- `PUT/DELETE /api/standorte/{id}` — Standort bearbeiten/löschen
+- `PUT/DELETE /api/templates/{id}` — Vorlage bearbeiten/löschen
+- `PUT/DELETE /api/rooms/{id}` — Raum bearbeiten/löschen
+- `GET /api/admin/logs` — System-Logs via AuditLogger (JSONL-Datei)
+
+#### Einstellungen — Edit/Delete für alle Objekte
+- **Kategorien**: ✏️ Bearbeiten (mit Propagation-Hinweis), ✕ Löschen (verhindert wenn Standorte vorhanden)
+  - Zeigt Anzahl der zugeordneten Standorte
+- **Standorte**: ✏️ Bearbeiten (alle Felder), ✕ Löschen (verhindert wenn Audits vorhanden)
+  - Zeigt Anzahl der Audits pro Standort; "Aktiv/Inaktiv"-Status durch echte Daten ersetzt
+- **Vorlagen**: ✏️ Bearbeiten mit Feld-Reordering (↑↓ Buttons), ✕ Löschen verhindert wenn in Verwendung
+  - Zeigt Anzahl der Audits pro Vorlage
+- **Checklisten**: ✏️ Bearbeiten + ✕ Löschen (bereits löschen, jetzt auch bearbeiten)
+
+#### Audits — Räume bearbeiten/löschen
+- Neue "Aktionen"-Spalte in der Raumtabelle
+- ✏️ Klick füllt das Formular zum Bearbeiten
+- ✕ Löscht den Raum (mit Bestätigungs-Dialog)
+
+#### System-Logs
+- Echte Logs aus Backend (`/api/admin/logs`) geladen
+- Textfeld-Filter nach Aktion oder Details
+- Tabellarische Darstellung mit Zeitstempel, Benutzer-ID, Aktion
+
+#### Mobile-Design Fix
+- Header jetzt horizontal auf Mobile (statt vertical)
+- Profil-Name versteckt auf Mobile (nur Avatar sichtbar)
+- Seitentitel versteckt auf Mobile (spart Platz)
+- `app-container` auf Mobile scrollbar
+- Stats-Grid: 2×2 auf Mobile statt 1×4
+- Formular-Grid: 1 Spalte auf Mobile
+- Tabellen: horizontal scrollbar auf Mobile
+
+#### Dashboard
+- Schnellzugriff-Kacheln unter den Statistiken
+  - 📋 Audits, 💾 Datenablage, 📍 Standorte (Admin)
+- Direktnavigation ohne NAV-Menü öffnen
+
+### Status
+- ✅ TypeScript Build: 0 Fehler (24 Module)
+- ✅ Docker Rebuild: Erfolgreich
+- ✅ GitHub: `cbc3064` auf master
+
 ## [1.7.6] - 2026-10-10
 
 ### PDF-Designer v2 (Mehrseiter WYSIWYG) + UI Spacing Fix
