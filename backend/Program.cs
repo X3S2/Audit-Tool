@@ -280,13 +280,13 @@ app.MapPost("/api/rooms", [Authorize] (CreateRoomRequest request, AuditStore sto
         return Results.BadRequest(new { message = "Standort und Raumname sind erforderlich." });
     }
 
-    var room = store.CreateRoom(request.SiteId, request.Name, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty);
+    var room = store.CreateRoom(request.SiteId, request.Name, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty, request.FieldsJson ?? "{}");
     return Results.Ok(room);
 });
 
 app.MapPut("/api/rooms/{roomId:int}", [Authorize] (int roomId, CreateRoomRequest request, AuditStore store) =>
 {
-    var updated = store.UpdateRoom(roomId, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty);
+    var updated = store.UpdateRoom(roomId, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty, request.FieldsJson ?? "{}");
     return updated is null ? Results.NotFound() : Results.Ok(updated);
 });
 
@@ -965,10 +965,10 @@ public sealed class AuditStore
         return template;
     }
 
-    public AuditRoom CreateRoom(int siteId, string name, string description, string capacity, string area, string notes)
+    public AuditRoom CreateRoom(int siteId, string name, string description, string capacity, string area, string notes, string fieldsJson = "{}")
     {
         var id = _rooms.Count == 0 ? 1 : _rooms.Max(x => x.Id) + 1;
-        var room = new AuditRoom(id, siteId, name, description, capacity, area, notes);
+        var room = new AuditRoom(id, siteId, name, description, capacity, area, notes) { FieldsJson = fieldsJson };
         _rooms.Add(room);
         Persist();
         return room;
@@ -1108,11 +1108,11 @@ public sealed class AuditStore
 
     public void DeleteTemplate(int id) { _templates.RemoveAll(t => t.Id == id); Persist(); }
 
-    public AuditRoom? UpdateRoom(int id, string name, string description, string capacity, string area, string notes)
+    public AuditRoom? UpdateRoom(int id, string name, string description, string capacity, string area, string notes, string fieldsJson = "{}")
     {
         var idx = _rooms.FindIndex(r => r.Id == id);
         if (idx < 0) return null;
-        var updated = _rooms[idx] with { Name = name, Description = description, Capacity = capacity, Area = area, Notes = notes };
+        var updated = _rooms[idx] with { Name = name, Description = description, Capacity = capacity, Area = area, Notes = notes, FieldsJson = fieldsJson };
         _rooms[idx] = updated;
         Persist();
         return updated;
@@ -1407,7 +1407,11 @@ public sealed record AppUser(int Id, string UserName, string Password, string Ro
 
 public sealed record AuditCategory(int Id, string Name, string Description);
 public sealed record AuditSite(int Id, int CategoryId, string Name, string Address, string Phone, string CaretakerPhone, bool Active);
-public sealed record AuditRoom(int Id, int SiteId, string Name, string Description, string Capacity, string Area, string Notes);
+public sealed record AuditRoom(int Id, int SiteId, string Name, string Description, string Capacity, string Area, string Notes)
+{
+    public string FieldsJson { get; init; } = "{}";
+}
+
 public sealed record AuditObject(int Id, int RoomId, string Name, string ObjectType, string Status, string Notes);
 public sealed record AuditChecklistEntry(int Id, int AuditId, int TemplateFieldId, string Question, string Answer, string Status);
 public sealed record AuditInstance(int Id, int SiteId, int TemplateId, string Title, string TemplateName, string CreatedBy, DateTime CreatedAtUtc, string Status, IEnumerable<AuditChecklistEntry> ChecklistEntries);
@@ -1424,7 +1428,10 @@ public sealed record ResetPasswordRequest(string NewPassword);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record CreateCategoryRequest(string Name, string Description);
 public sealed record CreateSiteRequest(int CategoryId, string Name, string Address, string Phone, string CaretakerPhone);
-public sealed record CreateRoomRequest(int SiteId, string Name, string Description, string? Capacity, string? Area, string? Notes);
+public sealed record CreateRoomRequest(int SiteId, string Name, string Description, string? Capacity, string? Area, string? Notes)
+{
+    public string? FieldsJson { get; init; }
+}
 public sealed record CreateObjectRequest(int RoomId, string Name, string? ObjectType, string? Status, string? Notes);
 public sealed record CreateAuditRequest(int SiteId, int TemplateId, string Title);
 public sealed record CreateChecklistEntryRequest(string? Question, string? Answer, string? Status);
