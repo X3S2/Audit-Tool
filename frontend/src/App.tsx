@@ -40,6 +40,7 @@ type Site = {
   phone: string
   caretakerPhone: string
   active: boolean
+  groundDataJson?: string
 }
 
 type TemplateField = {
@@ -186,6 +187,53 @@ function readTheme(): ThemeMode {
 }
 
 const canManageUsers = (role: string) => ['Superadmin', 'Admin'].includes(role)
+type TemplateFieldScope = 'room' | 'site'
+type EditableTemplateField = {
+  name: string
+  type: string
+  order: number
+  required: boolean
+  dropdownOptions: string
+  scope: TemplateFieldScope
+}
+
+const parseTemplateFieldType = (typeValue: string) => {
+  const parts = typeValue.split('|').map((part) => part.trim()).filter(Boolean)
+  const baseType = parts[0] ?? 'text'
+  const optionsText = parts.find((part) => part.startsWith('options:'))?.replace('options:', '').trim() ?? ''
+  const scope: TemplateFieldScope = parts.some((part) => part === 'scope:site') ? 'site' : 'room'
+  const options = optionsText
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return { baseType, optionsText, options, scope }
+}
+
+const encodeTemplateFieldType = (field: EditableTemplateField) => {
+  let encoded = field.type
+  if (field.type === 'dropdown' && field.dropdownOptions.trim()) {
+    encoded += `|options:${field.dropdownOptions.trim()}`
+  }
+  if (field.scope === 'site') {
+    encoded += '|scope:site'
+  }
+  return encoded
+}
+
+const parseStringMap = (raw: string | undefined) => {
+  if (!raw) {
+    return {} as Record<string, string>
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return Object.fromEntries(
+      Object.entries(parsed).map(([key, value]) => [key, typeof value === 'string' ? value : String(value ?? '')])
+    )
+  } catch {
+    return {} as Record<string, string>
+  }
+}
 
 function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => readTheme())
@@ -228,8 +276,8 @@ function App() {
   const [logs, setLogs] = useState<Array<{timestamp: string; action: string; details?: string; userId: number}>>([])
   const [logFilter, setLogFilter] = useState('')
   // Vorlagen field builder state
-  const [templateFields, setTemplateFields] = useState<Array<{name: string; type: string; order: number; required: boolean; dropdownOptions: string}>>([
-    { name: '', type: 'text', order: 1, required: true, dropdownOptions: '' }
+  const [templateFields, setTemplateFields] = useState<EditableTemplateField[]>([
+    { name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }
   ])
   // Export mode
   const [exportMode, setExportMode] = useState<'site' | 'all'>('site')
@@ -271,7 +319,7 @@ function App() {
   const [siteForm, setSiteForm] = useState({ categoryId: '1', name: '', address: '', phone: '', caretakerPhone: '' })
   const [roomForm, setRoomForm] = useState({ siteId: '1', name: '', description: '', capacity: '', area: '', notes: '' })
   const [roomFieldValues, setRoomFieldValues] = useState<Record<string, string>>({})
-  const [roomImages, setRoomImages] = useState<Array<{id: string; file?: File; dataUrl: string; name: string}>>([])
+  const [siteGroundDataValues, setSiteGroundDataValues] = useState<Record<string, string>>({})
   const [editingRoomId, setEditingRoomId] = useState<number | null>(null)
   // Image gallery modal
   const [galleryModalImages, setGalleryModalImages] = useState<string[]>([])
@@ -280,8 +328,7 @@ function App() {
   const [objectForm, setObjectForm] = useState({ roomId: '1', name: '', objectType: '', status: 'Gut', notes: '' })
   const [templateForm, setTemplateForm] = useState({
     name: '',
-    description: '',
-    fields: 'Raumname|text|1|true\nZustand|dropdown|2|true\nKommentar|textarea|3|false'
+    description: ''
   })
   const [auditForm, setAuditForm] = useState({ siteId: '1', templateId: '1', title: '' })
   const [checklistForm, setChecklistForm] = useState({ auditId: '', question: '', answer: '', status: 'offen' })
@@ -303,12 +350,27 @@ function App() {
     // Clear page-specific error on navigation
     setError('')
     setShowErrorBanner(false)
+    setEditingCategory(null)
+    setEditingSite(null)
+    setEditingTemplate(null)
+    setEditingChecklistTemplate(null)
+    setEditingUser(null)
+    setShowNewUserForm(false)
     // Reset room form on page change
     setRoomForm({ siteId: '1', name: '', description: '', capacity: '', area: '', notes: '' })
     setRoomFieldValues({})
-    setRoomImages([])
+    setSiteGroundDataValues({})
     setEditingRoomId(null)
   }, [page])
+
+  useEffect(() => {
+    if (!auditSelectedSite) {
+      setSiteGroundDataValues({})
+      return
+    }
+
+    setSiteGroundDataValues(parseStringMap(auditSelectedSite.groundDataJson))
+  }, [auditSelectedSite?.id])
 
   useEffect(() => {
     if (!session || !imageGalleryObject) {
@@ -929,30 +991,32 @@ function App() {
     }
 
     try {
-      const lines = templateForm.fields
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => line.split('|'))
-        .map((parts) => ({
-          name: parts[0],
-          type: parts[1] ?? 'text',
-          order: Number(parts[2] ?? '1'),
-          relevantForProgress: parts[3] ? parts[3].toLowerCase() === 'true' : true
+      if (!templateForm.name.trim()) {
+        throw new Error('Der Vorlagenname ist erforderlich.')
+      }
+
+      const fields = templateFields
+        .filter((field) => field.name.trim())
+        .map((field, index) => ({
+          name: field.name.trim(),
+          type: encodeTemplateFieldType(field),
+          order: index + 1,
+          relevantForProgress: field.required
         }))
 
       const template = await apiRequest<Template>('/api/templates', session, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: templateForm.name,
-          description: templateForm.description,
-          fields: lines
+          name: templateForm.name.trim(),
+          description: templateForm.description.trim(),
+          fields
         })
       })
 
       setTemplates((previous) => [...previous, template])
-      setTemplateForm({ name: '', description: '', fields: 'Raumname|text|1|true\nZustand|dropdown|2|true' })
+      setTemplateForm({ name: '', description: '' })
+      setTemplateFields([{ name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }])
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Vorlage konnte nicht gespeichert werden.')
     }
@@ -1257,10 +1321,13 @@ function App() {
                                 <div className="form-grid">
                                   {auditSelectedTemplate.fields.map(field=>{
                                     const val = roomFieldValues[field.name] || ''
-                                    const typeParts = field.type.split('|')
-                                    const baseType = typeParts[0]
-                                    const options = typeParts.find(p=>p.startsWith('options:'))?.replace('options:','').split(',').map(s=>s.trim()) || []
+                                    const { baseType, options, scope } = parseTemplateFieldType(field.type)
+                                    if (scope !== 'room') {
+                                      return null
+                                    }
+
                                     if (baseType === 'image') {
+                                      const imageList = val.split('||').filter(Boolean)
                                       return (
                                         <div key={field.id} className="full-width">
                                           <label>{field.name}{field.relevantForProgress?' *':''}</label>
@@ -1269,24 +1336,53 @@ function App() {
                                               📷 Bilder hinzufügen
                                               <input type="file" accept="image/*" multiple style={{display:'none'}} onChange={async e=>{
                                                 const files = Array.from(e.target.files||[])
+                                                if (files.length === 0) {
+                                                  return
+                                                }
+
+                                                const newImages: string[] = []
                                                 for (const file of files) {
                                                   const compressed = await compressImage(file)
-                                                  const reader = new FileReader()
-                                                  reader.onload = ev => setRoomImages(p=>[...p,{id:`img-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,file:compressed as File,dataUrl:ev.target?.result as string,name:file.name}])
-                                                  reader.readAsDataURL(compressed)
+                                                  const dataUrl = await new Promise<string>((resolve, reject) => {
+                                                    const reader = new FileReader()
+                                                    reader.onload = ev => resolve(ev.target?.result as string)
+                                                    reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'))
+                                                    reader.readAsDataURL(compressed)
+                                                  })
+                                                  newImages.push(dataUrl)
                                                 }
+
+                                                setRoomFieldValues(previous => {
+                                                  const existing = (previous[field.name] ?? '').split('||').filter(Boolean)
+                                                  return { ...previous, [field.name]: [...existing, ...newImages].join('||') }
+                                                })
                                                 e.target.value=''
                                               }} />
                                             </label>
-                                            {roomImages.length > 0 && (
+                                            {imageList.length > 0 && (
                                               <div className="room-image-thumbs">
-                                                {roomImages.map((img,imgIdx)=>(
-                                                  <div key={img.id} className="room-image-thumb">
-                                                    <img src={img.dataUrl} alt={img.name} onClick={()=>{setGalleryModalImages(roomImages.map(i=>i.dataUrl));setGalleryModalIndex(imgIdx);setGalleryModalZoom(1)}} />
-                                                    <button type="button" className="thumb-remove" onClick={()=>setRoomImages(p=>p.filter(x=>x.id!==img.id))}>✕</button>
+                                                {imageList.map((imageSrc,imgIdx)=>(
+                                                  <div key={`${field.name}-${imgIdx}`} className="room-image-thumb">
+                                                    <img src={imageSrc} alt={`${field.name}-${imgIdx+1}`} onClick={()=>{setGalleryModalImages(imageList);setGalleryModalIndex(imgIdx);setGalleryModalZoom(1)}} />
+                                                    <button type="button" className="thumb-remove" onClick={()=>setRoomFieldValues(previous=>{
+                                                      const current = (previous[field.name] ?? '').split('||').filter(Boolean)
+                                                      return { ...previous, [field.name]: current.filter((_, idx) => idx !== imgIdx).join('||') }
+                                                    })}>✕</button>
                                                     <div style={{display:'flex',gap:'2px',position:'absolute',bottom:2,left:2}}>
-                                                      <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>setRoomImages(p=>{if(imgIdx===0)return p;const n=[...p];[n[imgIdx-1],n[imgIdx]]=[n[imgIdx],n[imgIdx-1]];return n})}>←</button>
-                                                      <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>setRoomImages(p=>{if(imgIdx===p.length-1)return p;const n=[...p];[n[imgIdx],n[imgIdx+1]]=[n[imgIdx+1],n[imgIdx]];return n})}>→</button>
+                                                      <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>setRoomFieldValues(previous=>{
+                                                        const current = (previous[field.name] ?? '').split('||').filter(Boolean)
+                                                        if (imgIdx===0) return previous
+                                                        const next = [...current]
+                                                        ;[next[imgIdx-1],next[imgIdx]]=[next[imgIdx],next[imgIdx-1]]
+                                                        return { ...previous, [field.name]: next.join('||') }
+                                                      })}>←</button>
+                                                      <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>setRoomFieldValues(previous=>{
+                                                        const current = (previous[field.name] ?? '').split('||').filter(Boolean)
+                                                        if (imgIdx===current.length-1) return previous
+                                                        const next = [...current]
+                                                        ;[next[imgIdx],next[imgIdx+1]]=[next[imgIdx+1],next[imgIdx]]
+                                                        return { ...previous, [field.name]: next.join('||') }
+                                                      })}>→</button>
                                                     </div>
                                                   </div>
                                                 ))}
@@ -1343,72 +1439,90 @@ function App() {
                                   setRooms(p=>[...p,res])
                                 }
                                 setRoomForm({siteId:String(auditSelectedSite.id),name:'',description:'',capacity:'',area:'',notes:''})
-                                setRoomFieldValues({});setRoomImages([]);setEditingRoomId(null)
+                                setRoomFieldValues({});setEditingRoomId(null)
                               }}>{editingRoomId?'Änderungen speichern':'Raum speichern'}</button>
-                              {editingRoomId&&<button type="button" className="secondary-button" onClick={()=>{setEditingRoomId(null);setRoomForm({siteId:'1',name:'',description:'',capacity:'',area:'',notes:''});setRoomFieldValues({});setRoomImages([])}}>Abbrechen</button>}
+                              {editingRoomId&&<button type="button" className="secondary-button" onClick={()=>{setEditingRoomId(null);setRoomForm({siteId:'1',name:'',description:'',capacity:'',area:'',notes:''});setRoomFieldValues({})}}>Abbrechen</button>}
                             </div>
                           </div>
 
-                          {/* Raumliste */}
+                          {/* Raumliste als Tabelle */}
                           {rooms.filter(r=>r.siteId===auditSelectedSite.id).length===0
                             ? <p className="empty-hint" style={{marginTop:'16px'}}>Noch keine Räume für diesen Standort.</p>
-                            : (
-                              <div className="room-list" style={{marginTop:'16px'}}>
-                                {rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>{
-                                  let fields: Record<string,string> = {}
-                                  try { fields = JSON.parse(r.fieldsJson||'{}') } catch {}
-                                  const imgFields = auditSelectedTemplate.fields.filter(f=>f.type==='image'||f.type.startsWith('image'))
-                                  const textFields = auditSelectedTemplate.fields.filter(f=>!f.type.startsWith('image'))
-                                  return (
-                                    <div key={r.id} className="room-card">
-                                      <div className="room-card-header">
-                                        <strong className="room-card-name">🚪 {r.name}</strong>
-                                        <div style={{display:'flex',gap:'6px'}}>
-                                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>{
-                                            setEditingRoomId(r.id)
-                                            setRoomForm({siteId:String(r.siteId),name:r.name,description:r.description,capacity:r.capacity,area:r.area,notes:r.notes})
-                                            try{setRoomFieldValues(JSON.parse(r.fieldsJson||'{}'))}catch{setRoomFieldValues({})}
-                                            setRoomImages([])
-                                          }}>✏️ Bearbeiten</button>
-                                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={async()=>{
-                                            if(!session)return
-                                            if(!confirm(`Raum "${r.name}" wirklich löschen?`))return
-                                            await apiRequest(`/api/rooms/${r.id}`,session,{method:'DELETE'})
-                                            setRooms(p=>p.filter(x=>x.id!==r.id))
-                                          }}>✕</button>
-                                        </div>
-                                      </div>
-                                      {textFields.length>0&&(
-                                        <div className="room-card-fields">
-                                          {textFields.map(f=>(
-                                            <span key={f.id} className="room-field-item">
-                                              <span className="room-field-label">{f.name}:</span>
-                                              <span className="room-field-value">{fields[f.name]||<em style={{color:'var(--muted)'}}>—</em>}</span>
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-                                      {imgFields.length>0&&fields[imgFields[0].name]&&(
-                                        <div className="room-card-images">
-                                          {(fields[imgFields[0].name]||'').split('||').filter(Boolean).map((src,idx)=>(
-                                            <img key={idx} src={src} alt="" className="room-thumb" onClick={()=>{
-                                              setGalleryModalImages((fields[imgFields[0].name]||'').split('||').filter(Boolean))
-                                              setGalleryModalIndex(idx)
-                                              setGalleryModalZoom(1)
-                                            }} />
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            )
+                            : (() => {
+                                const roomFields = auditSelectedTemplate.fields.filter(f=>{
+                                  const {scope} = parseTemplateFieldType(f.type)
+                                  return scope === 'room'
+                                })
+                                const imgFields = roomFields.filter(f=>{
+                                  const {baseType} = parseTemplateFieldType(f.type)
+                                  return baseType === 'image'
+                                })
+                                const textFields = roomFields.filter(f=>{
+                                  const {baseType} = parseTemplateFieldType(f.type)
+                                  return baseType !== 'image'
+                                })
+                                const hasImages = imgFields.length > 0
+                                return (
+                                  <div className="table-wrapper" style={{marginTop:'16px'}}>
+                                    <table>
+                                      <thead>
+                                        <tr>
+                                          <th>Raumname</th>
+                                          {textFields.slice(0,3).map(f=><th key={f.id}>{f.name}</th>)}
+                                          {hasImages && <th>Bilder</th>}
+                                          <th>Aktionen</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>{
+                                          const fieldMap = parseStringMap(r.fieldsJson)
+                                          const imgUrls = imgFields.length > 0 ? (fieldMap[imgFields[0].name] ?? '').split('||').filter(Boolean) : []
+                                          return (
+                                            <tr key={r.id} className={editingRoomId===r.id ? 'row-editing' : undefined}>
+                                              <td><strong>{r.name}</strong></td>
+                                              {textFields.slice(0,3).map(f=>{
+                                                const {baseType} = parseTemplateFieldType(f.type)
+                                                const val = fieldMap[f.name] ?? ''
+                                                return <td key={f.id} style={{fontSize:'0.88rem'}}>{baseType==='checkbox'?(val==='true'?'✓':'✗'):val||<em style={{color:'var(--muted)'}}>—</em>}</td>
+                                              })}
+                                              {hasImages && (
+                                                <td>
+                                                  {imgUrls.length > 0
+                                                    ? <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>{setGalleryModalImages(imgUrls);setGalleryModalIndex(0);setGalleryModalZoom(1)}}>🖼 {imgUrls.length} Bild{imgUrls.length!==1?'er':''}</button>
+                                                    : <em style={{color:'var(--muted)',fontSize:'0.8rem'}}>—</em>
+                                                  }
+                                                </td>
+                                              )}
+                                              <td>
+                                                <div style={{display:'flex',gap:'6px'}}>
+                                                  <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>{
+                                                    setEditingRoomId(r.id)
+                                                    setRoomForm({siteId:String(r.siteId),name:r.name,description:r.description,capacity:r.capacity,area:r.area,notes:r.notes})
+                                                    setRoomFieldValues(parseStringMap(r.fieldsJson))
+                                                    window.scrollTo({top:0,behavior:'smooth'})
+                                                  }}>✏️</button>
+                                                  <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={async()=>{
+                                                    if(!session)return
+                                                    if(!confirm(`Raum "${r.name}" wirklich löschen?`))return
+                                                    await apiRequest(`/api/rooms/${r.id}`,session,{method:'DELETE'})
+                                                    setRooms(p=>p.filter(x=>x.id!==r.id))
+                                                  }}>✕</button>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          )
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )
+                              })()
                           }
                         </div>
                       )}
                       {auditTab==='grunddaten'&&(
                         <div className="tab-content">
+                          {/* Feststehende Standort-Grundinfos */}
                           <div className="info-grid">
                             <div className="info-row"><span>Name</span><strong>{auditSelectedSite.name}</strong></div>
                             <div className="info-row"><span>Adresse</span><strong>{auditSelectedSite.address||'-'}</strong></div>
@@ -1417,6 +1531,57 @@ function App() {
                             <div className="info-row"><span>Räume gesamt</span><strong>{rooms.filter(r=>r.siteId===auditSelectedSite.id).length}</strong></div>
                             <div className="info-row"><span>Audit-Vorlage</span><strong>{auditSelectedTemplate.name}</strong></div>
                           </div>
+                          {/* Vorlage-Grunddatenfelder (scope:site) */}
+                          {auditSelectedTemplate.fields.filter(f=>parseTemplateFieldType(f.type).scope==='site').length > 0 && (
+                            <div style={{marginTop:'24px',paddingTop:'20px',borderTop:'1px solid var(--border)'}}>
+                              <h4 style={{margin:'0 0 14px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Grunddaten-Felder aus Vorlage „{auditSelectedTemplate.name}"</h4>
+                              <div className="form-grid">
+                                {auditSelectedTemplate.fields.filter(f=>parseTemplateFieldType(f.type).scope==='site').map(field=>{
+                                  const {baseType, options} = parseTemplateFieldType(field.type)
+                                  const val = siteGroundDataValues[field.name] ?? ''
+                                  if (baseType === 'dropdown' && options.length > 0) {
+                                    return (
+                                      <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
+                                        <select value={val} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))}>
+                                          <option value="">-- wählen --</option>
+                                          {options.map(opt=><option key={opt} value={opt}>{opt}</option>)}
+                                        </select>
+                                      </label>
+                                    )
+                                  }
+                                  if (baseType === 'checkbox') {
+                                    return (
+                                      <label key={field.id} style={{flexDirection:'row',alignItems:'center',gap:'8px',cursor:'pointer'}}>
+                                        <input type="checkbox" checked={val==='true'} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.checked?'true':'false'}))} />
+                                        {field.name}{field.relevantForProgress?' *':''}
+                                      </label>
+                                    )
+                                  }
+                                  if (baseType === 'textarea') {
+                                    return (
+                                      <label key={field.id} className="full-width">{field.name}{field.relevantForProgress?' *':''}
+                                        <textarea rows={3} value={val} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))} style={{resize:'vertical'}} />
+                                      </label>
+                                    )
+                                  }
+                                  return (
+                                    <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
+                                      <input type={baseType==='number'?'number':'text'} value={val} onChange={e=>setSiteGroundDataValues(p=>({...p,[field.name]:e.target.value}))} />
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                              <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={async()=>{
+                                if(!session)return
+                                try{
+                                  const updated = await apiRequest<Site>(`/api/standorte/${auditSelectedSite.id}/grounddata`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groundDataJson:JSON.stringify(siteGroundDataValues)})})
+                                  setSites(p=>p.map(s=>s.id===updated.id?updated:s))
+                                }catch(err){
+                                  setError(err instanceof Error?err.message:'Grunddaten konnten nicht gespeichert werden.')
+                                }
+                              }}>💾 Grunddaten speichern</button>
+                            </div>
+                          )}
                         </div>
                       )}
                       {auditTab==='dokumente'&&(
@@ -1538,6 +1703,21 @@ function App() {
                         <div className="info-row"><span>Räume</span><strong>{rooms.filter(r=>r.siteId===datenablageSite.id).length}</strong></div>
                         <div className="info-row"><span>Audits</span><strong>{audits.filter(a=>a.siteId===datenablageSite.id).length}</strong></div>
                       </div>
+                      {(() => {
+                        const groundData = parseStringMap(datenablageSite.groundDataJson)
+                        const keys = Object.keys(groundData).filter(k=>groundData[k])
+                        if (keys.length === 0) return null
+                        return (
+                          <div style={{marginTop:'20px',paddingTop:'16px',borderTop:'1px solid var(--border)'}}>
+                            <h4 style={{margin:'0 0 12px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Erfasste Grunddaten</h4>
+                            <div className="info-grid">
+                              {keys.map(key=>(
+                                <div key={key} className="info-row"><span>{key}</span><strong>{groundData[key]}</strong></div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
                   )}
                   {datenablageTab==='dokumente'&&(
@@ -1674,7 +1854,7 @@ function App() {
                   <div style={{marginTop:'16px'}}>
                     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
                       <strong>Datenfelder</strong>
-                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:''}])}>+ Feld</button>
+                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:'',scope:'room'}])}>+ Feld</button>
                     </div>
                     <div className="field-builder">
                       {templateFields.map((field,idx)=>(
@@ -1694,6 +1874,10 @@ function App() {
                               <option value="checkbox">☑ Checkbox</option>
                               <option value="image">📷 Bild</option>
                             </select>
+                            <select className="field-scope-select" value={field.scope} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,scope:e.target.value as TemplateFieldScope}:f))}>
+                              <option value="room">Räume/Objekte</option>
+                              <option value="site">Grunddaten</option>
+                            </select>
                             <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />Pflicht</label>
                             <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
                           </div>
@@ -1710,16 +1894,26 @@ function App() {
                   <div style={{display:'flex',gap:'8px',marginTop:'16px'}}>
                     <button type="button" className="primary-button" onClick={async()=>{
                       if(!session||!editingTemplate)return
-                      const fields=templateFields.map(f=>({name:f.name,type:f.type+(f.dropdownOptions?`|options:${f.dropdownOptions}`:''),order:f.order,relevantForProgress:f.required}))
-                      const res=await apiRequest<Template>(`/api/templates/${editingTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingTemplate.name,description:editingTemplate.description,fields})})
+                      if(!editingTemplate.name.trim()){
+                        setError('Der Vorlagenname ist erforderlich.')
+                        return
+                      }
+                      const fields=templateFields
+                        .filter(f=>f.name.trim())
+                        .map((f,index)=>({name:f.name.trim(),type:encodeTemplateFieldType(f),order:index+1,relevantForProgress:f.required}))
+                      const res=await apiRequest<Template>(`/api/templates/${editingTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingTemplate.name.trim(),description:editingTemplate.description.trim(),fields})})
                       setTemplates(p=>p.map(t=>t.id===res.id?res:t))
                       setEditingTemplate(null)
+                      setTemplateFields([{ name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }])
                     }}>Speichern</button>
-                    <button type="button" className="secondary-button" onClick={()=>setEditingTemplate(null)}>Abbrechen</button>
+                    <button type="button" className="secondary-button" onClick={()=>{
+                      setEditingTemplate(null)
+                      setTemplateFields([{ name: '', type: 'text', order: 1, required: true, dropdownOptions: '', scope: 'room' }])
+                    }}>Abbrechen</button>
                   </div>
                 </div>
               ) : (
-                <div className="form-card">
+                <form className="form-card" onSubmit={createTemplate}>
                   <h4>Neue Vorlage erstellen</h4>
                   <div className="form-grid">
                     <label>Vorlagenname<input value={templateForm.name} onChange={e=>setTemplateForm(p=>({...p,name:e.target.value}))} placeholder="z.B. Standard-Schulaudit" required /></label>
@@ -1728,7 +1922,7 @@ function App() {
                   <div style={{marginTop:'16px'}}>
                     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
                       <strong>Datenfelder</strong>
-                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:''}])}>+ Feld</button>
+                      <button type="button" className="secondary-button" style={{padding:'5px 10px',fontSize:'0.82rem'}} onClick={()=>setTemplateFields(p=>[...p,{name:'',type:'text',order:p.length+1,required:true,dropdownOptions:'',scope:'room'}])}>+ Feld</button>
                     </div>
                     <div className="field-builder">
                       {templateFields.map((field,idx)=>(
@@ -1739,6 +1933,10 @@ function App() {
                             <select className="field-type-select" value={field.type} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,type:e.target.value}:f))}>
                               <option value="text">Text</option><option value="number">Zahl</option><option value="dropdown">▼ Auswahl</option><option value="textarea">Langer Text</option><option value="checkbox">☑ Checkbox</option><option value="image">📷 Bild</option>
                             </select>
+                            <select className="field-scope-select" value={field.scope} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,scope:e.target.value as TemplateFieldScope}:f))}>
+                              <option value="room">Räume/Objekte</option>
+                              <option value="site">Grunddaten</option>
+                            </select>
                             <label className="field-required-check"><input type="checkbox" checked={field.required} onChange={e=>setTemplateFields(p=>p.map((f,i)=>i===idx?{...f,required:e.target.checked}:f))} />Pflicht</label>
                             <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setTemplateFields(p=>p.filter((_,i)=>i!==idx).map((f,i)=>({...f,order:i+1})))}>✕</button>
                           </div>
@@ -1748,13 +1946,8 @@ function App() {
                       {templateFields.length===0&&<p className="empty-hint">Noch keine Felder.</p>}
                     </div>
                   </div>
-                  <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={(e)=>{
-                    const syntheticFields=templateFields.map(f=>`${f.name}|${f.type}${f.dropdownOptions?`|options:${f.dropdownOptions}`:''}|${f.order}|${f.required}`).join('\n')
-                    setTemplateForm(p=>({...p,fields:syntheticFields}))
-                    createTemplate(e as unknown as React.FormEvent)
-                    setTemplateFields([{name:'',type:'text',order:1,required:true,dropdownOptions:''}])
-                  }}>Vorlage speichern</button>
-                </div>
+                  <button type="submit" className="primary-button" style={{marginTop:'16px'}}>Vorlage speichern</button>
+                </form>
               )}
               <div style={{marginTop:'24px'}}>
                 <h4 style={{marginBottom:'12px',color:'var(--muted)',fontSize:'0.85rem',textTransform:'uppercase',letterSpacing:'0.08em'}}>Vorhandene Vorlagen ({templates.length})</h4>
@@ -1765,7 +1958,20 @@ function App() {
                         <td>{t.name}</td><td>{t.description||'-'}</td><td>{t.fields.length}</td>
                         <td><span className="status-badge">{audits.filter(a=>a.templateId===t.id).length} Audits</span></td>
                         <td><div style={{display:'flex',gap:'6px'}}>
-                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>{setEditingTemplate(t);setTemplateFields(t.fields.map(f=>({name:f.name,type:f.type,order:f.order,required:f.relevantForProgress,dropdownOptions:''})))}}>✏️ Bearbeiten</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>{
+                            setEditingTemplate(t)
+                            setTemplateFields(t.fields.map((f,index)=>{
+                              const parsed = parseTemplateFieldType(f.type)
+                              return {
+                                name: f.name,
+                                type: parsed.baseType,
+                                order: f.order ?? index + 1,
+                                required: f.relevantForProgress,
+                                dropdownOptions: parsed.optionsText,
+                                scope: parsed.scope
+                              }
+                            }))
+                          }}>✏️ Bearbeiten</button>
                           <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(!session)return;const cnt=audits.filter(a=>a.templateId===t.id).length;if(cnt>0){alert(`Vorlage wird in ${cnt} Audits verwendet und kann nicht gelöscht werden.`);return}if(!confirm(`Vorlage "${t.name}" löschen?`))return;await apiRequest(`/api/templates/${t.id}`,session,{method:'DELETE'});setTemplates(p=>p.filter(x=>x.id!==t.id))}}>✕ Löschen</button>
                         </div></td>
                       </tr>

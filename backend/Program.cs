@@ -123,6 +123,12 @@ app.MapGet("/api/health", () => Results.Ok(new
     sessionTimeoutHours = 8
 }));
 
+static int ResolveUserId(HttpContext httpContext)
+{
+    var rawUserId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    return int.TryParse(rawUserId, out var userId) ? userId : 0;
+}
+
 app.MapPost("/api/auth/login", (LoginRequest request, UserStore users, RefreshTokenStore refreshTokens) =>
 {
     if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
@@ -200,7 +206,7 @@ app.MapGet("/api/dashboard", [Authorize] () => Results.Ok(new
 }));
 
 app.MapGet("/api/categories", [Authorize] (AuditStore store) => Results.Ok(store.Categories));
-app.MapPost("/api/categories", [Authorize(Policy = "RequireAdminAccess")] (CreateCategoryRequest request, AuditStore store) =>
+app.MapPost("/api/categories", [Authorize(Policy = "RequireAdminAccess")] async (CreateCategoryRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name))
     {
@@ -208,23 +214,32 @@ app.MapPost("/api/categories", [Authorize(Policy = "RequireAdminAccess")] (Creat
     }
 
     var category = store.CreateCategory(request.Name, request.Description ?? string.Empty);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Kategorie erstellt", $"Kategorie \"{category.Name}\" (ID {category.Id})");
     return Results.Ok(category);
 });
 
-app.MapPut("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, CreateCategoryRequest request, AuditStore store) =>
+app.MapPut("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, CreateCategoryRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     var updated = store.UpdateCategory(id, request.Name ?? string.Empty, request.Description ?? string.Empty);
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
+    if (updated is null)
+    {
+        return Results.NotFound();
+    }
+
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Kategorie bearbeitet", $"Kategorie \"{updated.Name}\" (ID {updated.Id})");
+    return Results.Ok(updated);
 });
 
-app.MapDelete("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, AuditStore store) =>
+app.MapDelete("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
+    var category = store.Categories.FirstOrDefault(c => c.Id == id);
     store.DeleteCategory(id);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Kategorie gelöscht", category is null ? $"Kategorie ID {id}" : $"Kategorie \"{category.Name}\" (ID {id})");
     return Results.Ok(new { message = "Kategorie gelöscht." });
 });
 
 app.MapGet("/api/standorte", [Authorize] (AuditStore store) => Results.Ok(store.Sites));
-app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] (CreateSiteRequest request, AuditStore store) =>
+app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] async (CreateSiteRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name) || request.CategoryId <= 0)
     {
@@ -232,23 +247,51 @@ app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] (Create
     }
 
     var site = store.CreateSite(request.CategoryId, request.Name, request.Address ?? string.Empty, request.Phone ?? string.Empty, request.CaretakerPhone ?? string.Empty);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Standort erstellt", $"Standort \"{site.Name}\" (ID {site.Id})");
     return Results.Ok(site);
 });
 
-app.MapPut("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, UpdateSiteRequest request, AuditStore store) =>
+app.MapPut("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, UpdateSiteRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
-    var updated = store.UpdateSite(id, request.CategoryId, request.Name ?? string.Empty, request.Address ?? string.Empty, request.Phone ?? string.Empty, request.CaretakerPhone ?? string.Empty);
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
+    var updated = store.UpdateSite(
+        id,
+        request.CategoryId,
+        request.Name ?? string.Empty,
+        request.Address ?? string.Empty,
+        request.Phone ?? string.Empty,
+        request.CaretakerPhone ?? string.Empty,
+        request.GroundDataJson);
+    if (updated is null)
+    {
+        return Results.NotFound();
+    }
+
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Standort bearbeitet", $"Standort \"{updated.Name}\" (ID {updated.Id})");
+    return Results.Ok(updated);
 });
 
-app.MapDelete("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, AuditStore store) =>
+app.MapPut("/api/standorte/{id:int}/grounddata", [Authorize] async (int id, UpdateGroundDataRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
+    var updated = store.UpdateSiteGroundData(id, request.GroundDataJson ?? "{}");
+    if (updated is null)
+    {
+        return Results.NotFound();
+    }
+
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Grunddaten gespeichert", $"Standort \"{updated.Name}\" (ID {updated.Id})");
+    return Results.Ok(updated);
+});
+
+app.MapDelete("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
+{
+    var site = store.Sites.FirstOrDefault(s => s.Id == id);
     store.DeleteSite(id);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Standort gelöscht", site is null ? $"Standort ID {id}" : $"Standort \"{site.Name}\" (ID {id})");
     return Results.Ok(new { message = "Standort gelöscht." });
 });
 
 app.MapGet("/api/templates", [Authorize] (AuditStore store) => Results.Ok(store.Templates));
-app.MapPost("/api/templates", [Authorize(Policy = "RequireAdminAccess")] (CreateTemplateRequest request, AuditStore store) =>
+app.MapPost("/api/templates", [Authorize(Policy = "RequireAdminAccess")] async (CreateTemplateRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name))
     {
@@ -256,24 +299,38 @@ app.MapPost("/api/templates", [Authorize(Policy = "RequireAdminAccess")] (Create
     }
 
     var template = store.CreateTemplate(request.Name, request.Description ?? string.Empty, request.Fields ?? Array.Empty<TemplateFieldRequest>());
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Vorlage erstellt", $"Vorlage \"{template.Name}\" (ID {template.Id})");
     return Results.Ok(template);
 });
 
-app.MapPut("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, CreateTemplateRequest request, AuditStore store) =>
+app.MapPut("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, CreateTemplateRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new { message = "Der Vorlagenname ist erforderlich." });
+    }
+
     var updated = store.UpdateTemplate(id, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Fields ?? Array.Empty<TemplateFieldRequest>());
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
+    if (updated is null)
+    {
+        return Results.NotFound();
+    }
+
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Vorlage bearbeitet", $"Vorlage \"{updated.Name}\" (ID {updated.Id})");
+    return Results.Ok(updated);
 });
 
-app.MapDelete("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] (int id, AuditStore store) =>
+app.MapDelete("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
+    var template = store.Templates.FirstOrDefault(t => t.Id == id);
     store.DeleteTemplate(id);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Vorlage gelöscht", template is null ? $"Vorlage ID {id}" : $"Vorlage \"{template.Name}\" (ID {id})");
     return Results.Ok(new { message = "Vorlage gelöscht." });
 });
 
 app.MapGet("/api/rooms", [Authorize] (AuditStore store, int? siteId) =>
     Results.Ok(siteId.HasValue ? store.Rooms.Where(room => room.SiteId == siteId.Value).ToList() : store.Rooms));
-app.MapPost("/api/rooms", [Authorize] (CreateRoomRequest request, AuditStore store) =>
+app.MapPost("/api/rooms", [Authorize] async (CreateRoomRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (request.SiteId <= 0 || string.IsNullOrWhiteSpace(request.Name))
     {
@@ -281,18 +338,27 @@ app.MapPost("/api/rooms", [Authorize] (CreateRoomRequest request, AuditStore sto
     }
 
     var room = store.CreateRoom(request.SiteId, request.Name, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty, request.FieldsJson ?? "{}");
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Raum erstellt", $"Raum \"{room.Name}\" (ID {room.Id}) am Standort {room.SiteId}");
     return Results.Ok(room);
 });
 
-app.MapPut("/api/rooms/{roomId:int}", [Authorize] (int roomId, CreateRoomRequest request, AuditStore store) =>
+app.MapPut("/api/rooms/{roomId:int}", [Authorize] async (int roomId, CreateRoomRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     var updated = store.UpdateRoom(roomId, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty, request.FieldsJson ?? "{}");
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
+    if (updated is null)
+    {
+        return Results.NotFound();
+    }
+
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Raum bearbeitet", $"Raum \"{updated.Name}\" (ID {updated.Id})");
+    return Results.Ok(updated);
 });
 
-app.MapDelete("/api/rooms/{roomId:int}", [Authorize] (int roomId, AuditStore store) =>
+app.MapDelete("/api/rooms/{roomId:int}", [Authorize] async (int roomId, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
+    var room = store.Rooms.FirstOrDefault(r => r.Id == roomId);
     store.DeleteRoom(roomId);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Raum gelöscht", room is null ? $"Raum ID {roomId}" : $"Raum \"{room.Name}\" (ID {roomId})");
     return Results.Ok(new { message = "Raum gelöscht." });
 });
 
@@ -945,7 +1011,10 @@ public sealed class AuditStore
     public AuditSite CreateSite(int categoryId, string name, string address, string phone, string caretakerPhone)
     {
         var id = _sites.Count == 0 ? 1 : _sites.Max(x => x.Id) + 1;
-        var site = new AuditSite(id, categoryId, name, address, phone, caretakerPhone, true);
+        var site = new AuditSite(id, categoryId, name, address, phone, caretakerPhone, true)
+        {
+            GroundDataJson = "{}"
+        };
         _sites.Add(site);
         Persist();
         return site;
@@ -1081,11 +1150,29 @@ public sealed class AuditStore
 
     public void DeleteCategory(int id) { _categories.RemoveAll(c => c.Id == id); Persist(); }
 
-    public AuditSite? UpdateSite(int id, int categoryId, string name, string address, string phone, string caretakerPhone)
+    public AuditSite? UpdateSite(int id, int categoryId, string name, string address, string phone, string caretakerPhone, string? groundDataJson = null)
     {
         var idx = _sites.FindIndex(s => s.Id == id);
         if (idx < 0) return null;
-        var updated = _sites[idx] with { CategoryId = categoryId, Name = name, Address = address, Phone = phone, CaretakerPhone = caretakerPhone };
+        var updated = _sites[idx] with
+        {
+            CategoryId = categoryId,
+            Name = name,
+            Address = address,
+            Phone = phone,
+            CaretakerPhone = caretakerPhone,
+            GroundDataJson = groundDataJson ?? _sites[idx].GroundDataJson
+        };
+        _sites[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public AuditSite? UpdateSiteGroundData(int id, string groundDataJson)
+    {
+        var idx = _sites.FindIndex(s => s.Id == id);
+        if (idx < 0) return null;
+        var updated = _sites[idx] with { GroundDataJson = string.IsNullOrWhiteSpace(groundDataJson) ? "{}" : groundDataJson };
         _sites[idx] = updated;
         Persist();
         return updated;
@@ -1406,7 +1493,10 @@ public sealed record AppUser(int Id, string UserName, string Password, string Ro
 }
 
 public sealed record AuditCategory(int Id, string Name, string Description);
-public sealed record AuditSite(int Id, int CategoryId, string Name, string Address, string Phone, string CaretakerPhone, bool Active);
+public sealed record AuditSite(int Id, int CategoryId, string Name, string Address, string Phone, string CaretakerPhone, bool Active)
+{
+    public string GroundDataJson { get; init; } = "{}";
+}
 public sealed record AuditRoom(int Id, int SiteId, string Name, string Description, string Capacity, string Area, string Notes)
 {
     public string FieldsJson { get; init; } = "{}";
@@ -1438,7 +1528,10 @@ public sealed record CreateChecklistEntryRequest(string? Question, string? Answe
 public sealed record UpdateChecklistEntryRequest(string? Answer, string? Status);
 public sealed record TemplateFieldRequest(string Name, string Type, int? Order, bool? RelevantForProgress);
 public sealed record CreateTemplateRequest(string Name, string Description, IEnumerable<TemplateFieldRequest>? Fields);
-public sealed record UpdateSiteRequest(int CategoryId, string? Name, string? Address, string? Phone, string? CaretakerPhone);
+public sealed record UpdateSiteRequest(int CategoryId, string? Name, string? Address, string? Phone, string? CaretakerPhone)
+{
+    public string? GroundDataJson { get; init; }
+}
+public sealed record UpdateGroundDataRequest(string? GroundDataJson);
 public sealed record CreatePdfDesignRequest(string Name, string? Description, string? ConfigJson);
 public sealed record CreateChecklistTemplateRequest(string Name, int? TemplateId, string? ColumnsJson);
-

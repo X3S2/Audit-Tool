@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.7.8] - 2026-10-11
+
+### Grunddaten-Felder, Raumliste Tabelle, Bilder-Fix, Logging, Persistenz
+
+#### Audit-Vorlagen — Scope für Felder
+- Jedes Feld in der Vorlage hat jetzt eine **Scope-Auswahl** (Räume/Objekte vs. Grunddaten)
+- `scope:room` → erscheint im Raumformular
+- `scope:site` → erscheint im Grunddaten-Tab des Standorts
+- Beim Bearbeiten einer Vorlage werden `optionsText` und `scope` korrekt aus dem gespeicherten Typ geladen
+
+#### Grunddaten-Tab — Vorlage-Felder
+- Unterhalb der festen Standortinfos (Name, Adresse etc.) erscheint ein neuer Bereich
+- Nur Felder mit `scope:site` aus der gewählten Audit-Vorlage werden dort angezeigt
+- Werte können direkt dort erfasst und per „Grunddaten speichern" persistiert werden
+- Backend: neuer Endpunkt `PUT /api/standorte/{id}/grounddata` — speichert nur `GroundDataJson`
+- Datenablage: Grunddaten-Tab zeigt gespeicherte Grunddatenfelder (read-only) an
+
+#### Räume/Objekte — Tabellenansicht statt Karten
+- Raumliste jetzt als kompakte **Tabelle** (nicht mehr als Karten)
+- Zeigt Raumname + bis zu 3 Textfelder aus der Vorlage
+- Bilder-Spalte: Button `🖼 X Bild(er)` öffnet Galerie-Modal — nur wenn Bilder vorhanden
+- ✏️ / ✕ Aktionsbuttons in der letzten Spalte
+- Bearbeiten-Klick scrollt zum Formular und hebt die bearbeitete Zeile hervor
+
+#### Bilder-Speicherung — Korrektur
+- Bilder wurden beim Upload nicht in `roomFieldValues` persistiert
+- Jetzt: Bilder werden als Base64-Strings mit `||` als Trenner direkt im Feldeintrag gespeichert
+- Beim Bearbeiten eines Raums werden bestehende Bilder aus `fieldsJson` korrekt geladen
+- Bild-Reihenfolge änderbar per ← / → Buttons
+
+#### Logs — CRUD-Aktionen werden geloggt
+- Backend: alle CRUD-Endpoints loggen jetzt via `AuditLogger.LogActionAsync()`
+  - Kategorien: Erstellen, Bearbeiten, Löschen
+  - Standorte: Erstellen, Bearbeiten, Löschen, Grunddaten speichern
+  - Vorlagen: Erstellen, Bearbeiten, Löschen (inkl. Name-Pflichtfeldprüfung im PUT)
+  - Räume: Erstellen, Bearbeiten, Löschen
+- Benutzer-ID wird via `ClaimTypes.NameIdentifier` ausgelesen
+
+#### Template-Formular — Fixes
+- Fehler „Der Vorlagenname ist erforderlich" trat auch beim Bearbeiten auf, weil der PUT-Endpoint die Validierung fehlte → Pflichtprüfung jetzt im Backend-PUT vorhanden
+- Formular ist jetzt ein `<form>` mit `onSubmit` statt lose Button-Click
+- Bearbeiten-Modus: `optionsText` wird korrekt in das Eingabefeld geladen
+- Abbrechen-Button setzt `templateFields` auf den Initialwert zurück
+
+#### Editier-Zustand wird bei Seitenwechsel zurückgesetzt
+- `editingCategory`, `editingSite`, `editingTemplate`, `editingChecklistTemplate`, `editingUser`, `showNewUserForm` werden beim Wechsel der Hauptseite alle auf `null`/`false` zurückgesetzt
+
+#### Docker — Datenpersistenz
+- Neues named Volume `audit_storage_data` in `docker-compose.yml`
+- Volume wird auf `/storage` im Backend-Container gemountet
+- SQLite-Datenbank, Backups, Uploads und Logs überleben jetzt `docker-compose down && up --build`
+
+### Status
+- ✅ TypeScript Build: 0 Fehler (24 Module)
+- ✅ Backend Build: 0 Fehler (nur Paket-Warnungen)
+- ✅ Docker Rebuild: Erfolgreich, alle 3 Container Up
+- ✅ API Health Check: OK
+
 ## [1.7.7] - 2026-10-11
 
 ### CRUD-Erweiterungen, Logs, Mobile-Fix, PDF-Ausrichtung

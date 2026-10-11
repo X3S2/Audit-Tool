@@ -32,6 +32,8 @@ services:
       - "5050:8080"
     depends_on:
       - audittool-postgres-db
+    volumes:
+      - audit_storage_data:/storage
     networks:
       - audittool-network
 
@@ -50,6 +52,7 @@ services:
 
 volumes:
   audit_postgres_data:
+  audit_storage_data:
 
 networks:
   audittool-network:

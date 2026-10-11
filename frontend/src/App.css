@@ -1491,6 +1491,25 @@ thead { background: rgba(148,163,184,0.06); }
   max-width: 120px;
 }
 
+.field-scope-select {
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--color-gradient-end);
+  font-size: 0.82rem;
+  cursor: pointer;
+  min-width: 80px;
+  max-width: 130px;
+  font-weight: 500;
+}
+
+tr.row-editing {
+  background: rgba(37,99,235,0.08);
+  outline: 2px solid rgba(37,99,235,0.3);
+  outline-offset: -2px;
+}
+
 .dropdown-options-row {
   display: flex;
   align-items: center;
