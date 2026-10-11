@@ -1761,60 +1761,10 @@ tr.row-editing {
   overflow: hidden;
 }
 
-.pdf-properties {
-  width: 240px;
-  flex-shrink: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-  max-height: 842px;
-  overflow-y: auto;
-}
-
 .pdf-properties h4 {
   margin: 0 0 12px;
   font-size: 0.9rem;
   color: var(--text-h);
-}
-
-.pdf-prop-section {
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.pdf-prop-section:last-child {
-  border-bottom: none;
-}
-
-.pdf-prop-section label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.82rem;
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.pdf-prop-section input[type="text"],
-.pdf-prop-section input[type="number"],
-.pdf-prop-section select,
-.pdf-prop-section textarea {
-  padding: 5px 8px;
-  background: var(--input-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-h);
-  font-size: 0.85rem;
-}
-
-.pdf-prop-section input[type="color"] {
-  height: 32px;
-  padding: 2px;
-  border-radius: 6px;
-  cursor: pointer;
-  width: 100%;
 }
 
 .pdf-format-btn {
@@ -2018,17 +1968,20 @@ table { margin-top: 0; }
   flex-direction: column;
 }
 
-/* Properties panel - no scroll, auto-width */
+/* Properties panel - darf bis zum Rand von .pdf-canvas-body wachsen, bleibt aber innerhalb des eigenen Rahmens scrollbar */
 .pdf-properties {
-  min-width: 220px;
-  max-width: 280px;
+  flex: 1 1 320px;
+  min-width: 260px;
+  max-width: 460px;
   flex-shrink: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px;
-  overflow: visible;
-  height: fit-content;
+  box-sizing: border-box;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .pdf-properties-empty {
@@ -2089,6 +2042,9 @@ table { margin-top: 0; }
   color: var(--text-h);
   font-size: 0.82rem;
   font-family: inherit;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .pdf-prop-group input[type="color"] {
@@ -2097,6 +2053,34 @@ table { margin-top: 0; }
 
 .pdf-prop-group input[type="range"] {
   width: 100%; cursor: pointer;
+}
+
+/* Checkbox-Zeile im Eigenschaften-Panel: Checkbox + Beschriftung immer in einer Zeile,
+   überschreibt die column-Ausrichtung von ".pdf-prop-group label" */
+.pdf-checkbox-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 0.82rem;
+  font-weight: 400 !important;
+  cursor: pointer;
+  word-break: break-word;
+}
+
+.pdf-field-picker-group {
+  margin-bottom: 10px;
+}
+
+.pdf-field-picker-group-title {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* ===== PDF TOOLBAR SEPARATOR ===== */
@@ -2371,6 +2355,28 @@ table { margin-top: 0; }
   box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
 }
 
+/* ===== STYLED STANDALONE SELECT (außerhalb von .form-grid, z.B. "In Ordner verschieben") ===== */
+.styled-select {
+  padding: var(--input-padding);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--input-border-radius);
+  color: var(--text-h);
+  font-size: var(--input-font-size);
+  font-family: inherit;
+  transition: var(--input-transition);
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.styled-select:focus {
+  outline: none;
+  border-color: rgba(96,165,250,0.6);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+.styled-select:hover {
+  border-color: rgba(148,163,184,0.5);
+}
+
 /* ===== GENERISCHES BESTÄTIGUNGS-MODAL (ersetzt window.confirm) ===== */
 .confirm-modal-overlay {
   position: fixed;
@@ -2393,3 +2399,37 @@ table { margin-top: 0; }
 .confirm-modal h4 { margin: 0 0 12px; font-size: 1.05rem; color: var(--text-h); }
 .confirm-modal p { margin: 0 0 22px; color: var(--muted); font-size: 0.92rem; line-height: 1.5; }
 .confirm-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+.repeat-block-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.repeat-block-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: min(1100px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 20px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+}
+.repeat-block-modal-body {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.repeat-block-modal-canvas {
+  position: relative;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  flex-shrink: 0;
+}
+

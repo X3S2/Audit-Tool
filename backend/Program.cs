@@ -29,8 +29,13 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
+        // Reflects any requesting origin (no wildcard '*' so it still works together with
+        // credentialed requests) rather than a fixed localhost whitelist — the frontend is also
+        // accessed from other devices on the LAN (different IP) and potentially via a reverse
+        // proxy/DynDNS domain (e.g. ipv64.net), whose origins can't be known in advance.
+        // Safe here because authentication uses Bearer tokens (Authorization header), not cookies.
         policy
-            .WithOrigins("http://localhost:5173", "http://localhost:4173", "http://localhost:3000", "http://localhost:4714")
+            .SetIsOriginAllowed(_ => true)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
+import { RepeatBlockEditorModal } from './RepeatBlockEditorModal'
 
 // DIN A4 at 96dpi scale 75% → 596x842 (portrait), 842x596 (landscape)
 const A4_W = 596
@@ -7,14 +8,18 @@ const MARGIN = 36  // print area margin in px
 
 export type DesignElement = {
   id: string
-  type: 'text' | 'variable' | 'image-static' | 'image-audit' | 'table' | 'repeat-block' | 'divider' | 'rectangle'
+  type: 'text' | 'variable' | 'image-static' | 'image-audit' | 'table' | 'repeat-block' | 'divider' | 'rectangle' | 'repeat-field'
   x: number
   y: number
   width: number
   height: number
   content: string
   imageData?: string        // base64 for static images
-  fields?: string[]          // columns for table / repeat-block
+  fields?: string[]          // columns for table / repeat-block (legacy auto-layout for repeat-block)
+  maxRowsPerPage?: number    // optional cap on table rows per page; overflow continues on a new page
+  children?: DesignElement[] // free-form sub-elements of a repeat-block, positioned relative to the block's own top-left corner
+  fieldKey?: string          // for type 'repeat-field' (repeat-block children only): bound room/template/site field key
+  hideIfEmpty?: boolean      // for type 'repeat-field': skip rendering this child for an iteration whose resolved value is empty
   style: {
     fontSize: number
     fontWeight: 'normal' | 'bold'
@@ -38,6 +43,8 @@ export type PageDesign = {
   headerText: string
   footerText: string
   useGlobalHeader: boolean
+  headerAlign?: 'left' | 'center' | 'right'
+  footerAlign?: 'left' | 'center' | 'right'
   elements: DesignElement[]
 }
 
@@ -48,6 +55,10 @@ interface Props {
   globalFooterText: string
   onGlobalHeaderChange: (t: string) => void
   onGlobalFooterChange: (t: string) => void
+  globalHeaderAlign?: 'left' | 'center' | 'right'
+  globalFooterAlign?: 'left' | 'center' | 'right'
+  onGlobalHeaderAlignChange: (a: 'left' | 'center' | 'right') => void
+  onGlobalFooterAlignChange: (a: 'left' | 'center' | 'right') => void
   showPrintArea: boolean
   templateFields?: Array<{ id: number; name: string; type: string }>
 }
@@ -66,6 +77,12 @@ const VARIABLES = [
   { key: '{{totalPages}}', label: 'Gesamtseiten' },
   { key: '{{roomName}}', label: 'Raumname (in Blöcken)' },
 ]
+
+// Vorlagenfeld-Typ hat die Form "baseType|options:a,b,c|scope:site" (scope fehlt => 'room')
+const fieldScope = (typeValue: string): 'room' | 'site' =>
+  typeValue.split('|').map(p => p.trim()).includes('scope:site') ? 'site' : 'room'
+
+const fieldBaseType = (typeValue: string): string => typeValue.split('|')[0]?.trim() || 'text'
 
 const defaultStyle = (): DesignElement['style'] => ({
   fontSize: 11, fontWeight: 'normal', fontStyle: 'normal', textDecoration: 'none',
@@ -90,7 +107,10 @@ const makeEl = (type: DesignElement['type']): DesignElement => {
 
 export const PdfDesignerCanvas: React.FC<Props> = ({
   pages, onPagesChange, globalHeaderText, globalFooterText,
-  onGlobalHeaderChange, onGlobalFooterChange, showPrintArea, templateFields = []
+  onGlobalHeaderChange, onGlobalFooterChange,
+  globalHeaderAlign = 'center', globalFooterAlign = 'center',
+  onGlobalHeaderAlignChange, onGlobalFooterAlignChange,
+  showPrintArea, templateFields = []
 }) => {
   const [currentPageIdx, setCurrentPageIdx] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
@@ -98,6 +118,8 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
   const [dragging, setDragging] = useState<{ id: string; ox: number; oy: number; mx: number; my: number } | null>(null)
   const [resizing, setResizing] = useState<{ id: string; ow: number; oh: number; mx: number; my: number } | null>(null)
   const [showGlobalSettings, setShowGlobalSettings] = useState(false)
+  const [selectedBand, setSelectedBand] = useState<'header' | 'footer' | null>(null)
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -120,6 +142,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
     const el = makeEl(type)
     updateElements([...elements, el])
     setSelected(el.id)
+    setSelectedBand(null)
   }
 
   const updateEl = (id: string, patch: Partial<DesignElement>) => {
@@ -135,11 +158,13 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
   const addPage = () => {
     const newPage: PageDesign = {
       id: `p${Date.now()}`, name: `Seite ${pages.length + 1}`,
-      orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: true, elements: []
+      orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: true,
+      headerAlign: 'center', footerAlign: 'center', elements: []
     }
     onPagesChange([...pages, newPage])
     setCurrentPageIdx(pages.length)
     setSelected(null)
+    setSelectedBand(null)
   }
 
   const deletePage = (idx: number) => {
@@ -148,6 +173,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
     onPagesChange(newPages)
     setCurrentPageIdx(Math.min(idx, newPages.length - 1))
     setSelected(null)
+    setSelectedBand(null)
   }
 
   // Mouse drag handlers
@@ -157,6 +183,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
     const el = elements.find(x => x.id === id)
     if (!el) return
     setSelected(id)
+    setSelectedBand(null)
     setDragging({ id, ox: el.x, oy: el.y, mx: e.clientX, my: e.clientY })
   }
 
@@ -272,14 +299,31 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
         <div style={{ padding: '3px 8px', fontSize: 9, color: '#94a3b8' }}>Füllt sich automatisch mit Audit-Daten · Seitenumbruch wenn nötig</div>
       </div>
     } else if (el.type === 'repeat-block') {
-      inner = <div style={{ width: '100%', height: '100%', border: '2px dashed #7c3aed', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      const hasChildren = (el.children ?? []).length > 0
+      inner = <div style={{ width: '100%', height: '100%', border: '2px dashed #7c3aed', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
         <div style={{ background: 'rgba(124,58,237,0.1)', padding: '3px 8px', fontSize: 10, fontWeight: 'bold', color: '#7c3aed', display: 'flex', gap: 4 }}>🔄 Wiederholender Block — 1× pro Raum/Objekt</div>
-        <div style={{ padding: '3px 8px', fontSize: 10, color: '#64748b', flex: 1 }}>
-          {(el.fields ?? []).length > 0
-            ? `Felder: ${el.fields!.join(', ')}`
-            : 'Felder wählen → Eigenschaften-Panel'}
+        {hasChildren ? (
+          <div style={{ flex: 1, position: 'relative' }}>
+            {el.children!.map(c => (
+              <div key={c.id} style={{
+                position: 'absolute',
+                left: `${(c.x / el.width) * 100}%`, top: `${(c.y / el.height) * 100}%`,
+                width: `${(c.width / el.width) * 100}%`, height: `${(c.height / el.height) * 100}%`,
+                border: '1px solid rgba(124,58,237,0.35)', background: 'rgba(124,58,237,0.06)',
+                fontSize: 7, color: '#7c3aed', overflow: 'hidden', whiteSpace: 'nowrap'
+              }}>{c.type === 'repeat-field' ? '⟨f⟩' : c.type === 'text' ? 'T' : c.type === 'image-static' ? '🖼' : ''}</div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ padding: '3px 8px', fontSize: 10, color: '#64748b', flex: 1 }}>
+            {(el.fields ?? []).length > 0
+              ? `Felder: ${el.fields!.join(', ')}`
+              : 'Felder wählen → Eigenschaften-Panel'}
+          </div>
+        )}
+        <div style={{ padding: '3px 8px', fontSize: 9, color: '#94a3b8' }}>
+          {hasChildren ? `✓ ${el.children!.length} Elemente eigens gestaltet` : 'Block wiederholt sich für jeden Datensatz des Audits'}
         </div>
-        <div style={{ padding: '3px 8px', fontSize: 9, color: '#94a3b8' }}>Block wiederholt sich für jeden Datensatz des Audits</div>
       </div>
     } else if (editingText === el.id) {
       inner = <textarea autoFocus
@@ -351,9 +395,46 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
       {showGlobalSettings && (
         <div className="pdf-global-settings">
           <div className="form-grid">
-            <label>Globale Kopfzeile (alle Seiten)<input value={globalHeaderText} onChange={e => onGlobalHeaderChange(e.target.value)} placeholder="z.B. Firmenname | Vertraulich" /></label>
-            <label>Globale Fußzeile (alle Seiten)<input value={globalFooterText} onChange={e => onGlobalFooterChange(e.target.value)} placeholder="z.B. Seite {{pageNumber}} von {{totalPages}}" /></label>
+            <div>
+              <label>Globale Kopfzeile (alle Seiten)<input value={globalHeaderText} onChange={e => onGlobalHeaderChange(e.target.value)} placeholder="z.B. Firmenname | Vertraulich" /></label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                <select value={globalHeaderAlign} onChange={e => onGlobalHeaderAlignChange(e.target.value as 'left' | 'center' | 'right')} style={{ fontSize: '0.78rem', padding: '2px 4px', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-h)', borderRadius: 6 }}>
+                  <option value="left">⇤ Links</option>
+                  <option value="center">↔ Mitte</option>
+                  <option value="right">⇥ Rechts</option>
+                </select>
+                {VARIABLES.filter(v => v.key !== '{{roomName}}').map(v => (
+                  <button key={v.key} type="button" className="pdf-format-btn" title={v.key} onClick={() => onGlobalHeaderChange(`${globalHeaderText}${globalHeaderText ? ' ' : ''}${v.key}`)}>{v.label}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label>Globale Fußzeile (alle Seiten)<input value={globalFooterText} onChange={e => onGlobalFooterChange(e.target.value)} placeholder="z.B. Seite {{pageNumber}} von {{totalPages}}" /></label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                <select value={globalFooterAlign} onChange={e => onGlobalFooterAlignChange(e.target.value as 'left' | 'center' | 'right')} style={{ fontSize: '0.78rem', padding: '2px 4px', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-h)', borderRadius: 6 }}>
+                  <option value="left">⇤ Links</option>
+                  <option value="center">↔ Mitte</option>
+                  <option value="right">⇥ Rechts</option>
+                </select>
+                {VARIABLES.filter(v => v.key !== '{{roomName}}').map(v => (
+                  <button key={v.key} type="button" className="pdf-format-btn" title={v.key} onClick={() => onGlobalFooterChange(`${globalFooterText}${globalFooterText ? ' ' : ''}${v.key}`)}>{v.label}</button>
+                ))}
+              </div>
+            </div>
           </div>
+          <details style={{ marginTop: 10 }}>
+            <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--muted)' }}>Alle verfügbaren Variablen anzeigen</summary>
+            <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse', marginTop: 6 }}>
+              <tbody>
+                {VARIABLES.filter(v => v.key !== '{{roomName}}').map(v => (
+                  <tr key={v.key}>
+                    <td style={{ padding: '2px 8px 2px 0', fontFamily: 'monospace', color: 'var(--text-h)', whiteSpace: 'nowrap' }}>{v.key}</td>
+                    <td style={{ padding: '2px 4px', color: 'var(--muted)' }}>{v.label}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
         </div>
       )}
 
@@ -366,7 +447,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
             <button type="button" className="pdf-tool-btn" onClick={addPage} style={{ padding: '3px 8px', fontSize: '0.78rem' }}>+ Seite</button>
           </div>
           {pages.map((p, idx) => (
-            <div key={p.id} className={`pdf-page-thumb${idx === currentPageIdx ? ' active' : ''}`} onClick={() => { setCurrentPageIdx(idx); setSelected(null) }}>
+            <div key={p.id} className={`pdf-page-thumb${idx === currentPageIdx ? ' active' : ''}`} onClick={() => { setCurrentPageIdx(idx); setSelected(null); setSelectedBand(null) }}>
               <div className="pdf-page-thumb-preview" style={{ aspectRatio: p.orientation === 'landscape' ? '1.41/1' : '1/1.41' }}>
                 <span style={{ fontSize: 8, color: '#94a3b8', pointerEvents: 'none' }}>{idx + 1}</span>
               </div>
@@ -410,10 +491,19 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
           </div>
 
           {/* The A4 page */}
-          <div ref={canvasRef} className="pdf-page" style={{ width: pageW, height: pageH, position: 'relative' }} onClick={e => { if (e.target === canvasRef.current) setSelected(null) }}>
+          <div ref={canvasRef} className="pdf-page" style={{ width: pageW, height: pageH, position: 'relative' }} onClick={e => { if (e.target === canvasRef.current) { setSelected(null); setSelectedBand(null) } }}>
             {/* Kopfzeile */}
             {showPrintArea && (
-              <div style={{ position: 'absolute', top: 10, left: MARGIN, right: MARGIN, height: 14, fontSize: 8, color: '#94a3b8', display: 'flex', justifyContent: 'space-between', zIndex: 0, pointerEvents: 'none' }}>
+              <div
+                onClick={e => { e.stopPropagation(); setSelected(null); setSelectedBand('header') }}
+                style={{
+                  position: 'absolute', top: 10, left: MARGIN, right: MARGIN, height: 14, fontSize: 8, color: '#94a3b8',
+                  display: 'flex', alignItems: 'center',
+                  justifyContent: (currentPage.useGlobalHeader ? globalHeaderAlign : currentPage.headerAlign) === 'left' ? 'flex-start' : (currentPage.useGlobalHeader ? globalHeaderAlign : currentPage.headerAlign) === 'right' ? 'flex-end' : 'center',
+                  zIndex: 1, cursor: 'pointer',
+                  outline: selectedBand === 'header' ? '1px dashed #6366f1' : 'none', outlineOffset: 2
+                }}
+              >
                 <span>{currentPage.useGlobalHeader ? globalHeaderText : currentPage.headerText}</span>
               </div>
             )}
@@ -425,9 +515,18 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
             {elements.map(renderEl)}
             {/* Fußzeile */}
             {showPrintArea && (
-              <div style={{ position: 'absolute', bottom: 10, left: MARGIN, right: MARGIN, height: 14, fontSize: 8, color: '#94a3b8', display: 'flex', justifyContent: 'space-between', zIndex: 0, pointerEvents: 'none' }}>
+              <div
+                onClick={e => { e.stopPropagation(); setSelected(null); setSelectedBand('footer') }}
+                style={{
+                  position: 'absolute', bottom: 10, left: MARGIN, right: MARGIN, height: 14, fontSize: 8, color: '#94a3b8',
+                  display: 'flex', alignItems: 'center',
+                  justifyContent: (currentPage.useGlobalHeader ? globalFooterAlign : currentPage.footerAlign) === 'left' ? 'flex-start' : (currentPage.useGlobalHeader ? globalFooterAlign : currentPage.footerAlign) === 'right' ? 'flex-end' : 'center',
+                  zIndex: 1, cursor: 'pointer',
+                  outline: selectedBand === 'footer' ? '1px dashed #6366f1' : 'none', outlineOffset: 2
+                }}
+              >
                 <span>{currentPage.useGlobalHeader ? globalFooterText : currentPage.footerText}</span>
-                <span>Seite {currentPageIdx + 1}</span>
+                <span style={{ position: 'absolute', right: 0 }}>Seite {currentPageIdx + 1}</span>
               </div>
             )}
           </div>
@@ -466,9 +565,14 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
                     <optgroup label="Standort-Infos">
                       {VARIABLES.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
                     </optgroup>
-                    {templateFields.length > 0 && (
-                      <optgroup label="Vorlagen-Felder">
-                        {templateFields.map(f => <option key={f.id} value={`{{field:${f.name}}}`}>{f.name}</option>)}
+                    {templateFields.filter(f => fieldScope(f.type) !== 'site').length > 0 && (
+                      <optgroup label="Raum/Objekt-Datenfelder">
+                        {templateFields.filter(f => fieldScope(f.type) !== 'site').map(f => <option key={f.id} value={`{{field:${f.name}}}`}>{f.name}</option>)}
+                      </optgroup>
+                    )}
+                    {templateFields.filter(f => fieldScope(f.type) === 'site').length > 0 && (
+                      <optgroup label="Grunddaten-Datenfelder">
+                        {templateFields.filter(f => fieldScope(f.type) === 'site').map(f => <option key={f.id} value={`{{field:${f.name}}}`}>{f.name}</option>)}
                       </optgroup>
                     )}
                   </select>
@@ -492,37 +596,80 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
 
             {(selectedEl.type === 'table' || selectedEl.type === 'repeat-block') && (
               <div className="pdf-prop-group">
+                {selectedEl.type === 'repeat-block' && (
+                  <div style={{ marginBottom: 10 }}>
+                    <button type="button" className="pdf-tool-btn" style={{ width: '100%' }} onClick={() => setEditingBlockId(selectedEl.id)}>
+                      🖊 {selectedEl.children && selectedEl.children.length > 0 ? `Layout gestalten (${selectedEl.children.length} Elemente)` : 'Eigenes Layout gestalten...'}
+                    </button>
+                    <span style={{ display: 'block', marginTop: 6, fontSize: '0.74rem', color: 'var(--muted)' }}>
+                      {selectedEl.children && selectedEl.children.length > 0
+                        ? 'Freies Layout aktiv — die Felder unten werden ignoriert. Im Editor Elemente entfernen, um zur einfachen Liste zurückzukehren.'
+                        : 'Ohne eigenes Layout werden die unten gewählten Felder automatisch untereinander aufgelistet (Bildfeld links, Rest rechts).'}
+                    </span>
+                  </div>
+                )}
                 <label style={{ marginBottom: 6, display: 'block', fontWeight: 500, fontSize: '0.82rem', color: 'var(--muted)' }}>
-                  {selectedEl.type === 'table' ? 'Tabellenspalten' : 'Block-Felder'}
+                  {selectedEl.type === 'table' ? 'Tabellenspalten' : 'Block-Felder (einfache Liste)'}
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={(selectedEl.fields ?? []).includes('roomName')} onChange={e => {
-                    const cur = selectedEl.fields ?? []
-                    updateEl(selectedEl.id, { fields: e.target.checked ? [...cur, 'roomName'] : cur.filter(x => x !== 'roomName') })
-                  }} /> Raumname
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={(selectedEl.fields ?? []).includes('category')} onChange={e => {
-                    const cur = selectedEl.fields ?? []
-                    updateEl(selectedEl.id, { fields: e.target.checked ? [...cur, 'category'] : cur.filter(x => x !== 'category') })
-                  }} /> Kategorie
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={(selectedEl.fields ?? []).includes('siteName')} onChange={e => {
-                    const cur = selectedEl.fields ?? []
-                    updateEl(selectedEl.id, { fields: e.target.checked ? [...cur, 'siteName'] : cur.filter(x => x !== 'siteName') })
-                  }} /> Standortname
-                </label>
-                {templateFields.map(f => (
-                  <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: '0.82rem', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={(selectedEl.fields ?? []).includes(f.name)} onChange={e => {
-                      const cur = selectedEl.fields ?? []
-                      updateEl(selectedEl.id, { fields: e.target.checked ? [...cur, f.name] : cur.filter(x => x !== f.name) })
-                    }} />
-                    {f.name} <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>({f.type})</span>
+                {(() => {
+                  const cur = selectedEl.fields ?? []
+                  const toggleField = (name: string) => {
+                    updateEl(selectedEl.id, { fields: cur.includes(name) ? cur.filter(x => x !== name) : [...cur, name] })
+                  }
+                  const roomFields = templateFields.filter(f => fieldScope(f.type) !== 'site')
+                  const siteFields = templateFields.filter(f => fieldScope(f.type) === 'site')
+                  return (
+                    <>
+                      <div className="pdf-field-picker-group">
+                        <span className="pdf-field-picker-group-title">Raum/Objekt-Datenfelder</span>
+                        <label className="pdf-checkbox-row">
+                          <input type="checkbox" checked={cur.includes('roomName')} onChange={() => toggleField('roomName')} /> Raumname
+                        </label>
+                        <label className="pdf-checkbox-row">
+                          <input type="checkbox" checked={cur.includes('category')} onChange={() => toggleField('category')} /> Kategorie
+                        </label>
+                        {roomFields.map(f => (
+                          <label key={f.id} className="pdf-checkbox-row">
+                            <input type="checkbox" checked={cur.includes(f.name)} onChange={() => toggleField(f.name)} />
+                            {f.name} <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>({fieldBaseType(f.type)})</span>
+                          </label>
+                        ))}
+                        {roomFields.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Keine weiteren Raum/Objekt-Felder in der Vorlage.</span>}
+                      </div>
+                      <div className="pdf-field-picker-group">
+                        <span className="pdf-field-picker-group-title">Grunddaten-Datenfelder</span>
+                        <label className="pdf-checkbox-row">
+                          <input type="checkbox" checked={cur.includes('siteName')} onChange={() => toggleField('siteName')} /> Standortname
+                        </label>
+                        {siteFields.map(f => (
+                          <label key={f.id} className="pdf-checkbox-row">
+                            <input type="checkbox" checked={cur.includes(f.name)} onChange={() => toggleField(f.name)} />
+                            {f.name} <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>({fieldBaseType(f.type)})</span>
+                          </label>
+                        ))}
+                        {siteFields.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Keine Grunddaten-Felder in der Vorlage.</span>}
+                      </div>
+                      {templateFields.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Vorlage in der Kopfleiste wählen</span>}
+                    </>
+                  )
+                })()}
+                {selectedEl.type === 'table' && (
+                  <label style={{ marginTop: 10, display: 'block' }}>
+                    Max. Zeilen pro Seite
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="unbegrenzt"
+                      value={selectedEl.maxRowsPerPage ?? ''}
+                      onChange={e => updateEl(selectedEl.id, { maxRowsPerPage: e.target.value ? Math.max(1, +e.target.value) : undefined })}
+                    />
                   </label>
-                ))}
-                {templateFields.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Vorlage in der Kopfleiste wählen</span>}
+                )}
+                {selectedEl.type === 'table' && (
+                  <span style={{ display: 'block', marginTop: 4, fontSize: '0.74rem', color: 'var(--muted)' }}>
+                    Bei Überschreitung wird automatisch mit bis zu dieser Zeilenanzahl auf einer neuen Seite fortgesetzt (zählt als eigene Seite).
+                  </span>
+                )}
               </div>
             )}
 
@@ -558,7 +705,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
             )}
 
             <div className="pdf-prop-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.85rem' }}>
+              <label className="pdf-checkbox-row" style={{ fontSize: '0.85rem' }}>
                 <input type="checkbox" checked={selectedEl.style.border} onChange={e => updateStyle(selectedEl.id, { border: e.target.checked })} />
                 Rahmen
               </label>
@@ -572,12 +719,90 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
               )}
             </div>
           </div>
+        ) : selectedBand ? (
+          <div className="pdf-properties">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h4 style={{ margin: 0, fontSize: '0.9rem' }}>{selectedBand === 'header' ? 'Kopfzeile' : 'Fußzeile'}</h4>
+              <button type="button" className="pdf-tool-btn" onClick={() => setSelectedBand(null)} style={{ padding: '3px 8px', fontSize: '0.78rem' }}>Schließen</button>
+            </div>
+            {(() => {
+              const isGlobal = currentPage.useGlobalHeader
+              const text = selectedBand === 'header' ? (isGlobal ? globalHeaderText : currentPage.headerText) : (isGlobal ? globalFooterText : currentPage.footerText)
+              const align = selectedBand === 'header' ? (isGlobal ? globalHeaderAlign : (currentPage.headerAlign ?? 'center')) : (isGlobal ? globalFooterAlign : (currentPage.footerAlign ?? 'center'))
+              const setText = (t: string) => {
+                if (isGlobal) { selectedBand === 'header' ? onGlobalHeaderChange(t) : onGlobalFooterChange(t) }
+                else { updatePage(selectedBand === 'header' ? { headerText: t } : { footerText: t }) }
+              }
+              const setAlign = (a: 'left' | 'center' | 'right') => {
+                if (isGlobal) { selectedBand === 'header' ? onGlobalHeaderAlignChange(a) : onGlobalFooterAlignChange(a) }
+                else { updatePage(selectedBand === 'header' ? { headerAlign: a } : { footerAlign: a }) }
+              }
+              const insertVar = (key: string) => setText(`${text}${text ? ' ' : ''}${key}`)
+              const bandVars = VARIABLES.filter(v => v.key !== '{{roomName}}')
+              return (
+                <>
+                  {isGlobal && (
+                    <div className="pdf-prop-group">
+                      <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+                        Diese Seite nutzt die globale {selectedBand === 'header' ? 'Kopfzeile' : 'Fußzeile'}. Zum Bearbeiten hier oder "Globale Kopf/Fußzeile" für diese Seite deaktivieren, für seitenspezifischen Text.
+                      </span>
+                    </div>
+                  )}
+                  <div className="pdf-prop-group">
+                    <label>Text<textarea rows={2} value={text} onChange={e => setText(e.target.value)} /></label>
+                  </div>
+                  <div className="pdf-prop-group">
+                    <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: '0.82rem', color: 'var(--muted)' }}>Ausrichtung am Druckbereich</label>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button type="button" className={`pdf-format-btn${align === 'left' ? ' active' : ''}`} onClick={() => setAlign('left')}>⇤ Links</button>
+                      <button type="button" className={`pdf-format-btn${align === 'center' ? ' active' : ''}`} onClick={() => setAlign('center')}>↔ Mitte</button>
+                      <button type="button" className={`pdf-format-btn${align === 'right' ? ' active' : ''}`} onClick={() => setAlign('right')}>⇥ Rechts</button>
+                    </div>
+                  </div>
+                  <div className="pdf-prop-group">
+                    <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: '0.82rem', color: 'var(--muted)' }}>Variable einfügen</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {bandVars.map(v => (
+                        <button key={v.key} type="button" className="pdf-format-btn" title={v.key} onClick={() => insertVar(v.key)}>{v.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="pdf-prop-group">
+                    <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: '0.82rem', color: 'var(--muted)' }}>Verfügbare Variablen</label>
+                    <table style={{ width: '100%', fontSize: '0.76rem', borderCollapse: 'collapse' }}>
+                      <tbody>
+                        {bandVars.map(v => (
+                          <tr key={v.key}>
+                            <td style={{ padding: '2px 4px', fontFamily: 'monospace', color: 'var(--text-h)', whiteSpace: 'nowrap' }}>{v.key}</td>
+                            <td style={{ padding: '2px 4px', color: 'var(--muted)' }}>{v.label}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
         ) : (
           <div className="pdf-properties pdf-properties-empty">
-            <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Element anklicken für Eigenschaften</span>
+            <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Element, Kopf- oder Fußzeile anklicken für Eigenschaften</span>
           </div>
         )}
       </div>
+
+      {editingBlockId && (() => {
+        const blockEl = elements.find(e => e.id === editingBlockId)
+        if (!blockEl) return null
+        return (
+          <RepeatBlockEditorModal
+            block={blockEl}
+            templateFields={templateFields}
+            onClose={() => setEditingBlockId(null)}
+            onSave={children => { updateEl(blockEl.id, { children }); setEditingBlockId(null) }}
+          />
+        )
+      })()}
     </div>
   )
 }

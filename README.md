@@ -1,4 +1,4 @@
-# 🎯 Audit-Tool v1.9.0 – Professionelles Audit-Management
+# 🎯 Audit-Tool v1.10.0 – Professionelles Audit-Management
 
 **Enterprise-Ready | Deutsch | React + TypeScript + ASP.NET Core + PostgreSQL | Docker**
 
@@ -8,7 +8,7 @@
 
 **Audit-Tool** ist eine professionelle, deutschsprachige Web-Anwendung zur Verwaltung von Audits, Standorten, Räumen, Objekten, Bildern und Checklisten. Das System bietet vollständiges Account-Management, PDF-Designer, Checklisten, Datenbankbackups und ein sicheres Token-basiertes Authentifizierungssystem.
 
-### 🎯 Kernfunktionen (v1.9.0)
+### 🎯 Kernfunktionen (v1.10.0)
 
 | Feature | Status |
 |---------|--------|
@@ -23,7 +23,7 @@
 | **Dokumentenverwaltung** | ✅ PDF-Generierung je Audit, Ordner, Umbenennen, Archivieren, Download |
 | **Datenablage-Drilldown** | ✅ Räume/Grunddaten je Audit-Durchlauf einsehbar, Sprung ins Audit |
 | **Backup & Restore** | ✅ Manuell, Zeitplan, Download, Upload, inkl. Logs & lesbarer Struktur |
-| **PDF Designer** | ✅ WYSIWYG, Mehrseiter, Drag & Drop, Variablen |
+| **PDF Designer** | ✅ WYSIWYG, Mehrseiter, Drag & Drop, Variablen, freier Wiederholblock-Editor, Kopf-/Fußzeilen-Ausrichtung |
 | **Persistenz** | ✅ Docker Volume audit_storage_data – kein Datenverlust nach Rebuild |
 | **Checklisten-Designer** | ✅ Spalten definieren, Live-Sync (10s) im Audit-Bereich |
 | **Dark/Light Mode** | ✅ Per-User, CSS-Variablen |
@@ -125,4 +125,4 @@ docker-compose up -d --build
 
 Alle Änderungen sind im [CHANGELOG.md](CHANGELOG.md) dokumentiert.
 
-**Aktuelle Version:** v1.9.0
+**Aktuelle Version:** v1.10.0

@@ -56,3 +56,16 @@
 
 ## ✅ Alle Core-Features komplett & produktionsreif v1.7.1!
 ### 🎯 Nächste Phase: v1.7.2 - Button/Design Modernisierung (noch zu tun)
+
+---
+
+## 📌 Fortsetzung ab v1.7.2 (ausgelagert ins CHANGELOG.md)
+
+Ab Version **v1.7.2** wird die detaillierte Versions- und Änderungshistorie ausschließlich im [CHANGELOG.md](CHANGELOG.md) gepflegt (ein Eintrag pro Version, jeweils mit Datum und vollständiger Beschreibung aller Neuerungen/Fixes). Dieser Masterplan bleibt als Chronik der **Grundlagen-Phasen (v0.0.0 – v1.7.1)** bestehen, damit die ursprüngliche Architektur-Entscheidungsgeschichte nicht verloren geht.
+
+**Seit v1.7.1 umgesetzte Groß-Themen** (Details siehe CHANGELOG.md):
+- v1.8.0: Vollständige Dokumentenverwaltung (Ordner, Umbenennen, Archivieren, Download), Datenablage-Drilldown, Backup-Überarbeitung, Passwort-Sicherheit (PBKDF2)
+- v1.9.0: Checklisten-Live-Sync im Audit-Bereich, vereinheitlichte Audit/PDF-Erstellung, Dokumente-Ordnerverschiebung, Datenexport mit Bildern, Lösch-Bestätigungen als Modal, Testdaten-Bereinigung, Logs zeigen Benutzernamen
+- v1.10.0 (fix003.md): PDF-Designer-Erweiterungen — freier Drag&Drop-Layout-Editor für den wiederholenden Block, Ausrichtung von Kopf-/Fußzeilen-Text am Druckbereich, automatische Tabellen-Zeilenbegrenzung je Seite, Checkbox-Spaltenauswahl für Tabellen, breiteres PDF-Eigenschaften-Panel ohne Scrollbar, formatierte Speicher-Bestätigung, diverse UI- und CORS-Fixes
+
+**Offene Arbeitsgrundlage**: Alle laufenden Feature-Wünsche/Bugfixes werden fortlaufend in `plan/fix00N.md`-Dateien gesammelt und nacheinander abgearbeitet (aktuell abgeschlossen: `fix001.md`, `fix002.md`, `fix003.md`).

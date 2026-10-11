@@ -148,6 +148,8 @@ type PageDesign = {
   headerText: string
   footerText: string
   useGlobalHeader: boolean
+  headerAlign?: 'left' | 'center' | 'right'
+  footerAlign?: 'left' | 'center' | 'right'
   elements: import('./components/PdfDesignerCanvas').DesignElement[]
 }
 
@@ -157,6 +159,8 @@ type PdfDesignConfig = {
   templateIds?: number[]
   globalHeaderText: string
   globalFooterText: string
+  globalHeaderAlign?: 'left' | 'center' | 'right'
+  globalFooterAlign?: 'left' | 'center' | 'right'
   showPrintArea: boolean
   pages: PageDesign[]
 }
@@ -189,7 +193,10 @@ type ChecklistValue = {
 
 const SESSION_KEY = 'audit-tool-session'
 const THEME_KEY = 'audit-tool-theme'
-const API_BASE = 'http://localhost:5050'
+// Resolved dynamically from the current page location so the app keeps working when opened
+// from another device on the network (e.g. http://192.168.x.x:4714) or via a reverse proxy/DynDNS
+// host, instead of always pointing at the browser's own "localhost".
+const API_BASE = `${window.location.protocol}//${window.location.hostname}:5050`
 
 function readSession(): Session | null {
   const raw = localStorage.getItem(SESSION_KEY)
@@ -319,8 +326,10 @@ function App() {
   const [datenablageView, setDatenablageView] = useState<'categories' | 'standorte' | 'standort'>('categories')
   const [datenablageCategory, setDatenablageCategory] = useState<Category | null>(null)
   const [datenablageSite, setDatenablageSite] = useState<Site | null>(null)
-  const [datenablageTab, setDatenablageTab] = useState<'raume' | 'grunddaten' | 'dokumente'>('raume')
+  const [datenablageTab, setDatenablageTab] = useState<'raume' | 'grunddaten' | 'checklisten' | 'dokumente'>('raume')
   const [datenablageSelectedRoomName, setDatenablageSelectedRoomName] = useState<string | null>(null)
+  const [datenablageChecklistTemplate, setDatenablageChecklistTemplate] = useState<Template | null>(null)
+  const [expandedChecklistIds, setExpandedChecklistIds] = useState<Set<number>>(new Set())
   const [pendingRoomEditName, setPendingRoomEditName] = useState<string | null>(null)
   // Dokumente / Dateiablage state (Audits-Seite + Datenablage)
   const [documents, setDocuments] = useState<AuditDocument[]>([])
@@ -352,12 +361,15 @@ function App() {
   // PDF Designer state
   const [pdfDesigns, setPdfDesigns] = useState<PdfDesign[]>([])
   const [editingPdfDesign, setEditingPdfDesign] = useState<PdfDesign | null>(null)
+  const [pdfSaveConfirm, setPdfSaveConfirm] = useState(false)
   const [pdfDesignConfig, setPdfDesignConfig] = useState<PdfDesignConfig>({
     globalHeaderText: '',
     globalFooterText: '',
+    globalHeaderAlign: 'center',
+    globalFooterAlign: 'center',
     showPrintArea: true,
     pages: [
-      { id: 'p1', name: 'Deckblatt', orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: false, elements: [] }
+      { id: 'p1', name: 'Deckblatt', orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: false, headerAlign: 'center', footerAlign: 'center', elements: [] }
     ]
   })
   const [newPdfDesignName, setNewPdfDesignName] = useState('')
@@ -514,6 +526,101 @@ function App() {
     ? checklistTemplates.filter(c => c.templateId === auditSelectedTemplate.id)
     : []
 
+  // Checklisten für die in der Datenablage gewählte Audit-Vorlage (nur Ansicht)
+  const datenablageChecklists = datenablageChecklistTemplate
+    ? checklistTemplates.filter(c => c.templateId === datenablageChecklistTemplate.id)
+    : []
+
+  const toggleChecklistExpanded = (id: number) => {
+    setExpandedChecklistIds(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  // Gemeinsame, aufklappbare Darstellung einer Liste von Checklisten für einen Standort.
+  // Bei genau einer Checkliste ist sie direkt aufgeklappt, bei mehreren standardmäßig eingeklappt.
+  const renderChecklistsSection = (checklistList: ChecklistTemplate[], liveRooms: Room[], readOnly: boolean) => {
+    if (checklistList.length === 0) {
+      return <p className="empty-hint">Für diese Vorlage ist keine Checkliste hinterlegt. Checklisten können unter Einstellungen → Checklisten angelegt und einer Audit-Vorlage zugewiesen werden.</p>
+    }
+    return checklistList.map(checklistTemplate => {
+      const columns: ChecklistColumn[] = (() => { try { return JSON.parse(checklistTemplate.columnsJson) } catch { return [] } })().sort((a: ChecklistColumn, b: ChecklistColumn) => a.order - b.order)
+      const isOpen = checklistList.length <= 1 || expandedChecklistIds.has(checklistTemplate.id)
+      return (
+        <div key={checklistTemplate.id} className="checklist-collapsible" style={{ marginBottom: '16px', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+          <button
+            type="button"
+            onClick={() => checklistList.length > 1 && toggleChecklistExpanded(checklistTemplate.id)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', width: '100%', textAlign: 'left',
+              background: 'var(--surface-2, var(--surface))', border: 'none', padding: '10px 14px',
+              cursor: checklistList.length > 1 ? 'pointer' : 'default', fontSize: '0.9rem', color: 'var(--text-h)', fontWeight: 600
+            }}
+          >
+            <span style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block', opacity: checklistList.length > 1 ? 1 : 0.3 }}>▸</span>
+            <span>{checklistTemplate.name}</span>
+            <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '0.8rem' }}>{readOnly ? '· nur Ansicht' : '· synchronisiert alle 10s'}</span>
+          </button>
+          {isOpen && (
+            <div style={{ padding: '12px 14px' }}>
+              {columns.length === 0 || liveRooms.length === 0 ? (
+                <p className="empty-hint">{columns.length === 0 ? 'Diese Checkliste hat noch keine Spalten.' : 'Noch keine Räume/Objekte für diesen Standort vorhanden.'}</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table>
+                    <thead><tr>{columns.map(col => <th key={col.id} style={col.width ? { width: `${col.width}px` } : undefined}>{col.label}</th>)}</tr></thead>
+                    <tbody>
+                      {liveRooms.map(room => {
+                        const roomFieldMap = parseStringMap(room.fieldsJson)
+                        return (
+                          <tr key={room.id}>
+                            {columns.map(col => {
+                              if (col.source === 'room') {
+                                return <td key={col.id}><strong>{room.name}</strong></td>
+                              }
+                              if (col.source === 'field') {
+                                const val = col.fieldName ? (roomFieldMap[col.fieldName] ?? '') : ''
+                                return <td key={col.id} style={{ color: 'var(--muted)' }}>{val || '—'}</td>
+                              }
+                              const cellValue = getChecklistCellValue(checklistTemplate.id, room.id, col.id)
+                              if (readOnly) {
+                                return <td key={col.id} style={{ color: 'var(--muted)' }}>{col.inputType === 'checkbox' ? (cellValue === 'true' ? '✓' : '✗') : (cellValue || '—')}</td>
+                              }
+                              if (col.inputType === 'checkbox') {
+                                return (
+                                  <td key={col.id} style={{ textAlign: 'center' }}>
+                                    <input type="checkbox" checked={cellValue === 'true'} onChange={e => commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.checked ? 'true' : 'false')} />
+                                  </td>
+                                )
+                              }
+                              return (
+                                <td key={col.id}>
+                                  <input
+                                    type={col.inputType === 'number' ? 'number' : 'text'}
+                                    value={cellValue}
+                                    onChange={e => setChecklistCellOverride(checklistTemplate.id, room.id, col.id, e.target.value)}
+                                    onBlur={e => commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.value)}
+                                    style={{ minWidth: '90px' }}
+                                  />
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )
+    })
+  }
+
   const getChecklistValueMap = (checklistTemplateId: number, roomId: number): Record<string, string> => {
     const entry = checklistValues.find(v => v.checklistTemplateId === checklistTemplateId && v.roomId === roomId)
     return entry ? parseStringMap(entry.dataJson) : {}
@@ -577,9 +684,36 @@ function App() {
     return () => { cancelled = true; clearInterval(interval) }
   }, [session, auditTab, auditSelectedTemplate?.id])
 
+  // Live-Sync für die (nur lesende) Checklisten-Ansicht in der Datenablage
+  useEffect(() => {
+    if (!session || datenablageTab !== 'checklisten' || datenablageChecklists.length === 0) return
+    let cancelled = false
+    const loadAll = async () => {
+      try {
+        const results = await Promise.all(datenablageChecklists.map(c =>
+          apiRequest<ChecklistValue[]>(`/api/checklist-values?checklistTemplateId=${c.id}`, session)
+        ))
+        if (!cancelled) setChecklistValues(results.flat())
+      } catch {
+        // Stille Fehlerbehandlung beim Hintergrund-Polling
+      }
+    }
+    loadAll()
+    const interval = setInterval(loadAll, 10000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [session, datenablageTab, datenablageChecklistTemplate?.id])
+
   useEffect(() => {
     setDatenablageSelectedRoomName(null)
+    setDatenablageChecklistTemplate(null)
   }, [datenablageSite?.id])
+
+  // Speichern-Bestätigung im PDF-Designer nach ein paar Sekunden automatisch ausblenden
+  useEffect(() => {
+    if (!pdfSaveConfirm) return
+    const timer = setTimeout(() => setPdfSaveConfirm(false), 3500)
+    return () => clearTimeout(timer)
+  }, [pdfSaveConfirm])
 
   useEffect(() => {
     if (!session || !imageGalleryObject) {
@@ -1734,7 +1868,7 @@ function App() {
                       {!readOnly && (
                         <>
                           <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => { setRenamingDocId(d.id); setRenamingDocTitle(d.title) }}>✏️</button>
-                          <select value={d.folderId || 0} onChange={e => moveDocumentToFolder(d.id, Number(e.target.value))} style={{ padding: '4px 6px', fontSize: '0.8rem' }} title="In Ordner verschieben">
+                          <select className="styled-select" value={d.folderId || 0} onChange={e => moveDocumentToFolder(d.id, Number(e.target.value))} style={{ padding: '4px 6px', fontSize: '0.8rem' }} title="In Ordner verschieben">
                             <option value={0}>📂 Hauptverzeichnis</option>
                             {allSiteFolders.map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
                           </select>
@@ -2219,65 +2353,7 @@ function App() {
                       )}
                       {auditTab==='checklisten'&&(
                         <div className="tab-content">
-                          {activeChecklistTemplates.length===0 ? (
-                            <p className="empty-hint">Für die Vorlage „{auditSelectedTemplate.name}" ist keine Checkliste hinterlegt. Checklisten können unter Einstellungen → Checklisten angelegt und einer Audit-Vorlage zugewiesen werden.</p>
-                          ) : (
-                            activeChecklistTemplates.map(checklistTemplate => {
-                              const columns: ChecklistColumn[] = (() => { try { return JSON.parse(checklistTemplate.columnsJson) } catch { return [] } })().sort((a: ChecklistColumn, b: ChecklistColumn) => a.order - b.order)
-                              const liveRooms = rooms.filter(r => r.siteId === auditSelectedSite.id && r.auditId === 0)
-                              return (
-                                <div key={checklistTemplate.id} style={{marginBottom:'24px'}}>
-                                  <h4 style={{margin:'0 0 10px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>{checklistTemplate.name} <span style={{fontWeight:400,textTransform:'none',letterSpacing:'normal'}}>· synchronisiert alle 10s</span></h4>
-                                  {columns.length===0 || liveRooms.length===0 ? (
-                                    <p className="empty-hint">{columns.length===0 ? 'Diese Checkliste hat noch keine Spalten.' : 'Noch keine Räume/Objekte für diesen Standort vorhanden.'}</p>
-                                  ) : (
-                                    <div style={{overflowX:'auto'}}>
-                                      <table>
-                                        <thead><tr>{columns.map(col=><th key={col.id} style={col.width?{width:`${col.width}px`}:undefined}>{col.label}</th>)}</tr></thead>
-                                        <tbody>
-                                          {liveRooms.map(room=>{
-                                            const roomFieldMap = parseStringMap(room.fieldsJson)
-                                            return (
-                                              <tr key={room.id}>
-                                                {columns.map(col=>{
-                                                  if (col.source==='room') {
-                                                    return <td key={col.id}><strong>{room.name}</strong></td>
-                                                  }
-                                                  if (col.source==='field') {
-                                                    const val = col.fieldName ? (roomFieldMap[col.fieldName] ?? '') : ''
-                                                    return <td key={col.id} style={{color:'var(--muted)'}}>{val || '—'}</td>
-                                                  }
-                                                  const cellValue = getChecklistCellValue(checklistTemplate.id, room.id, col.id)
-                                                  if (col.inputType==='checkbox') {
-                                                    return (
-                                                      <td key={col.id} style={{textAlign:'center'}}>
-                                                        <input type="checkbox" checked={cellValue==='true'} onChange={e=>commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.checked?'true':'false')} />
-                                                      </td>
-                                                    )
-                                                  }
-                                                  return (
-                                                    <td key={col.id}>
-                                                      <input
-                                                        type={col.inputType==='number'?'number':'text'}
-                                                        value={cellValue}
-                                                        onChange={e=>setChecklistCellOverride(checklistTemplate.id, room.id, col.id, e.target.value)}
-                                                        onBlur={e=>commitChecklistCell(checklistTemplate.id, room.id, col.id, e.target.value)}
-                                                        style={{minWidth:'90px'}}
-                                                      />
-                                                    </td>
-                                                  )
-                                                })}
-                                              </tr>
-                                            )
-                                          })}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })
-                          )}
+                          {renderChecklistsSection(activeChecklistTemplates, rooms.filter(r => r.siteId === auditSelectedSite.id && r.auditId === 0), false)}
                         </div>
                       )}
                       {auditTab==='dokumente'&&(() => {
@@ -2421,9 +2497,9 @@ function App() {
                     <button type="button" className="secondary-button" onClick={()=>goToAuditsSite(datenablageSite,datenablageTab)}>🛠 Zu Audits wechseln</button>
                   </div>
                   <div className="tab-bar">
-                    {(['raume','grunddaten','dokumente'] as const).map(tab=>(
+                    {(['raume','grunddaten','checklisten','dokumente'] as const).map(tab=>(
                       <button key={tab} type="button" className={`tab-btn${datenablageTab===tab?' active':''}`} onClick={()=>setDatenablageTab(tab)}>
-                        {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':'📄 Dokumente'}
+                        {tab==='raume'?'🏠 Räume/Objekte':tab==='grunddaten'?'📋 Grunddaten':tab==='checklisten'?'✅ Checklisten':'📄 Dokumente'}
                       </button>
                     ))}
                   </div>
@@ -2544,6 +2620,35 @@ function App() {
                           </div>
                         )
                       })}
+                    </div>
+                  )}
+                  {datenablageTab==='checklisten'&&(
+                    <div className="tab-content">
+                      {!datenablageChecklistTemplate ? (
+                        <div className="template-selector">
+                          <h4 style={{marginBottom:'12px'}}>Audit-Vorlage wählen</h4>
+                          <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Checklisten sind einer Audit-Vorlage zugeordnet. Bitte zunächst die Vorlage wählen, deren Checklisten angezeigt werden sollen.</p>
+                          <div className="list-view">
+                            {templates.map(t=>(
+                              <button key={t.id} type="button" className="list-item" onClick={()=>setDatenablageChecklistTemplate(t)}>
+                                <span className="list-icon">📋</span>
+                                <span className="list-name">{t.name}</span>
+                                <span className="list-meta">{t.description||`${t.fields.length} Felder`}</span>
+                                <span className="list-arrow">›</span>
+                              </button>
+                            ))}
+                            {templates.length===0&&<p className="empty-hint">Keine Vorlagen. Bitte unter Einstellungen → Audit-Vorlagen anlegen.</p>}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="audit-template-badge" style={{marginBottom:'16px'}}>
+                            <span>Vorlage: <strong>{datenablageChecklistTemplate.name}</strong></span>
+                            <button type="button" className="tertiary-button" style={{padding:'2px 8px',fontSize:'0.8rem'}} onClick={()=>setDatenablageChecklistTemplate(null)}>✕ ändern</button>
+                          </div>
+                          {renderChecklistsSection(datenablageChecklists, rooms.filter(r=>r.siteId===datenablageSite.id&&r.auditId===0), true)}
+                        </>
+                      )}
                     </div>
                   )}
                   {datenablageTab==='dokumente'&&(
@@ -2875,6 +2980,9 @@ function App() {
                 </>
               ) : (
                 <div className="pdf-designer">
+                  {pdfSaveConfirm && (
+                    <Alert type="success" message="✓ Design erfolgreich gespeichert." onClose={() => setPdfSaveConfirm(false)} />
+                  )}
                   <div className="pdf-designer-header">
                     <button type="button" className="back-btn" onClick={()=>setEditingPdfDesign(null)}>← Zurück zur Übersicht</button>
                     <h4>✏️ {editingPdfDesign.name}</h4>
@@ -2913,6 +3021,7 @@ function App() {
                           const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(pdfDesignConfig)})})
                           setPdfDesigns(p=>p.map(x=>x.id===res.id?res:x))
                           setEditingPdfDesign(res)
+                          setPdfSaveConfirm(true)
                         } catch { setError('Speichern fehlgeschlagen.') }
                       }}>💾 Speichern</button>
                     </div>
@@ -2924,6 +3033,10 @@ function App() {
                     globalFooterText={pdfDesignConfig.globalFooterText}
                     onGlobalHeaderChange={t=>setPdfDesignConfig(p=>({...p,globalHeaderText:t}))}
                     onGlobalFooterChange={t=>setPdfDesignConfig(p=>({...p,globalFooterText:t}))}
+                    globalHeaderAlign={pdfDesignConfig.globalHeaderAlign ?? 'center'}
+                    globalFooterAlign={pdfDesignConfig.globalFooterAlign ?? 'center'}
+                    onGlobalHeaderAlignChange={a=>setPdfDesignConfig(p=>({...p,globalHeaderAlign:a}))}
+                    onGlobalFooterAlignChange={a=>setPdfDesignConfig(p=>({...p,globalFooterAlign:a}))}
                     showPrintArea={pdfDesignConfig.showPrintArea}
                     templateFields={(() => {
                       const ids = pdfDesignConfig.templateIds ?? []

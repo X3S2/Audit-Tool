@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.10.0] - 2026-10-11
+
+### PDF-Designer: Freier Wiederholblock-Editor, Kopf-/Fußzeilen-Ausrichtung & diverse Bedienbarkeits-Fixes (fix003.md)
+
+#### Neu: Freier Layout-Editor für den Wiederholenden Block im PDF-Designer
+- Im PDF-Designer öffnet der Button „🖊 Eigenes Layout gestalten…" (bzw. „🖊 Layout gestalten (N Elemente)", sobald bereits Elemente angelegt wurden) am wiederholenden Block ein eigenes Canvas-Modal
+- Darin lassen sich frei positionierbare Unterelemente anlegen: Text, Feld-Variable (mit Label-Präfix und „Ausblenden, wenn leer"-Option), Bild (aus Audit-Feld) und Trennlinie — alle per Drag & Drop auf einer Mini-Druckfläche verschiebbar, mit eigenem Eigenschaften-Panel (Schriftgröße, Farbe, Ausrichtung)
+- Das bisherige einfache Feld-Listen-Layout bleibt als Fallback „Block-Felder (einfache Liste)" erhalten und wird nur verwendet, wenn kein eigenes Layout gestaltet wurde (100 % abwärtskompatibel zu bereits bestehenden Designs)
+- Die Haupt-Canvas-Vorschau des Blocks zeigt nun ein Mini-Thumbnail der gestalteten Unterelemente inkl. „✓ N Elemente eigens gestaltet"-Hinweis
+- Live end-to-end verifiziert: Anlegen von Feld- und Trennlinien-Elementen, Speichern, Reload, PDF-Erzeugung — der generierte PDF-Inhalt enthält exakt die gestalteten Elemente mit aufgelöstem Variablenwert (z. B. „Raum: EG01") und der gewählten Trennlinienfarbe
+
+#### Neu: Ausrichtung von Kopf-/Fußzeilen-Text am Druckbereich
+- Im Eigenschaften-Panel von Kopf- und Fußzeile steht jetzt „Ausrichtung am Druckbereich" mit den Optionen „⇤ Links", „↔ Mitte", „⇥ Rechts" zur Verfügung — unabhängig von der reinen Textausrichtung innerhalb des Feldes
+- Live verifiziert: Rechtsbündige Kopfzeile mit Variable `{{siteName}}` im erzeugten PDF exakt am rechten Druckbereichsrand positioniert, Variable korrekt zu „Steinweg Berufsschule" aufgelöst
+
+#### Tabellen: Automatische Zeilenbegrenzung je Seite
+- Automatisch befüllte Tabellen (Datenfelder aus dem Audit) brechen nun korrekt um, sobald das Ende des Druckbereichs erreicht ist, und setzen die restlichen Zeilen auf einer automatisch eingefügten Folgeseite fort
+
+#### PDF-Designer: Spaltenauswahl für Tabellen überarbeitet
+- Auswahl der Tabellenspalten (Datenfelder aus Vorlage, inkl. Raum-/Objektname, Kategorie, Standortname) jetzt über eine übersichtliche Checkbox-Liste statt Freitext
+
+#### PDF-Eigenschaften-Panel: Keine Scrollbar mehr, passt sich an Inhaltsbreite an
+- Das Eigenschaften-Panel im PDF-Designer verbreitert sich automatisch, statt eine horizontale Scrollbar anzuzeigen
+
+#### Speichern von PDF-Designs: Bestätigung als formatierte Erfolgsmeldung
+- Erfolgreiches Speichern eines PDF-Designs zeigt jetzt eine grün formatierte Bestätigung („✓ Design erfolgreich gespeichert.") statt eines reinen Textes
+
+#### Checklisten: Datenablage-Anzeige korrigiert
+- Anzeigefehler beim Laden der Checklisten-Daten in der Datenablage behoben
+
+#### Datenablage: Ordner-Dropdown im einheitlichen Design
+- Das Dropdown zur Ordnerauswahl beim Verschieben von Dokumenten ist jetzt im einheitlichen `.styled-input`-Design gestaltet
+
+#### Login/Netzwerk: CORS-Fix für Zugriff über andere Hostnamen/IP-Adressen
+- Login- und API-Zugriffe funktionieren jetzt zuverlässig auch dann, wenn die Anwendung über eine andere IP-Adresse oder einen anderen Hostnamen als `localhost` aufgerufen wird
+
 ## [1.9.0] - 2026-10-11
 
 ### Checklisten-Live-Sync, vereinheitlichte Audit/PDF-Erstellung, Dokumente-Ordnerverschiebung, Datenexport mit Bildern, Lösch-Bestätigungen & Testdaten-Bereinigung

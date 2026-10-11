@@ -50,6 +50,18 @@ public static class PdfDesignRenderer
         public string Content { get; set; } = "";
         public string? ImageData { get; set; }
         public List<string>? Fields { get; set; }
+        /// <summary>Optional cap on rows rendered per page for table elements; overflow continues on new pages.</summary>
+        public int? MaxRowsPerPage { get; set; }
+        /// <summary>
+        /// Sub-elements positioned relative to the repeat-block's own top-left corner (0,0), used only when
+        /// Type == "repeat-block". When set (non-empty), these fully replace the legacy auto-layout (image left,
+        /// stacked "Label: value" lines) with a free-form per-iteration mini-canvas.
+        /// </summary>
+        public List<DesignElement>? Children { get; set; }
+        /// <summary>For repeat-block children of Type == "repeat-field": the bound room/template/site field key (e.g. "roomName", "category", "siteName" or a template field name).</summary>
+        public string? FieldKey { get; set; }
+        /// <summary>For repeat-block children of Type == "repeat-field": skip rendering this child entirely for an iteration whose resolved value is empty.</summary>
+        public bool HideIfEmpty { get; set; }
         public DesignStyle Style { get; set; } = new();
     }
 
@@ -61,6 +73,9 @@ public static class PdfDesignRenderer
         public string HeaderText { get; set; } = "";
         public string FooterText { get; set; } = "";
         public bool UseGlobalHeader { get; set; }
+        /// <summary>Horizontal alignment ("left"/"center"/"right") of this page's header/footer text relative to the print area.</summary>
+        public string HeaderAlign { get; set; } = "center";
+        public string FooterAlign { get; set; } = "center";
         public List<DesignElement> Elements { get; set; } = new();
     }
 
@@ -68,6 +83,8 @@ public static class PdfDesignRenderer
     {
         public string GlobalHeaderText { get; set; } = "";
         public string GlobalFooterText { get; set; } = "";
+        public string GlobalHeaderAlign { get; set; } = "center";
+        public string GlobalFooterAlign { get; set; } = "center";
         public bool ShowPrintArea { get; set; } = true;
         public List<PageDesign> Pages { get; set; } = new();
     }
@@ -107,7 +124,7 @@ public static class PdfDesignRenderer
                 : new List<PageDesign> { new() { Name = "Seite 1" } };
 
             // Stores header/footer raw text (with placeholders) per generated PDF page number for the second pass.
-            var headerFooterMap = new Dictionary<int, (string header, string footer)>();
+            var headerFooterMap = new Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)>();
 
             foreach (var page in pages)
             {
@@ -138,7 +155,7 @@ public static class PdfDesignRenderer
         List<RoomRenderData> rooms,
         Dictionary<string, string> fieldTypesByName,
         DesignConfig config,
-        Dictionary<int, (string header, string footer)> headerFooterMap)
+        Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap)
     {
         var isLandscape = page.Orientation == "landscape";
         var pageSize = isLandscape ? new PageSize(CanvasHeight, CanvasWidth) : new PageSize(CanvasWidth, CanvasHeight);
@@ -146,19 +163,19 @@ public static class PdfDesignRenderer
         var pageHeight = pageSize.GetHeight();
         var pageWidth = pageSize.GetWidth();
 
-        var headerText = page.UseGlobalHeader ? config.GlobalHeaderText : page.HeaderText;
-        var footerText = page.UseGlobalHeader ? config.GlobalFooterText : page.FooterText;
-        headerFooterMap[pdfDocument.GetPageNumber(pdfPage)] = (headerText ?? "", footerText ?? "");
+        var headerText = ResolveHeader(page, config);
+        var footerText = ResolveFooter(page, config);
+        headerFooterMap[pdfDocument.GetPageNumber(pdfPage)] = (headerText ?? "", footerText ?? "", ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
 
         foreach (var element in page.Elements)
         {
             switch (element.Type)
             {
                 case "table":
-                    RenderTable(pdfDocument, pdfPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap);
+                    RenderTable(pdfDocument, pdfPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
                     break;
                 case "repeat-block":
-                    RenderRepeatBlock(pdfDocument, pdfPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap);
+                    RenderRepeatBlock(pdfDocument, pdfPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
                     break;
                 case "divider":
                     RenderDivider(pdfPage, element, pageHeight);
@@ -179,7 +196,18 @@ public static class PdfDesignRenderer
         }
     }
 
-    private static void StampHeaderFooter(PdfPage pdfPage, Dictionary<string, string> variables, Dictionary<int, (string header, string footer)> headerFooterMap)
+    private static string ResolveHeader(PageDesign page, DesignConfig config) => page.UseGlobalHeader ? config.GlobalHeaderText : page.HeaderText;
+    private static string ResolveFooter(PageDesign page, DesignConfig config) => page.UseGlobalHeader ? config.GlobalFooterText : page.FooterText;
+    private static TextAlignment ResolveHeaderAlign(PageDesign page, DesignConfig config) => ToTextAlignment(page.UseGlobalHeader ? config.GlobalHeaderAlign : page.HeaderAlign);
+    private static TextAlignment ResolveFooterAlign(PageDesign page, DesignConfig config) => ToTextAlignment(page.UseGlobalHeader ? config.GlobalFooterAlign : page.FooterAlign);
+    private static TextAlignment ToTextAlignment(string? align) => align switch
+    {
+        "left" => TextAlignment.LEFT,
+        "right" => TextAlignment.RIGHT,
+        _ => TextAlignment.CENTER
+    };
+
+    private static void StampHeaderFooter(PdfPage pdfPage, Dictionary<string, string> variables, Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap)
     {
         var pageNumber = pdfPage.GetDocument().GetPageNumber(pdfPage);
         if (!headerFooterMap.TryGetValue(pageNumber, out var texts)) return;
@@ -193,7 +221,7 @@ public static class PdfDesignRenderer
             var text = Substitute(texts.header, variables);
             var rect = new Rectangle(Margin, pageHeight - Margin - HeaderBandHeight, pageWidth - Margin * 2, HeaderBandHeight);
             using var canvas = new Canvas(pdfPage, rect);
-            canvas.Add(new Paragraph(text).SetFontSize(9).SetFontColor(ColorFromHex("#64748b")).SetTextAlignment(TextAlignment.CENTER));
+            canvas.Add(new Paragraph(text).SetFontSize(9).SetFontColor(ColorFromHex("#64748b")).SetTextAlignment(texts.headerAlign));
         }
 
         if (!string.IsNullOrWhiteSpace(texts.footer))
@@ -201,7 +229,7 @@ public static class PdfDesignRenderer
             var text = Substitute(texts.footer, variables);
             var rect = new Rectangle(Margin, Margin - FooterBandHeight, pageWidth - Margin * 2, FooterBandHeight);
             using var canvas = new Canvas(pdfPage, rect);
-            canvas.Add(new Paragraph(text).SetFontSize(9).SetFontColor(ColorFromHex("#64748b")).SetTextAlignment(TextAlignment.CENTER));
+            canvas.Add(new Paragraph(text).SetFontSize(9).SetFontColor(ColorFromHex("#64748b")).SetTextAlignment(texts.footerAlign));
         }
     }
 
@@ -253,10 +281,14 @@ public static class PdfDesignRenderer
 
     private static void RenderDivider(PdfPage pdfPage, DesignElement element, float pageHeight)
     {
-        var rect = ToRect(element, pageHeight);
+        RenderDividerRect(pdfPage, element.Style, ToRect(element, pageHeight));
+    }
+
+    private static void RenderDividerRect(PdfPage pdfPage, DesignStyle style, Rectangle rect)
+    {
         var pdfCanvas = new PdfCanvas(pdfPage);
         pdfCanvas.SaveState();
-        pdfCanvas.SetFillColor(ColorFromHex(string.IsNullOrWhiteSpace(element.Style.Background) || element.Style.Background == "transparent" ? "#94a3b8" : element.Style.Background));
+        pdfCanvas.SetFillColor(ColorFromHex(string.IsNullOrWhiteSpace(style.Background) || style.Background == "transparent" ? "#94a3b8" : style.Background));
         pdfCanvas.Rectangle(rect.GetX(), rect.GetY(), rect.GetWidth(), rect.GetHeight());
         pdfCanvas.Fill();
         pdfCanvas.RestoreState();
@@ -310,7 +342,7 @@ public static class PdfDesignRenderer
     private static void RenderTable(
         PdfDocument pdfDocument, PdfPage startPage, PageDesign page, DesignElement element,
         Dictionary<string, string> variables, List<RoomRenderData> rooms, Dictionary<string, string> fieldTypesByName,
-        PageSize pageSize, Dictionary<int, (string header, string footer)> headerFooterMap)
+        PageSize pageSize, Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap, DesignConfig config)
     {
         var fields = element.Fields ?? new List<string>();
         if (fields.Count == 0 || rooms.Count == 0)
@@ -324,6 +356,10 @@ public static class PdfDesignRenderer
         var rowHeight = 20f;
         var headerHeight = 22f;
         var y = rect.GetY() + rect.GetHeight();
+        // Optionaler Deckel für die Zeilenanzahl pro Seite; bei Überschreitung wird eine neue Seite mit
+        // wiederholter Kopfzeile begonnen, auch wenn der Druckbereich selbst noch Platz hätte.
+        var maxRows = element.MaxRowsPerPage is > 0 ? element.MaxRowsPerPage.Value : (int?)null;
+        var rowsOnCurrentPage = 0;
 
         void DrawHeader(Rectangle area)
         {
@@ -348,12 +384,13 @@ public static class PdfDesignRenderer
         var bottomLimit = Margin + FooterBandHeight;
         foreach (var room in rooms)
         {
-            if (y - rowHeight < bottomLimit)
+            if (y - rowHeight < bottomLimit || (maxRows.HasValue && rowsOnCurrentPage >= maxRows.Value))
             {
                 currentPage = pdfDocument.AddNewPage(pageSize);
-                headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (page.HeaderText ?? "", page.FooterText ?? "");
+                headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (ResolveHeader(page, config), ResolveFooter(page, config), ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
                 y = pageSize.GetHeight() - Margin - HeaderBandHeight - 8;
                 DrawHeader(new Rectangle(rect.GetX(), y, rect.GetWidth(), rect.GetHeight()));
+                rowsOnCurrentPage = 0;
             }
 
             var colWidth = rect.GetWidth() / fields.Count;
@@ -370,6 +407,7 @@ public static class PdfDesignRenderer
                 canvas.Add(new Paragraph(value).SetFontSize(9).SetTextAlignment(TextAlignment.LEFT).SetVerticalAlignment(VerticalAlignment.MIDDLE));
             }
             y -= rowHeight;
+            rowsOnCurrentPage++;
         }
     }
 
@@ -384,10 +422,18 @@ public static class PdfDesignRenderer
     private static void RenderRepeatBlock(
         PdfDocument pdfDocument, PdfPage startPage, PageDesign page, DesignElement element,
         Dictionary<string, string> variables, List<RoomRenderData> rooms, Dictionary<string, string> fieldTypesByName,
-        PageSize pageSize, Dictionary<int, (string header, string footer)> headerFooterMap)
+        PageSize pageSize, Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap, DesignConfig config)
     {
+        if (rooms.Count == 0) return;
+
+        if (element.Children is { Count: > 0 })
+        {
+            RenderRepeatBlockFreeForm(pdfDocument, startPage, page, element, variables, rooms, fieldTypesByName, pageSize, headerFooterMap, config);
+            return;
+        }
+
         var fields = element.Fields ?? new List<string>();
-        if (fields.Count == 0 || rooms.Count == 0) return;
+        if (fields.Count == 0) return;
 
         var currentPage = startPage;
         var rect = ToRect(element, pageSize.GetHeight());
@@ -400,7 +446,7 @@ public static class PdfDesignRenderer
             if (y - blockHeight < bottomLimit)
             {
                 currentPage = pdfDocument.AddNewPage(pageSize);
-                headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (page.HeaderText ?? "", page.FooterText ?? "");
+                headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (ResolveHeader(page, config), ResolveFooter(page, config), ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
                 y = pageSize.GetHeight() - Margin - HeaderBandHeight - 8;
             }
 
@@ -449,6 +495,110 @@ public static class PdfDesignRenderer
             }
 
             y -= blockHeight;
+        }
+    }
+
+    /// <summary>
+    /// Free-form repeat-block renderer used when the block has user-arranged sub-elements (<see cref="DesignElement.Children"/>).
+    /// Each child is positioned relative to the block's own top-left corner (a "mini canvas" inside the block) and is
+    /// repeated once per room, with the same page-overflow pagination behaviour as the legacy auto-layout.
+    /// </summary>
+    private static void RenderRepeatBlockFreeForm(
+        PdfDocument pdfDocument, PdfPage startPage, PageDesign page, DesignElement element,
+        Dictionary<string, string> variables, List<RoomRenderData> rooms, Dictionary<string, string> fieldTypesByName,
+        PageSize pageSize, Dictionary<int, (string header, string footer, TextAlignment headerAlign, TextAlignment footerAlign)> headerFooterMap, DesignConfig config)
+    {
+        var currentPage = startPage;
+        var rect = ToRect(element, pageSize.GetHeight());
+        var blockHeight = rect.GetHeight();
+        var y = rect.GetY() + rect.GetHeight();
+        var bottomLimit = Margin + FooterBandHeight;
+        var children = element.Children!;
+
+        foreach (var room in rooms)
+        {
+            if (y - blockHeight < bottomLimit)
+            {
+                currentPage = pdfDocument.AddNewPage(pageSize);
+                headerFooterMap[pdfDocument.GetPageNumber(currentPage)] = (ResolveHeader(page, config), ResolveFooter(page, config), ResolveHeaderAlign(page, config), ResolveFooterAlign(page, config));
+                y = pageSize.GetHeight() - Margin - HeaderBandHeight - 8;
+            }
+
+            var blockRect = new Rectangle(rect.GetX(), y - blockHeight, rect.GetWidth(), blockHeight);
+
+            foreach (var child in children)
+            {
+                var childRect = ToChildRect(child, blockRect);
+                switch (child.Type)
+                {
+                    case "divider":
+                        RenderDividerRect(currentPage, child.Style, childRect);
+                        break;
+                    case "rectangle":
+                    {
+                        using var boxCanvas = new Canvas(currentPage, childRect);
+                        ApplyBox(boxCanvas, child.Style, childRect);
+                        break;
+                    }
+                    case "image-static":
+                        RenderImageInRect(currentPage, child.ImageData, childRect);
+                        break;
+                    case "repeat-field":
+                    {
+                        var value = ResolveFieldValue(room, child.FieldKey ?? "", variables);
+                        var isImageField = !string.IsNullOrEmpty(child.FieldKey) && fieldTypesByName.TryGetValue(child.FieldKey, out var fType) && fType == "image";
+                        if (isImageField)
+                        {
+                            var images = SplitImageValue(value);
+                            if (images.Count == 0) { if (child.HideIfEmpty) continue; break; }
+                            RenderImageInRect(currentPage, images[0], childRect);
+                        }
+                        else
+                        {
+                            if (child.HideIfEmpty && string.IsNullOrWhiteSpace(value)) continue;
+                            var text = $"{child.Content}{value}";
+                            using var canvas = new Canvas(currentPage, childRect);
+                            ApplyBox(canvas, child.Style, childRect);
+                            canvas.Add(BuildStyledParagraph(text, child.Style));
+                        }
+                        break;
+                    }
+                    default: // "text" and any other textual child kind: static text, only global variables substituted
+                    {
+                        var text = Substitute(child.Content, variables);
+                        using var canvas = new Canvas(currentPage, childRect);
+                        ApplyBox(canvas, child.Style, childRect);
+                        canvas.Add(BuildStyledParagraph(text, child.Style));
+                        break;
+                    }
+                }
+            }
+
+            y -= blockHeight;
+        }
+    }
+
+    /// <summary>Maps a repeat-block child's block-relative coordinates (origin = block's own top-left corner) to an absolute PDF rectangle within blockRect.</summary>
+    private static Rectangle ToChildRect(DesignElement child, Rectangle blockRect)
+    {
+        var childY = blockRect.GetY() + blockRect.GetHeight() - child.Y - child.Height;
+        return new Rectangle(blockRect.GetX() + child.X, childY, Math.Max(1f, child.Width), Math.Max(1f, child.Height));
+    }
+
+    private static void RenderImageInRect(PdfPage pdfPage, string? imageData, Rectangle rect)
+    {
+        if (string.IsNullOrWhiteSpace(imageData)) return;
+        try
+        {
+            var bytes = DecodeDataUrl(imageData);
+            var image = new Image(ImageDataFactory.Create(bytes));
+            image.ScaleToFit(rect.GetWidth(), rect.GetHeight());
+            using var canvas = new Canvas(pdfPage, rect);
+            canvas.Add(image);
+        }
+        catch
+        {
+            // Ignore undecodable image data rather than failing the whole document.
         }
     }
 
