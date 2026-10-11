@@ -140,7 +140,7 @@
 .security-note {
   display: block;
   margin-top: 14px;
-  color: #93c5fd;
+  color: var(--info-text);
   font-size: 0.85rem;
 }
 
@@ -150,7 +150,7 @@
   padding: 12px 16px;
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.4);
-  color: #fecaca;
+  color: var(--danger-text);
   margin-bottom: 12px;
 }
 
@@ -184,22 +184,22 @@
 .alert-error {
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.4);
-  color: #fecaca;
+  color: var(--danger-text);
 }
 .alert-success {
   background: rgba(34, 197, 94, 0.12);
   border: 1px solid rgba(34, 197, 94, 0.4);
-  color: #bbf7d0;
+  color: var(--success-text);
 }
 .alert-info {
   background: rgba(59, 130, 246, 0.12);
   border: 1px solid rgba(59, 130, 246, 0.4);
-  color: #bfdbfe;
+  color: var(--info-text);
 }
 .alert-warning {
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.4);
-  color: #fde68a;
+  color: var(--warning-text);
 }
 
 /* ============ BUTTON VARIANTS ============ */
@@ -260,7 +260,7 @@
 .danger-button {
   padding: var(--button-padding-md);
   background: rgba(239, 68, 68, 0.15);
-  color: #fecaca;
+  color: var(--danger-text);
   border: 1.5px solid rgba(239, 68, 68, 0.4);
   border-radius: var(--button-border-radius);
   font-weight: var(--button-font-weight);
@@ -337,7 +337,7 @@
   border-radius: 12px;
   border: 1px solid rgba(239, 68, 68, 0.4);
   background: rgba(239, 68, 68, 0.12);
-  color: #fecaca;
+  color: var(--danger-text);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   animation: slideInRight 0.3s ease;
   display: flex;
@@ -348,19 +348,19 @@
 .toast.success {
   border-color: rgba(34, 197, 94, 0.4);
   background: rgba(34, 197, 94, 0.12);
-  color: #86efac;
+  color: var(--success-text);
 }
 
 .toast.info {
   border-color: rgba(59, 130, 246, 0.4);
   background: rgba(59, 130, 246, 0.12);
-  color: #93c5fd;
+  color: var(--info-text);
 }
 
 .toast.warning {
   border-color: rgba(245, 158, 11, 0.4);
   background: rgba(245, 158, 11, 0.12);
-  color: #fbbf24;
+  color: var(--warning-text);
 }
 
 .toast-message {
@@ -607,12 +607,12 @@
 }
 
 .dropdown-item.logout {
-  color: #fecaca;
+  color: var(--danger-text);
 }
 
 .dropdown-item.logout:hover {
   background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
+  color: var(--danger-text-strong);
   border-left: 3px solid #ef4444;
   padding-left: 15px;
 }
@@ -840,7 +840,7 @@ th {
   padding: var(--input-padding);
   border: 1px solid var(--border);
   border-radius: var(--input-border-radius);
-  background: rgba(15, 23, 42, 0.3);
+  background: var(--input-bg);
   color: var(--text-h);
   font-size: var(--input-font-size);
   font-family: inherit;
@@ -934,6 +934,20 @@ th {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.progress-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, #4f8ef7);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ============ THEME TOGGLE ============ */
@@ -1212,12 +1226,12 @@ th {
   font-weight: 600;
 }
 
-.role-superadmin { background: rgba(168,85,247,0.15); color: #c084fc; }
-.role-admin { background: rgba(59,130,246,0.15); color: #60a5fa; }
-.role-benutzer { background: rgba(34,197,94,0.15); color: #4ade80; }
-.role-azubi { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.role-superadmin { background: rgba(168,85,247,0.15); color: var(--purple-text); }
+.role-admin { background: rgba(59,130,246,0.15); color: var(--info-text); }
+.role-benutzer { background: rgba(34,197,94,0.15); color: var(--success-text); }
+.role-azubi { background: rgba(251,191,36,0.15); color: var(--warning-text); }
 
-.status-active { color: #4ade80; font-weight: 500; }
+.status-active { color: var(--success-text); font-weight: 500; }
 .status-inactive { color: var(--muted); font-weight: 500; }
 
 /* ===== MENU TOGGLE BUTTON ===== */
@@ -1478,7 +1492,7 @@ th {
   display: block;
   width: 100%;
   padding: var(--input-padding);
-  background: rgba(15,23,42,0.3);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: var(--input-border-radius);
   color: var(--text-h);
@@ -1506,18 +1520,43 @@ th {
 table { border-radius: 10px; overflow: hidden; }
 thead { background: rgba(148,163,184,0.06); }
 
-/* ===== MOBILE NAV (default collapsed) ===== */
+/* ===== MOBILE NAV (default collapsed, slide-in overlay when toggled) ===== */
 @media (max-width: 768px) {
   .app-container, .content-shell {
     grid-template-columns: minmax(0, 1fr);
     height: calc(100vh - 56px);
   }
   .sidebar {
-    display: none;
+    position: fixed;
+    top: 56px;
+    left: 0;
+    bottom: 0;
+    width: 78vw;
+    max-width: 300px;
+    z-index: 500;
+    box-shadow: 6px 0 28px rgba(0,0,0,0.4);
+    animation: slideInMobileNav 0.2s ease;
   }
-  .app-container:not(.sidebar-hidden) .sidebar {
-    display: none;
+}
+@keyframes slideInMobileNav {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.mobile-nav-backdrop { display: none; }
+@media (max-width: 768px) {
+  .mobile-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    top: 56px;
+    background: rgba(15,23,42,0.55);
+    z-index: 490;
+    animation: fadeInBackdrop 0.2s ease;
   }
+}
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ===== FIELD BUILDER IMPROVEMENTS ===== */
@@ -1704,7 +1743,7 @@ tr.row-editing {
 .pdf-tool-btn.danger:hover {
   background: rgba(239,68,68,0.1);
   border-color: rgba(239,68,68,0.5);
-  color: #fca5a5;
+  color: var(--danger-text-strong);
 }
 
 .pdf-canvas-area {
@@ -1763,7 +1802,7 @@ tr.row-editing {
 .pdf-prop-section select,
 .pdf-prop-section textarea {
   padding: 5px 8px;
-  background: rgba(15,23,42,0.3);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-h);
@@ -1816,6 +1855,31 @@ tr.row-editing {
 }
 
 .form-grid label.full-width { grid-column: 1 / -1; }
+
+/* Einheitliches Input-Styling für form-grid, unabhängig vom umgebenden Container
+   (z.B. Grunddaten-Karte, die kein .form-card ist) */
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+  display: block;
+  width: 100%;
+  padding: var(--input-padding);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--input-border-radius);
+  color: var(--text-h);
+  font-size: var(--input-font-size);
+  font-family: inherit;
+  transition: var(--input-transition);
+  box-sizing: border-box;
+}
+.form-grid input:focus,
+.form-grid select:focus,
+.form-grid textarea:focus {
+  outline: none;
+  border-color: rgba(96,165,250,0.6);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
 
 .form-card {
   background: rgba(148, 163, 184, 0.06);
@@ -1997,7 +2061,7 @@ table { margin-top: 0; }
 
 .pdf-prop-row2 input {
   padding: 4px 6px;
-  background: rgba(15,23,42,0.3);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text-h);
@@ -2019,7 +2083,7 @@ table { margin-top: 0; }
 .pdf-prop-group select,
 .pdf-prop-group textarea {
   padding: 5px 7px;
-  background: rgba(15,23,42,0.3);
+  background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-h);

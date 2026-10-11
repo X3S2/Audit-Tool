@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { Fragment, useEffect, useRef, useState } from 'react'
 import './theme.css'
 import './App.css'
 import { compressImage } from './imageCompression'
@@ -67,6 +67,7 @@ type Room = {
   area: string
   notes: string
   fieldsJson: string
+  auditId: number
 }
 
 type AuditObject = {
@@ -98,6 +99,30 @@ type AuditInstance = {
   status: string
   entryCount?: number
   checklistEntries?: ChecklistEntry[]
+  groundDataJson?: string
+}
+
+type DocumentFolder = {
+  id: number
+  siteId: number
+  parentFolderId: number
+  name: string
+  createdAtUtc: string
+}
+
+type AuditDocument = {
+  id: number
+  auditId: number
+  siteId: number
+  title: string
+  pdfDesignId: number | null
+  pdfDesignName: string | null
+  fileName: string
+  sizeBytes: number
+  createdAtUtc: string
+  isArchived: boolean
+  isUploaded: boolean
+  folderId: number
 }
 
 type BackupRecord = {
@@ -127,7 +152,9 @@ type PageDesign = {
 }
 
 type PdfDesignConfig = {
+  /** @deprecated use templateIds - kept so older saved designs still parse correctly */
   templateId?: number
+  templateIds?: number[]
   globalHeaderText: string
   globalFooterText: string
   showPrintArea: boolean
@@ -239,6 +266,23 @@ const parseStringMap = (raw: string | undefined) => {
   }
 }
 
+const getDesignTemplateIds = (design: PdfDesign): number[] => {
+  try {
+    const config = JSON.parse(design.configJson) as PdfDesignConfig
+    if (config.templateIds?.length) return config.templateIds
+    if (config.templateId) return [config.templateId]
+    return []
+  } catch {
+    return []
+  }
+}
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => readTheme())
   const [session, setSession] = useState<Session | null>(() => readSession())
@@ -268,6 +312,20 @@ function App() {
   const [datenablageCategory, setDatenablageCategory] = useState<Category | null>(null)
   const [datenablageSite, setDatenablageSite] = useState<Site | null>(null)
   const [datenablageTab, setDatenablageTab] = useState<'raume' | 'grunddaten' | 'dokumente'>('raume')
+  const [datenablageSelectedRoomName, setDatenablageSelectedRoomName] = useState<string | null>(null)
+  const [pendingRoomEditName, setPendingRoomEditName] = useState<string | null>(null)
+  // Dokumente / Dateiablage state (Audits-Seite + Datenablage)
+  const [documents, setDocuments] = useState<AuditDocument[]>([])
+  const [folders, setFolders] = useState<DocumentFolder[]>([])
+  const [docGenTitle, setDocGenTitle] = useState('')
+  const [docGenPdfDesignId, setDocGenPdfDesignId] = useState('')
+  const [docGenAuditId, setDocGenAuditId] = useState<number | null>(null)
+  const [docGenInProgress, setDocGenInProgress] = useState(false)
+  const [docCurrentFolderId, setDocCurrentFolderId] = useState(0)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [renamingDocId, setRenamingDocId] = useState<number | null>(null)
+  const [renamingDocTitle, setRenamingDocTitle] = useState('')
+  const [showDocArchive, setShowDocArchive] = useState(false)
   // User management state
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [newUserForm, setNewUserForm] = useState({ userName: '', displayName: '', password: '', role: 'Benutzer' })
@@ -296,6 +354,7 @@ function App() {
   })
   const [newPdfDesignName, setNewPdfDesignName] = useState('')
   const [newPdfDesignDesc, setNewPdfDesignDesc] = useState('')
+  const [showPdfTemplatePicker, setShowPdfTemplatePicker] = useState(false)
   // Checkliste state
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
   const [editingChecklistTemplate, setEditingChecklistTemplate] = useState<ChecklistTemplate | null>(null)
@@ -327,6 +386,9 @@ function App() {
   const [galleryModalImages, setGalleryModalImages] = useState<string[]>([])
   const [galleryModalIndex, setGalleryModalIndex] = useState(0)
   const [galleryModalZoom, setGalleryModalZoom] = useState(1)
+  const [galleryModalPan, setGalleryModalPan] = useState({ x: 0, y: 0 })
+  const galleryDragRef = useRef<{ startX: number; startY: number; panX: number; panY: number; moved: boolean } | null>(null)
+  const galleryPinchRef = useRef<{ startDist: number; startZoom: number } | null>(null)
   const [objectForm, setObjectForm] = useState({ roomId: '1', name: '', objectType: '', status: 'Gut', notes: '' })
   const [templateForm, setTemplateForm] = useState({
     name: '',
@@ -366,6 +428,19 @@ function App() {
     // Reset Vorlagen-Feldbuilder, sonst bleiben Datenfelder einer zuvor bearbeiteten
     // Vorlage sichtbar, obwohl Name/Beschreibung bereits zurückgesetzt wurden
     setTemplateFields(DEFAULT_TEMPLATE_FIELDS)
+    // PDF-Designer: eine zuvor geöffnete Design-Bearbeitung darf nach Seitenwechsel nicht offen bleiben
+    setEditingPdfDesign(null)
+    setShowPdfTemplatePicker(false)
+    setChecklistColumns([])
+    // Dokumente/Datenablage: Zustand darf nach Seitenwechsel nicht erhalten bleiben
+    setDatenablageSelectedRoomName(null)
+    setDocGenTitle('')
+    setDocGenPdfDesignId('')
+    setDocGenAuditId(null)
+    setDocCurrentFolderId(0)
+    setNewFolderName('')
+    setRenamingDocId(null)
+    setShowDocArchive(false)
   }, [page])
 
   useEffect(() => {
@@ -375,7 +450,52 @@ function App() {
     }
 
     setSiteGroundDataValues(parseStringMap(auditSelectedSite.groundDataJson))
+    setDocGenTitle('')
+    setDocGenPdfDesignId('')
+    setDocGenAuditId(null)
+    setDocCurrentFolderId(0)
+    setShowDocArchive(false)
   }, [auditSelectedSite?.id])
+
+  // Deep-Link aus der Datenablage: nach Navigation zur Audits-Seite den Live-Raum zur Bearbeitung öffnen.
+  // Läuft bewusst NACH dem Seitenwechsel-Reset-Effekt oben, damit editingRoomId/roomForm nicht sofort wieder geleert werden.
+  useEffect(() => {
+    if (!pendingRoomEditName || page !== 'audits' || !auditSelectedSite) return
+    const liveRoom = rooms.find(r => r.siteId === auditSelectedSite.id && r.auditId === 0 && r.name === pendingRoomEditName)
+    if (liveRoom) {
+      setEditingRoomId(liveRoom.id)
+      setRoomForm({ siteId: String(liveRoom.siteId), name: liveRoom.name, description: liveRoom.description, capacity: liveRoom.capacity, area: liveRoom.area, notes: liveRoom.notes })
+      setRoomFieldValues(parseStringMap(liveRoom.fieldsJson))
+    }
+    setPendingRoomEditName(null)
+  }, [pendingRoomEditName, page, auditSelectedSite, rooms])
+
+  // Navigiert von der Datenablage zur Audits-Seite und öffnet dort direkt die Bearbeitung des (Live-)Raums
+  const goToLiveRoomEdit = (site: Site, roomName: string) => {
+    const liveRoom = rooms.find(r => r.siteId === site.id && r.auditId === 0 && r.name === roomName)
+    const fieldKeys = liveRoom ? Object.keys(parseStringMap(liveRoom.fieldsJson)) : []
+    const matchingTemplate = templates.find(t => fieldKeys.length > 0 && fieldKeys.every(k => t.fields.some(f => f.name === k)))
+    setPage('audits')
+    setAuditSelectedCategory(categories.find(c => c.id === site.categoryId) ?? null)
+    setAuditSelectedSite(site)
+    setAuditSelectedTemplate(matchingTemplate ?? null)
+    setAuditView('standort')
+    setAuditTab('raume')
+    setPendingRoomEditName(roomName)
+  }
+
+  // Navigiert von der Datenablage zur Audits-Seite (ohne spezifischen Raum), z.B. um Grunddaten/Vorlage zu korrigieren
+  const goToAuditsSite = (site: Site, tab: 'raume' | 'grunddaten' | 'dokumente' = 'raume') => {
+    setPage('audits')
+    setAuditSelectedCategory(categories.find(c => c.id === site.categoryId) ?? null)
+    setAuditSelectedSite(site)
+    setAuditView('standort')
+    setAuditTab(tab)
+  }
+
+  useEffect(() => {
+    setDatenablageSelectedRoomName(null)
+  }, [datenablageSite?.id])
 
   useEffect(() => {
     if (!session || !imageGalleryObject) {
@@ -440,14 +560,16 @@ function App() {
 
     const loadData = async () => {
       try {
-        const [categoryData, siteData, templateData, roomData, auditData, pdfDesignData, checklistTmplData] = await Promise.all([
+        const [categoryData, siteData, templateData, roomData, auditData, pdfDesignData, checklistTmplData, documentData, folderData] = await Promise.all([
           apiRequest<Category[]>('/api/categories', session),
           apiRequest<Site[]>('/api/standorte', session),
           apiRequest<Template[]>('/api/templates', session),
-          apiRequest<Room[]>('/api/rooms', session),
+          apiRequest<Room[]>('/api/rooms?all=true', session),
           apiRequest<AuditInstance[]>('/api/audits', session),
           apiRequest<PdfDesign[]>('/api/pdfdesigns', session),
-          apiRequest<ChecklistTemplate[]>('/api/checklisttemplates', session)
+          apiRequest<ChecklistTemplate[]>('/api/checklisttemplates', session),
+          apiRequest<AuditDocument[]>('/api/documents', session),
+          apiRequest<DocumentFolder[]>('/api/folders', session)
         ])
 
         setCategories(categoryData)
@@ -457,6 +579,8 @@ function App() {
         setAudits(auditData)
         setPdfDesigns(pdfDesignData)
         setChecklistTemplates(checklistTmplData)
+        setDocuments(documentData)
+        setFolders(folderData)
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Daten konnten nicht geladen werden.')
       }
@@ -894,32 +1018,119 @@ function App() {
     }
   }
 
-  const downloadAuditPdf = async (auditId: number, auditTitle: string) => {
-    if (!session) {
-      return
-    }
-
+  const generateDocument = async (auditId: number) => {
+    if (!session || !docGenTitle.trim() || !docGenPdfDesignId) return
+    setDocGenInProgress(true)
     try {
-      const response = await fetch(`http://localhost:5050/api/audits/${auditId}/pdf`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${session.token}` }
+      const doc = await apiRequest<AuditDocument>(`/api/audits/${auditId}/documents/generate`, session, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: docGenTitle.trim(), pdfDesignId: parseInt(docGenPdfDesignId), folderId: docCurrentFolderId || undefined })
       })
-
-      if (!response.ok) {
-        throw new Error(`PDF-Export fehlgeschlagen: ${response.statusText}`)
-      }
-
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `Audit_${auditTitle.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
+      setDocuments(p => [doc, ...p])
+      setDocGenTitle('')
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'PDF konnte nicht exportiert werden.')
+      setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht erstellt werden.')
+    } finally {
+      setDocGenInProgress(false)
+    }
+  }
+
+  const openOrDownloadDocument = async (doc: AuditDocument, mode: 'view' | 'download') => {
+    if (!session) return
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/${doc.id}/${mode}`, { headers: { Authorization: `Bearer ${session.token}` } })
+      if (!res.ok) throw new Error('Datei konnte nicht geladen werden.')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      if (mode === 'view') {
+        window.open(url, '_blank')
+      } else {
+        const link = document.createElement('a')
+        link.href = url
+        link.download = doc.fileName.split('/').pop() ?? doc.title
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      }
+      setTimeout(() => window.URL.revokeObjectURL(url), 10000)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Datei konnte nicht geöffnet werden.')
+    }
+  }
+
+  const createDocFolder = async (siteId: number) => {
+    if (!session || !newFolderName.trim()) return
+    try {
+      const folder = await apiRequest<DocumentFolder>(`/api/folders?siteId=${siteId}`, session, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newFolderName.trim(), parentFolderId: docCurrentFolderId || undefined })
+      })
+      setFolders(p => [...p, folder])
+      setNewFolderName('')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Ordner konnte nicht erstellt werden.')
+    }
+  }
+
+  const deleteDocFolder = async (id: number) => {
+    if (!session) return
+    if (!confirm('Ordner wirklich löschen? Enthaltene Dokumente werden ins Hauptverzeichnis verschoben.')) return
+    try {
+      await apiRequest(`/api/folders/${id}`, session, { method: 'DELETE' })
+      setFolders(p => p.filter(f => f.id !== id))
+      setDocuments(p => p.map(d => d.folderId === id ? { ...d, folderId: 0 } : d))
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Ordner konnte nicht gelöscht werden.')
+    }
+  }
+
+  const saveDocumentRename = async (id: number) => {
+    if (!session || !renamingDocTitle.trim()) return
+    try {
+      const doc = await apiRequest<AuditDocument>(`/api/documents/${id}`, session, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: renamingDocTitle.trim() }) })
+      setDocuments(p => p.map(d => d.id === doc.id ? doc : d))
+      setRenamingDocId(null)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht umbenannt werden.')
+    }
+  }
+
+  const toggleArchiveDocument = async (doc: AuditDocument) => {
+    if (!session) return
+    try {
+      const updated = await apiRequest<AuditDocument>(`/api/documents/${doc.id}`, session, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isArchived: !doc.isArchived }) })
+      setDocuments(p => p.map(d => d.id === updated.id ? updated : d))
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Status konnte nicht geändert werden.')
+    }
+  }
+
+  const deleteDocumentEntry = async (id: number) => {
+    if (!session) return
+    if (!confirm('Dokument wirklich endgültig löschen?')) return
+    try {
+      await apiRequest(`/api/documents/${id}`, session, { method: 'DELETE' })
+      setDocuments(p => p.filter(d => d.id !== id))
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht gelöscht werden.')
+    }
+  }
+
+  const uploadExternalDocument = async (siteId: number, file: File) => {
+    if (!session) return
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('siteId', String(siteId))
+      formData.append('title', file.name.replace(/\.[^.]+$/, ''))
+      formData.append('folderId', String(docCurrentFolderId || 0))
+      const res = await fetch(`${API_BASE}/api/documents/upload`, { method: 'POST', headers: { Authorization: `Bearer ${session.token}` }, body: formData })
+      if (!res.ok) throw new Error('Upload fehlgeschlagen.')
+      const doc = await res.json() as AuditDocument
+      setDocuments(p => [doc, ...p])
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Dokument konnte nicht hochgeladen werden.')
     }
   }
 
@@ -1062,6 +1273,51 @@ function App() {
     })
   }
 
+  const moveChecklistColumn = (idx: number, direction: -1 | 1) => {
+    setChecklistColumns((prev) => {
+      const swapIdx = idx + direction
+      if (swapIdx < 0 || swapIdx >= prev.length) return prev
+      const next = [...prev]
+      ;[next[idx], next[swapIdx]] = [next[swapIdx], next[idx]]
+      return next.map((c, i) => ({ ...c, order: i + 1 }))
+    })
+  }
+
+  const renderChecklistColumnsBuilder = (forTemplateId: number) => {
+    const fieldsOfTemplate = templates.find(t => t.id === forTemplateId)?.fields ?? []
+    return (
+      <div style={{ marginTop: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+          <strong>Spalten</strong>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <button type="button" className="secondary-button" style={{ padding: '5px 8px', fontSize: '0.82rem' }} onClick={() => setChecklistColumns(p => [...p, { id: Date.now().toString(), label: 'Raum', source: 'room', inputType: 'text', order: p.length + 1 }])}>+ Raumname</button>
+            {fieldsOfTemplate.map(f => (
+              <button key={f.name} type="button" className="secondary-button" style={{ padding: '5px 8px', fontSize: '0.82rem' }}
+                onClick={() => setChecklistColumns(p => [...p, { id: Date.now().toString(), label: f.name, source: 'field', fieldName: f.name, inputType: f.type === 'number' ? 'number' : 'text', order: p.length + 1 }])}>+ {f.name}</button>
+            ))}
+            <button type="button" className="secondary-button" style={{ padding: '5px 8px', fontSize: '0.82rem' }} onClick={() => setChecklistColumns(p => [...p, { id: Date.now().toString(), label: 'Neue Spalte', source: 'custom', inputType: 'checkbox', order: p.length + 1 }])}>+ Freie Spalte</button>
+          </div>
+        </div>
+        <div className="field-builder">
+          {checklistColumns.map((col, idx) => (
+            <div key={col.id} className="field-builder-row">
+              <span className="field-order" style={{ cursor: idx === 0 ? 'default' : 'pointer', opacity: idx === 0 ? 0.3 : 1, userSelect: 'none' }} title="Nach oben" onClick={() => moveChecklistColumn(idx, -1)}>↑</span>
+              <span className="field-order" style={{ cursor: idx === checklistColumns.length - 1 ? 'default' : 'pointer', opacity: idx === checklistColumns.length - 1 ? 0.3 : 1, userSelect: 'none' }} title="Nach unten" onClick={() => moveChecklistColumn(idx, 1)}>↓</span>
+              <span className="field-order">{col.order}</span>
+              <input className="field-name-input" placeholder="Spaltenname" value={col.label} onChange={e => setChecklistColumns(p => p.map((c, i) => i === idx ? { ...c, label: e.target.value } : c))} />
+              <span className="status-badge" style={{ fontSize: '0.75rem' }}>{col.source === 'room' ? 'Raumname' : col.source === 'field' ? `Feld: ${col.fieldName}` : 'Frei'}</span>
+              <select className="field-type-select" value={col.inputType} onChange={e => setChecklistColumns(p => p.map((c, i) => i === idx ? { ...c, inputType: e.target.value as 'text' | 'number' | 'checkbox' } : c))}>
+                <option value="text">Text</option><option value="number">Zahl</option><option value="checkbox">Checkbox</option>
+              </select>
+              <button type="button" className="danger-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => setChecklistColumns(p => p.filter((_, i) => i !== idx).map((c, i) => ({ ...c, order: i + 1 })))}>✕</button>
+            </div>
+          ))}
+          {checklistColumns.length === 0 && <p className="empty-hint">Noch keine Spalten.</p>}
+        </div>
+      </div>
+    )
+  }
+
   const renderTemplateFieldBuilderSection = (scope: TemplateFieldScope) => {
     const indices = templateFields.map((_, i) => i).filter((i) => templateFields[i].scope === scope)
     return (
@@ -1110,6 +1366,137 @@ function App() {
   }
 
   const isAdmin = session ? canManageUsers(session.user.role) : false
+
+  // ===== Bilder-Galerie Modal: Zoom (fokuspunktgenau) + Pan (Drag/Touch) + Pinch =====
+  const openGallery = (images: string[], index: number) => {
+    setGalleryModalImages(images)
+    setGalleryModalIndex(index)
+    setGalleryModalZoom(1)
+    setGalleryModalPan({ x: 0, y: 0 })
+  }
+  const resetGalleryZoom = () => { setGalleryModalZoom(1); setGalleryModalPan({ x: 0, y: 0 }) }
+  const galleryWheelZoom = (e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setGalleryModalZoom(z => Math.max(0.5, Math.min(4, z + (e.deltaY < 0 ? 0.2 : -0.2))))
+  }
+  const galleryImageClick = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (galleryDragRef.current?.moved) { galleryDragRef.current.moved = false; return }
+    const wrap = e.currentTarget.parentElement as HTMLElement
+    const rect = wrap.getBoundingClientRect()
+    if (galleryModalZoom <= 1) {
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+      const ix = (e.clientX - centerX - galleryModalPan.x) / galleryModalZoom
+      const iy = (e.clientY - centerY - galleryModalPan.y) / galleryModalZoom
+      const newZoom = 2.5
+      setGalleryModalZoom(newZoom)
+      setGalleryModalPan({ x: galleryModalPan.x + ix * (galleryModalZoom - newZoom), y: galleryModalPan.y + iy * (galleryModalZoom - newZoom) })
+    } else {
+      resetGalleryZoom()
+    }
+  }
+  const galleryMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (galleryModalZoom <= 1) return
+    e.preventDefault()
+    galleryDragRef.current = { startX: e.clientX, startY: e.clientY, panX: galleryModalPan.x, panY: galleryModalPan.y, moved: false }
+  }
+  const galleryMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const drag = galleryDragRef.current
+    if (!drag) return
+    const dx = e.clientX - drag.startX
+    const dy = e.clientY - drag.startY
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true
+    setGalleryModalPan({ x: drag.panX + dx, y: drag.panY + dy })
+  }
+  const galleryMouseUp = () => {
+    if (galleryDragRef.current && !galleryDragRef.current.moved) galleryDragRef.current = null
+  }
+  const touchDistance = (t1: React.Touch, t2: React.Touch) => Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+  const galleryTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      galleryPinchRef.current = { startDist: touchDistance(e.touches[0], e.touches[1]), startZoom: galleryModalZoom }
+    } else if (e.touches.length === 1 && galleryModalZoom > 1) {
+      galleryDragRef.current = { startX: e.touches[0].clientX, startY: e.touches[0].clientY, panX: galleryModalPan.x, panY: galleryModalPan.y, moved: false }
+    }
+  }
+  const galleryTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && galleryPinchRef.current) {
+      const d = touchDistance(e.touches[0], e.touches[1])
+      const newZoom = Math.max(0.5, Math.min(4, galleryPinchRef.current.startZoom * (d / galleryPinchRef.current.startDist)))
+      setGalleryModalZoom(newZoom)
+    } else if (e.touches.length === 1 && galleryDragRef.current) {
+      const dx = e.touches[0].clientX - galleryDragRef.current.startX
+      const dy = e.touches[0].clientY - galleryDragRef.current.startY
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) galleryDragRef.current.moved = true
+      setGalleryModalPan({ x: galleryDragRef.current.panX + dx, y: galleryDragRef.current.panY + dy })
+    }
+  }
+  const galleryTouchEnd = () => { galleryPinchRef.current = null }
+
+  // ===== Wiederverwendbarer Bild-Upload-Feldtyp (für Raum- UND Grunddaten-Felder) =====
+  const renderImageUploadField = (
+    key: string,
+    label: string,
+    required: boolean,
+    value: string,
+    setValue: (updater: (prev: string) => string) => void
+  ) => {
+    const imageList = value.split('||').filter(Boolean)
+    const moveImage = (from: number, to: number) => setValue(previous => {
+      const current = (previous ?? '').split('||').filter(Boolean)
+      if (to < 0 || to >= current.length) return previous
+      const next = [...current]
+      ;[next[from], next[to]] = [next[to], next[from]]
+      return next.join('||')
+    })
+    return (
+      <div key={key} className="full-width">
+        <label>{label}{required ? ' *' : ''}</label>
+        <div className="room-image-upload">
+          <label className="image-upload-btn">
+            📷 Bilder hinzufügen
+            <input type="file" accept="image/*" multiple style={{display:'none'}} onChange={async e=>{
+              const files = Array.from(e.target.files||[])
+              if (files.length === 0) return
+              const newImages: string[] = []
+              for (const file of files) {
+                const compressed = await compressImage(file)
+                const dataUrl = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader()
+                  reader.onload = ev => resolve(ev.target?.result as string)
+                  reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'))
+                  reader.readAsDataURL(compressed)
+                })
+                newImages.push(dataUrl)
+              }
+              setValue(previous => {
+                const existing = (previous ?? '').split('||').filter(Boolean)
+                return [...existing, ...newImages].join('||')
+              })
+              e.target.value=''
+            }} />
+          </label>
+          {imageList.length > 0 && (
+            <div className="room-image-thumbs">
+              {imageList.map((imageSrc,imgIdx)=>(
+                <div key={`${key}-${imgIdx}`} className="room-image-thumb">
+                  <img src={imageSrc} alt={`${label}-${imgIdx+1}`} onClick={()=>openGallery(imageList,imgIdx)} />
+                  <button type="button" className="thumb-remove" onClick={()=>setValue(previous=>{
+                    const current = (previous ?? '').split('||').filter(Boolean)
+                    return current.filter((_, idx) => idx !== imgIdx).join('||')
+                  })}>✕</button>
+                  <div style={{display:'flex',gap:'2px',position:'absolute',bottom:2,left:2}}>
+                    <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>moveImage(imgIdx,imgIdx-1)}>←</button>
+                    <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>moveImage(imgIdx,imgIdx+1)}>→</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const navItems: import('./components/Navigation').NavItem[] = [
     { key: 'dashboard', label: 'Dashboard', icon: '📊', visible: true },
@@ -1162,6 +1549,86 @@ function App() {
     'einstellungen-pdfdesigner': 'PDF-Designer',
     'admin-benutzer': 'Benutzerverwaltung', 'admin-backup': 'Datenbankbackup',
     'admin-export': 'Datenexport', 'admin-logs': 'System-Logs', profil: 'Mein Profil',
+  }
+
+  // ===== Dokumenten-Verwaltung (Datei-Explorer für Ordner + generierte/hochgeladene Dokumente) =====
+  const renderDocumentManager = (siteId: number, readOnly: boolean) => {
+    const siteFolders = folders.filter(f => f.siteId === siteId && f.parentFolderId === docCurrentFolderId)
+    const currentFolder = docCurrentFolderId ? folders.find(f => f.id === docCurrentFolderId) : null
+    const siteDocuments = documents.filter(d => d.siteId === siteId && d.folderId === docCurrentFolderId && d.isArchived === showDocArchive)
+    return (
+      <div style={{ marginTop: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <strong>📁 Dokumentenablage</strong>
+            {currentFolder && <button type="button" className="tertiary-button" style={{ padding: '2px 8px', fontSize: '0.8rem' }} onClick={() => setDocCurrentFolderId(currentFolder.parentFolderId)}>← {currentFolder.name}</button>}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button type="button" className={`tab-btn${showDocArchive ? ' active' : ''}`} style={{ padding: '4px 10px', fontSize: '0.8rem' }} onClick={() => setShowDocArchive(v => !v)}>🗄 {showDocArchive ? 'Archiv' : 'Archiv anzeigen'}</button>
+          </div>
+        </div>
+        {!readOnly && (
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input placeholder="Neuer Ordnername" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} style={{ maxWidth: '220px' }} />
+            <button type="button" className="secondary-button" onClick={() => createDocFolder(siteId)}>+ Ordner anlegen</button>
+            <label className="secondary-button" style={{ cursor: 'pointer', margin: 0 }}>
+              📤 Datei hochladen
+              <input type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadExternalDocument(siteId, f); e.target.value = '' }} />
+            </label>
+          </div>
+        )}
+        {siteFolders.length > 0 && (
+          <div className="list-view" style={{ marginBottom: '12px' }}>
+            {siteFolders.map(f => (
+              <div key={f.id} className="list-item" style={{ cursor: 'default' }}>
+                <span className="list-icon" style={{ cursor: 'pointer' }} onClick={() => setDocCurrentFolderId(f.id)}>📁</span>
+                <span className="list-name" style={{ cursor: 'pointer' }} onClick={() => setDocCurrentFolderId(f.id)}>{f.name}</span>
+                <span className="list-meta">{documents.filter(d => d.folderId === f.id).length} Dokumente</span>
+                {!readOnly && <button type="button" className="danger-button" style={{ padding: '3px 8px', fontSize: '0.78rem' }} onClick={() => deleteDocFolder(f.id)}>✕</button>}
+              </div>
+            ))}
+          </div>
+        )}
+        {siteDocuments.length === 0 ? (
+          <p className="empty-hint">{showDocArchive ? 'Keine archivierten Dokumente.' : 'Noch keine Dokumente in diesem Ordner.'}</p>
+        ) : (
+          <table>
+            <thead><tr><th>Titel</th><th>Quelle</th><th>Größe</th><th>Erstellt</th><th>Aktionen</th></tr></thead>
+            <tbody>
+              {siteDocuments.map(d => (
+                <tr key={d.id}>
+                  <td>
+                    {renamingDocId === d.id ? (
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <input value={renamingDocTitle} onChange={e => setRenamingDocTitle(e.target.value)} style={{ maxWidth: '200px' }} autoFocus />
+                        <button type="button" className="primary-button" style={{ padding: '3px 8px', fontSize: '0.78rem' }} onClick={() => saveDocumentRename(d.id)}>✓</button>
+                        <button type="button" className="secondary-button" style={{ padding: '3px 8px', fontSize: '0.78rem' }} onClick={() => setRenamingDocId(null)}>✕</button>
+                      </div>
+                    ) : d.title}
+                  </td>
+                  <td><span className="status-badge">{d.isUploaded ? '📤 Hochgeladen' : d.pdfDesignName ?? 'PDF-Design'}</span></td>
+                  <td style={{ fontSize: '0.85rem' }}>{formatFileSize(d.sizeBytes)}</td>
+                  <td>{new Date(d.createdAtUtc).toLocaleDateString('de-DE')}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => openOrDownloadDocument(d, 'view')}>👁 Öffnen</button>
+                      <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => openOrDownloadDocument(d, 'download')}>⬇ Download</button>
+                      {!readOnly && (
+                        <>
+                          <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => { setRenamingDocId(d.id); setRenamingDocTitle(d.title) }}>✏️</button>
+                          <button type="button" className="secondary-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => toggleArchiveDocument(d)}>{d.isArchived ? '↩ Dearchivieren' : '🗄 Archivieren'}</button>
+                          <button type="button" className="danger-button" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => deleteDocumentEntry(d.id)}>✕</button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    )
   }
 
   if (!session) {
@@ -1224,15 +1691,19 @@ function App() {
 
       <div className={`app-container${sidebarVisible ? '' : ' sidebar-hidden'}`}>
         {sidebarVisible && (
-          <Navigation
-            items={navItems}
-            currentPage={page}
-            onPageChange={(p) => {
-              setPage(p)
-              if (p === 'audits') setAuditView('categories')
-              if (p === 'datenablage') setDatenablageView('categories')
-            }}
-          />
+          <>
+            <div className="mobile-nav-backdrop" onClick={() => setSidebarVisible(false)} />
+            <Navigation
+              items={navItems}
+              currentPage={page}
+              onPageChange={(p) => {
+                setPage(p)
+                if (p === 'audits') setAuditView('categories')
+                if (p === 'datenablage') setDatenablageView('categories')
+                if (typeof window !== 'undefined' && window.innerWidth <= 768) setSidebarVisible(false)
+              }}
+            />
+          </>
         )}
 
         <main className="main-panel">
@@ -1414,69 +1885,12 @@ function App() {
                                     }
 
                                     if (baseType === 'image') {
-                                      const imageList = val.split('||').filter(Boolean)
-                                      return (
-                                        <div key={field.id} className="full-width">
-                                          <label>{field.name}{field.relevantForProgress?' *':''}</label>
-                                          <div className="room-image-upload">
-                                            <label className="image-upload-btn">
-                                              📷 Bilder hinzufügen
-                                              <input type="file" accept="image/*" multiple style={{display:'none'}} onChange={async e=>{
-                                                const files = Array.from(e.target.files||[])
-                                                if (files.length === 0) {
-                                                  return
-                                                }
-
-                                                const newImages: string[] = []
-                                                for (const file of files) {
-                                                  const compressed = await compressImage(file)
-                                                  const dataUrl = await new Promise<string>((resolve, reject) => {
-                                                    const reader = new FileReader()
-                                                    reader.onload = ev => resolve(ev.target?.result as string)
-                                                    reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'))
-                                                    reader.readAsDataURL(compressed)
-                                                  })
-                                                  newImages.push(dataUrl)
-                                                }
-
-                                                setRoomFieldValues(previous => {
-                                                  const existing = (previous[field.name] ?? '').split('||').filter(Boolean)
-                                                  return { ...previous, [field.name]: [...existing, ...newImages].join('||') }
-                                                })
-                                                e.target.value=''
-                                              }} />
-                                            </label>
-                                            {imageList.length > 0 && (
-                                              <div className="room-image-thumbs">
-                                                {imageList.map((imageSrc,imgIdx)=>(
-                                                  <div key={`${field.name}-${imgIdx}`} className="room-image-thumb">
-                                                    <img src={imageSrc} alt={`${field.name}-${imgIdx+1}`} onClick={()=>{setGalleryModalImages(imageList);setGalleryModalIndex(imgIdx);setGalleryModalZoom(1)}} />
-                                                    <button type="button" className="thumb-remove" onClick={()=>setRoomFieldValues(previous=>{
-                                                      const current = (previous[field.name] ?? '').split('||').filter(Boolean)
-                                                      return { ...previous, [field.name]: current.filter((_, idx) => idx !== imgIdx).join('||') }
-                                                    })}>✕</button>
-                                                    <div style={{display:'flex',gap:'2px',position:'absolute',bottom:2,left:2}}>
-                                                      <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>setRoomFieldValues(previous=>{
-                                                        const current = (previous[field.name] ?? '').split('||').filter(Boolean)
-                                                        if (imgIdx===0) return previous
-                                                        const next = [...current]
-                                                        ;[next[imgIdx-1],next[imgIdx]]=[next[imgIdx],next[imgIdx-1]]
-                                                        return { ...previous, [field.name]: next.join('||') }
-                                                      })}>←</button>
-                                                      <button type="button" style={{fontSize:'0.65rem',background:'rgba(0,0,0,0.5)',border:'none',color:'white',cursor:'pointer',borderRadius:'3px',padding:'1px 3px'}} onClick={()=>setRoomFieldValues(previous=>{
-                                                        const current = (previous[field.name] ?? '').split('||').filter(Boolean)
-                                                        if (imgIdx===current.length-1) return previous
-                                                        const next = [...current]
-                                                        ;[next[imgIdx],next[imgIdx+1]]=[next[imgIdx+1],next[imgIdx]]
-                                                        return { ...previous, [field.name]: next.join('||') }
-                                                      })}>→</button>
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
+                                      return renderImageUploadField(
+                                        String(field.id),
+                                        field.name,
+                                        field.relevantForProgress,
+                                        val,
+                                        updater => setRoomFieldValues(previous => ({ ...previous, [field.name]: updater(previous[field.name] ?? '') }))
                                       )
                                     }
                                     if (baseType === 'dropdown' && options.length > 0) {
@@ -1533,7 +1947,7 @@ function App() {
                           </div>
 
                           {/* Raumliste als Tabelle */}
-                          {rooms.filter(r=>r.siteId===auditSelectedSite.id).length===0
+                          {rooms.filter(r=>r.siteId===auditSelectedSite.id&&r.auditId===0).length===0
                             ? <p className="empty-hint" style={{marginTop:'16px'}}>Noch keine Räume für diesen Standort.</p>
                             : (() => {
                                 const roomFields = auditSelectedTemplate.fields.filter(f=>{
@@ -1561,7 +1975,7 @@ function App() {
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {rooms.filter(r=>r.siteId===auditSelectedSite.id).map(r=>{
+                                        {rooms.filter(r=>r.siteId===auditSelectedSite.id&&r.auditId===0).map(r=>{
                                           const fieldMap = parseStringMap(r.fieldsJson)
                                           const imgUrls = imgFields.length > 0 ? (fieldMap[imgFields[0].name] ?? '').split('||').filter(Boolean) : []
                                           return (
@@ -1575,7 +1989,7 @@ function App() {
                                               {hasImages && (
                                                 <td>
                                                   {imgUrls.length > 0
-                                                    ? <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>{setGalleryModalImages(imgUrls);setGalleryModalIndex(0);setGalleryModalZoom(1)}}>🖼 {imgUrls.length} Bild{imgUrls.length!==1?'er':''}</button>
+                                                    ? <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>openGallery(imgUrls,0)}>🖼 {imgUrls.length} Bild{imgUrls.length!==1?'er':''}</button>
                                                     : <em style={{color:'var(--muted)',fontSize:'0.8rem'}}>—</em>
                                                   }
                                                 </td>
@@ -1615,7 +2029,7 @@ function App() {
                             <div className="info-row"><span>Adresse</span><strong>{auditSelectedSite.address||'-'}</strong></div>
                             <div className="info-row"><span>Telefon</span><strong>{auditSelectedSite.phone||'-'}</strong></div>
                             <div className="info-row"><span>Hausmeister</span><strong>{auditSelectedSite.caretakerPhone||'-'}</strong></div>
-                            <div className="info-row"><span>Räume gesamt</span><strong>{rooms.filter(r=>r.siteId===auditSelectedSite.id).length}</strong></div>
+                            <div className="info-row"><span>Räume gesamt</span><strong>{rooms.filter(r=>r.siteId===auditSelectedSite.id&&r.auditId===0).length}</strong></div>
                             <div className="info-row"><span>Audit-Vorlage</span><strong>{auditSelectedTemplate.name}</strong></div>
                           </div>
                           {/* Vorlage-Grunddatenfelder (scope:site) */}
@@ -1626,6 +2040,15 @@ function App() {
                                 {auditSelectedTemplate.fields.filter(f=>parseTemplateFieldType(f.type).scope==='site').map(field=>{
                                   const {baseType, options} = parseTemplateFieldType(field.type)
                                   const val = siteGroundDataValues[field.name] ?? ''
+                                  if (baseType === 'image') {
+                                    return renderImageUploadField(
+                                      String(field.id),
+                                      field.name,
+                                      field.relevantForProgress,
+                                      val,
+                                      updater => setSiteGroundDataValues(previous => ({ ...previous, [field.name]: updater(previous[field.name] ?? '') }))
+                                    )
+                                  }
                                   if (baseType === 'dropdown' && options.length > 0) {
                                     return (
                                       <label key={field.id}>{field.name}{field.relevantForProgress?' *':''}
@@ -1674,27 +2097,70 @@ function App() {
                       {auditTab==='dokumente'&&(
                         <div className="tab-content">
                           <form className="form-card" onSubmit={createAudit}>
-                            <h4>Audit-Dokument erstellen</h4>
-                            <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong></p>
+                            <h4>Neues Audit erfassen</h4>
+                            <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong> — beim Anlegen werden die aktuellen Räume/Grunddaten des Standorts als unveränderlicher Stand dieses Audits gesichert.</p>
                             <div className="form-grid">
                               <label>Titel / Bezeichnung<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value,siteId:String(auditSelectedSite.id),templateId:String(auditSelectedTemplate.id)}))} required /></label>
                             </div>
-                            <button type="submit" className="primary-button">📄 Dokument erstellen</button>
+                            <button type="submit" className="primary-button">📋 Audit anlegen</button>
                           </form>
                           {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length>0 && (
                             <table style={{marginTop:'16px'}}>
-                              <thead><tr><th>Dokument</th><th>Status</th><th>Erstellt</th><th>Aktion</th></tr></thead>
-                              <tbody>{audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).map(audit=>(
-                                <tr key={audit.id}>
-                                  <td>{audit.title}</td>
-                                  <td><span className="status-badge">{audit.status}</span></td>
-                                  <td>{new Date(audit.createdAtUtc).toLocaleDateString('de-DE')}</td>
-                                  <td><button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(audit.id,audit.title)}>PDF</button></td>
-                                </tr>
-                              ))}</tbody>
+                              <thead><tr><th>Audit</th><th>Status</th><th>Erstellt</th><th>Aktion</th></tr></thead>
+                              <tbody>{audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).map(audit=>{
+                                const eligibleDesigns = pdfDesigns.filter(d=>getDesignTemplateIds(d).includes(auditSelectedTemplate.id))
+                                return (
+                                <Fragment key={audit.id}>
+                                  <tr>
+                                    <td>{audit.title}</td>
+                                    <td><span className="status-badge">{audit.status}</span></td>
+                                    <td>{new Date(audit.createdAtUtc).toLocaleDateString('de-DE')}</td>
+                                    <td><button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={()=>{
+                                      if(docGenAuditId===audit.id){setDocGenAuditId(null);return}
+                                      setDocGenAuditId(audit.id)
+                                      setDocGenPdfDesignId('')
+                                      setDocGenTitle('')
+                                    }}>📄 Dokument erstellen</button></td>
+                                  </tr>
+                                  {docGenAuditId===audit.id && (
+                                    <tr>
+                                      <td colSpan={4}>
+                                        <div className="form-card" style={{margin:'8px 0'}}>
+                                          {eligibleDesigns.length===0 ? (
+                                            <p className="empty-hint">Kein PDF-Design ist der Vorlage „{auditSelectedTemplate.name}" zugewiesen. Bitte im PDF-Designer zuweisen.</p>
+                                          ) : (
+                                            <>
+                                              <div className="form-grid">
+                                                <label>PDF-Design<select value={docGenPdfDesignId} onChange={e=>{
+                                                  const id=e.target.value
+                                                  setDocGenPdfDesignId(id)
+                                                  const design=eligibleDesigns.find(d=>String(d.id)===id)
+                                                  if(design) setDocGenTitle(`${design.name} – ${audit.title}`)
+                                                }}>
+                                                  <option value="">Design wählen...</option>
+                                                  {eligibleDesigns.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+                                                </select></label>
+                                                <label>Titel des Dokuments<input value={docGenTitle} onChange={e=>setDocGenTitle(e.target.value)} placeholder="Dokumententitel" /></label>
+                                              </div>
+                                              <div style={{display:'flex',gap:'8px',marginTop:'12px',alignItems:'center'}}>
+                                                <button type="button" className="primary-button" disabled={!docGenPdfDesignId||!docGenTitle.trim()||docGenInProgress} onClick={()=>generateDocument(audit.id)}>
+                                                  {docGenInProgress ? '⏳ Wird erstellt...' : '✅ Erstellen'}
+                                                </button>
+                                                {docGenInProgress && <span className="progress-spinner" aria-label="Dokument wird erstellt" />}
+                                                <button type="button" className="secondary-button" onClick={()=>setDocGenAuditId(null)}>Abbrechen</button>
+                                              </div>
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
+                              )})}</tbody>
                             </table>
                           )}
-                          {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length===0&&<p className="empty-hint">Noch kein Dokument für diesen Standort mit dieser Vorlage.</p>}
+                          {audits.filter(a=>a.siteId===auditSelectedSite.id&&a.templateId===auditSelectedTemplate.id).length===0&&<p className="empty-hint">Noch kein Audit für diesen Standort mit dieser Vorlage.</p>}
+                          {renderDocumentManager(auditSelectedSite.id, false)}
                         </div>
                       )}
                     </>
@@ -1731,7 +2197,7 @@ function App() {
                     {[...sites].filter(s=>s.categoryId===datenablageCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
                       <button key={site.id} type="button" className="list-item" onClick={()=>{setDatenablageSite(site);setDatenablageView('standort');setDatenablageTab('raume')}}>
                         <span className="list-icon">🏢</span><span className="list-name">{site.name}</span>
-                        <span className="list-meta">{rooms.filter(r=>r.siteId===site.id).length} Räume · {audits.filter(a=>a.siteId===site.id).length} Audits</span>
+                        <span className="list-meta">{rooms.filter(r=>r.siteId===site.id&&r.auditId===0).length} Räume · {audits.filter(a=>a.siteId===site.id).length} Audits</span>
                         <span className="list-arrow">›</span>
                       </button>
                     ))}
@@ -1743,6 +2209,7 @@ function App() {
                   <div className="page-header">
                     <button type="button" className="back-btn" onClick={()=>setDatenablageView('standorte')}>← Zurück</button>
                     <div><h3>{datenablageSite.name}</h3><p className="page-subtitle">{datenablageSite.address}</p></div>
+                    <button type="button" className="secondary-button" onClick={()=>goToAuditsSite(datenablageSite,datenablageTab)}>🛠 Zu Audits wechseln</button>
                   </div>
                   <div className="tab-bar">
                     {(['raume','grunddaten','dokumente'] as const).map(tab=>(
@@ -1753,31 +2220,67 @@ function App() {
                   </div>
                   {datenablageTab==='raume'&&(
                     <div className="tab-content">
-                      {[...rooms].filter(r=>r.siteId===datenablageSite.id).sort((a,b)=>a.name.localeCompare(b.name)).map(room=>{
-                        const roomAudits = audits.filter(a=>a.siteId===datenablageSite!.id)
-                        return (
-                          <div key={room.id} className="daten-raum">
-                            <div className="daten-raum-header">
-                              <span>🚪</span><strong>{room.name}</strong>
-                              {room.capacity&&<span className="list-meta">Kap: {room.capacity}</span>}
-                              {room.area&&<span className="list-meta">Fläche: {room.area}</span>}
-                            </div>
-                            {roomAudits.length>0&&(
-                              <div className="daten-audit-list">
-                                {roomAudits.map(a=>(
-                                  <div key={a.id} className="daten-audit-item">
-                                    <span>📋</span><span>{a.title}</span>
-                                    <span className="list-meta">{a.templateName}</span>
-                                    <span className="list-meta">{new Date(a.createdAtUtc).toLocaleDateString('de-DE')}</span>
-                                    <button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(a.id,a.title)}>PDF</button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                      {!datenablageSelectedRoomName ? (
+                        <>
+                          <div className="list-view">
+                            {Array.from(new Set(rooms.filter(r=>r.siteId===datenablageSite!.id&&r.auditId===0).map(r=>r.name))).sort((a,b)=>a.localeCompare(b)).map(name=>{
+                              const auditCount = new Set(rooms.filter(r=>r.siteId===datenablageSite!.id&&r.auditId>0&&r.name===name).map(r=>r.auditId)).size
+                              return (
+                                <button key={name} type="button" className="list-item" onClick={()=>setDatenablageSelectedRoomName(name)}>
+                                  <span className="list-icon">🚪</span><span className="list-name">{name}</span>
+                                  <span className="list-meta">{auditCount} Audit{auditCount!==1?'s':''}</span>
+                                  <span className="list-arrow">›</span>
+                                </button>
+                              )
+                            })}
                           </div>
-                        )
-                      })}
-                      {rooms.filter(r=>r.siteId===datenablageSite.id).length===0&&<p className="empty-hint">Noch keine Räume.</p>}
+                          {rooms.filter(r=>r.siteId===datenablageSite.id&&r.auditId===0).length===0&&<p className="empty-hint">Noch keine Räume.</p>}
+                        </>
+                      ) : (
+                        <>
+                          <div className="page-header">
+                            <button type="button" className="back-btn" onClick={()=>setDatenablageSelectedRoomName(null)}>← Zurück</button>
+                            <div><h3>🚪 {datenablageSelectedRoomName}</h3><p className="page-subtitle">Erfasste Daten aus allen Audits</p></div>
+                            <button type="button" className="primary-button" onClick={()=>goToLiveRoomEdit(datenablageSite!, datenablageSelectedRoomName!)}>✏️ Im Audit bearbeiten</button>
+                          </div>
+                          {(() => {
+                            const snapshotRooms = rooms.filter(r=>r.siteId===datenablageSite!.id&&r.auditId>0&&r.name===datenablageSelectedRoomName)
+                              .sort((a,b)=>b.auditId-a.auditId)
+                            if (snapshotRooms.length===0) return <p className="empty-hint">Dieser Raum wurde noch in keinem Audit erfasst.</p>
+                            return snapshotRooms.map(r=>{
+                              const audit = audits.find(a=>a.id===r.auditId)
+                              const template = templates.find(t=>t.id===audit?.templateId)
+                              const fieldTypeMap = new Map(template?.fields.map(f=>[f.name, parseTemplateFieldType(f.type).baseType]) ?? [])
+                              const fieldMap = parseStringMap(r.fieldsJson)
+                              const fieldEntries = Object.entries(fieldMap).filter(([,v])=>v)
+                              return (
+                                <div key={r.id} className="daten-raum" style={{marginBottom:'14px'}}>
+                                  <div className="daten-raum-header">
+                                    <span>📋</span><strong>{audit?.title ?? `Audit #${r.auditId}`}</strong>
+                                    {audit && <span className="list-meta">{audit.templateName}</span>}
+                                    {audit && <span className="list-meta">{new Date(audit.createdAtUtc).toLocaleDateString('de-DE')}</span>}
+                                  </div>
+                                  <div className="info-grid" style={{marginTop:'8px'}}>
+                                    {fieldEntries.map(([k,v])=>{
+                                      const baseType = fieldTypeMap.get(k)
+                                      if (baseType==='image') {
+                                        const imgs = v.split('||').filter(Boolean)
+                                        return imgs.length>0 ? (
+                                          <div key={k} className="info-row"><span>{k}</span>
+                                            <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>openGallery(imgs,0)}>🖼 {imgs.length} Bild{imgs.length!==1?'er':''}</button>
+                                          </div>
+                                        ) : null
+                                      }
+                                      return <div key={k} className="info-row"><span>{k}</span><strong>{baseType==='checkbox'?(v==='true'?'✓':'✗'):v}</strong></div>
+                                    })}
+                                    {fieldEntries.length===0 && <p className="empty-hint">Keine Daten erfasst.</p>}
+                                  </div>
+                                </div>
+                              )
+                            })
+                          })()}
+                        </>
+                      )}
                     </div>
                   )}
                   {datenablageTab==='grunddaten'&&(
@@ -1787,7 +2290,7 @@ function App() {
                         <div className="info-row"><span>Adresse</span><strong>{datenablageSite.address||'-'}</strong></div>
                         <div className="info-row"><span>Telefon</span><strong>{datenablageSite.phone||'-'}</strong></div>
                         <div className="info-row"><span>Hausmeister</span><strong>{datenablageSite.caretakerPhone||'-'}</strong></div>
-                        <div className="info-row"><span>Räume</span><strong>{rooms.filter(r=>r.siteId===datenablageSite.id).length}</strong></div>
+                        <div className="info-row"><span>Räume</span><strong>{rooms.filter(r=>r.siteId===datenablageSite.id&&r.auditId===0).length}</strong></div>
                         <div className="info-row"><span>Audits</span><strong>{audits.filter(a=>a.siteId===datenablageSite.id).length}</strong></div>
                       </div>
                       {(() => {
@@ -1796,7 +2299,7 @@ function App() {
                         if (keys.length === 0) return null
                         return (
                           <div className="ground-data-card">
-                            <h4 style={{margin:'0 0 12px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Erfasste Grunddaten</h4>
+                            <h4 style={{margin:'0 0 12px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Aktuelle Grunddaten (live)</h4>
                             <div className="info-grid">
                               {keys.map(key=>(
                                 <div key={key} className="info-row"><span>{key}</span><strong>{groundData[key]}</strong></div>
@@ -1805,22 +2308,39 @@ function App() {
                           </div>
                         )
                       })()}
+                      {/* Pro Audit: der zum Zeitpunkt des Audits eingefrorene Stand der Grunddaten-Felder */}
+                      {audits.filter(a=>a.siteId===datenablageSite.id).sort((a,b)=>b.id-a.id).map(audit=>{
+                        const template = templates.find(t=>t.id===audit.templateId)
+                        const fieldTypeMap = new Map(template?.fields.map(f=>[f.name, parseTemplateFieldType(f.type).baseType]) ?? [])
+                        const groundDataSnapshot = parseStringMap(audit.groundDataJson)
+                        const entries = Object.entries(groundDataSnapshot).filter(([,v])=>v)
+                        if (entries.length===0) return null
+                        return (
+                          <div key={audit.id} className="ground-data-card" style={{marginTop:'12px'}}>
+                            <h4 style={{margin:'0 0 12px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>{audit.title} · {new Date(audit.createdAtUtc).toLocaleDateString('de-DE')}</h4>
+                            <div className="info-grid">
+                              {entries.map(([k,v])=>{
+                                const baseType = fieldTypeMap.get(k)
+                                if (baseType==='image') {
+                                  const imgs = v.split('||').filter(Boolean)
+                                  return imgs.length>0 ? (
+                                    <div key={k} className="info-row"><span>{k}</span>
+                                      <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>openGallery(imgs,0)}>🖼 {imgs.length} Bild{imgs.length!==1?'er':''}</button>
+                                    </div>
+                                  ) : null
+                                }
+                                return <div key={k} className="info-row"><span>{k}</span><strong>{baseType==='checkbox'?(v==='true'?'✓':'✗'):v}</strong></div>
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   {datenablageTab==='dokumente'&&(
                     <div className="tab-content">
-                      {audits.filter(a=>a.siteId===datenablageSite.id).length===0
-                        ? <p className="empty-hint">Noch keine Dokumente für diesen Standort.</p>
-                        : <table><thead><tr><th>Dokument</th><th>Vorlage</th><th>Status</th><th>Erstellt</th><th>Aktion</th></tr></thead>
-                            <tbody>{audits.filter(a=>a.siteId===datenablageSite.id).map(a=>(
-                              <tr key={a.id}><td>{a.title}</td><td>{a.templateName}</td>
-                                <td><span className="status-badge">{a.status}</span></td>
-                                <td>{new Date(a.createdAtUtc).toLocaleDateString('de-DE')}</td>
-                                <td><button type="button" className="ghost-button" onClick={()=>downloadAuditPdf(a.id,a.title)}>PDF</button></td>
-                              </tr>
-                            ))}</tbody>
-                          </table>
-                      }
+                      <p style={{color:'var(--muted)',fontSize:'0.85rem',marginBottom:'8px'}}>Nur Ansicht. Dokumente werden auf der Audits-Seite im Tab „Dokumente" erstellt und verwaltet.</p>
+                      {renderDocumentManager(datenablageSite.id, true)}
                     </div>
                   )}
                 </>
@@ -2008,6 +2528,13 @@ function App() {
                               }
                             }))
                           }}>✏️ Bearbeiten</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{
+                            if(!session)return
+                            try {
+                              const res=await apiRequest<Template>('/api/templates',session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:`${t.name} (Kopie)`,description:t.description,fields:t.fields.map(f=>({name:f.name,type:f.type,order:f.order,relevantForProgress:f.relevantForProgress}))})})
+                              setTemplates(p=>[...p,res])
+                            } catch { setError('Vorlage konnte nicht dupliziert werden.') }
+                          }}>⧉ Duplizieren</button>
                           <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(!session)return;const cnt=audits.filter(a=>a.templateId===t.id).length;if(cnt>0){alert(`Vorlage wird in ${cnt} Audits verwendet und kann nicht gelöscht werden.`);return}if(!confirm(`Vorlage "${t.name}" löschen?`))return;await apiRequest(`/api/templates/${t.id}`,session,{method:'DELETE'});setTemplates(p=>p.filter(x=>x.id!==t.id))}}>✕ Löschen</button>
                         </div></td>
                       </tr>
@@ -2023,16 +2550,17 @@ function App() {
               <div className="page-header"><h3>Checklisten</h3></div>
               {editingChecklistTemplate ? (
                 <form className="form-card" onSubmit={async e=>{e.preventDefault();if(!session||!editingChecklistTemplate)return;
-                  const res=await apiRequest<ChecklistTemplate>(`/api/checklisttemplates/${editingChecklistTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingChecklistTemplate.name,templateId:editingChecklistTemplate.templateId,columnsJson:editingChecklistTemplate.columnsJson})})
-                  setChecklistTemplates(p=>p.map(c=>c.id===res.id?res:c));setEditingChecklistTemplate(null)}}>
+                  const res=await apiRequest<ChecklistTemplate>(`/api/checklisttemplates/${editingChecklistTemplate.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingChecklistTemplate.name,templateId:editingChecklistTemplate.templateId,columnsJson:JSON.stringify(checklistColumns)})})
+                  setChecklistTemplates(p=>p.map(c=>c.id===res.id?res:c));setEditingChecklistTemplate(null);setChecklistColumns([])}}>
                   <h4>Checkliste bearbeiten: {editingChecklistTemplate.name}</h4>
                   <div className="form-grid">
                     <label>Name<input value={editingChecklistTemplate.name} onChange={e=>setEditingChecklistTemplate(p=>p?{...p,name:e.target.value}:p)} /></label>
                     <label>Audit-Vorlage<select value={editingChecklistTemplate.templateId} onChange={e=>setEditingChecklistTemplate(p=>p?{...p,templateId:parseInt(e.target.value)}:p)}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
                   </div>
+                  {renderChecklistColumnsBuilder(editingChecklistTemplate.templateId)}
                   <div style={{display:'flex',gap:'8px',marginTop:'12px'}}>
                     <button type="submit" className="primary-button">Speichern</button>
-                    <button type="button" className="secondary-button" onClick={()=>setEditingChecklistTemplate(null)}>Abbrechen</button>
+                    <button type="button" className="secondary-button" onClick={()=>{setEditingChecklistTemplate(null);setChecklistColumns([])}}>Abbrechen</button>
                   </div>
                 </form>
               ) : (
@@ -2042,28 +2570,7 @@ function App() {
                     <label>Name<input value={newChecklistName} onChange={e=>setNewChecklistName(e.target.value)} placeholder="z.B. Abnahme-Checkliste" /></label>
                     <label>Audit-Vorlage<select value={newChecklistTemplateId} onChange={e=>setNewChecklistTemplateId(e.target.value)}>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
                   </div>
-                  <div style={{marginTop:'16px'}}>
-                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}}>
-                      <strong>Spalten</strong>
-                      <div style={{display:'flex',gap:'6px'}}>
-                        <button type="button" className="secondary-button" style={{padding:'5px 8px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Raum',source:'room',inputType:'text',order:p.length+1}])}>+ Raumname</button>
-                        <button type="button" className="secondary-button" style={{padding:'5px 8px',fontSize:'0.82rem'}} onClick={()=>setChecklistColumns(p=>[...p,{id:Date.now().toString(),label:'Neue Spalte',source:'custom',inputType:'checkbox',order:p.length+1}])}>+ Freie Spalte</button>
-                      </div>
-                    </div>
-                    <div className="field-builder">
-                      {checklistColumns.map((col,idx)=>(
-                        <div key={col.id} className="field-builder-row">
-                          <span className="field-order">{col.order}</span>
-                          <input className="field-name-input" placeholder="Spaltenname" value={col.label} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,label:e.target.value}:c))} />
-                          <select className="field-type-select" value={col.inputType} onChange={e=>setChecklistColumns(p=>p.map((c,i)=>i===idx?{...c,inputType:e.target.value as 'text'|'number'|'checkbox'}:c))}>
-                            <option value="text">Text</option><option value="number">Zahl</option><option value="checkbox">Checkbox</option>
-                          </select>
-                          <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.8rem'}} onClick={()=>setChecklistColumns(p=>p.filter((_,i)=>i!==idx).map((c,i)=>({...c,order:i+1})))}>✕</button>
-                        </div>
-                      ))}
-                      {checklistColumns.length===0&&<p className="empty-hint">Noch keine Spalten.</p>}
-                    </div>
-                  </div>
+                  {renderChecklistColumnsBuilder(parseInt(newChecklistTemplateId))}
                   <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={async()=>{
                     if(!session||!newChecklistName)return;
                     const res=await apiRequest<ChecklistTemplate>('/api/checklisttemplates',session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newChecklistName,templateId:parseInt(newChecklistTemplateId),columnsJson:JSON.stringify(checklistColumns)})})
@@ -2078,7 +2585,14 @@ function App() {
                       const cols: ChecklistColumn[]=(()=>{try{return JSON.parse(c.columnsJson)}catch{return[]}})()
                       return <tr key={c.id}><td>{c.name}</td><td>{templates.find(t=>t.id===c.templateId)?.name??'-'}</td><td>{cols.length}</td>
                         <td><div style={{display:'flex',gap:'6px'}}>
-                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>setEditingChecklistTemplate(c)}>✏️ Bearbeiten</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={()=>{setEditingChecklistTemplate(c);setChecklistColumns(cols.length?cols:[])}}>✏️ Bearbeiten</button>
+                          <button type="button" className="secondary-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{
+                            if(!session)return
+                            try {
+                              const res=await apiRequest<ChecklistTemplate>('/api/checklisttemplates',session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:`${c.name} (Kopie)`,templateId:c.templateId,columnsJson:c.columnsJson})})
+                              setChecklistTemplates(p=>[...p,res])
+                            } catch { setError('Checkliste konnte nicht dupliziert werden.') }
+                          }}>⧉ Duplizieren</button>
                           <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/checklisttemplates/${c.id}`,session,{method:'DELETE'});setChecklistTemplates(p=>p.filter(x=>x.id!==c.id))}}>✕ Löschen</button>
                         </div></td>
                       </tr>
@@ -2126,15 +2640,22 @@ function App() {
                                     globalHeaderText: config.globalHeaderText || '',
                                     globalFooterText: config.globalFooterText || '',
                                     showPrintArea: config.showPrintArea ?? true,
-                                    templateId: config.templateId,
+                                    templateIds: config.templateIds?.length ? config.templateIds : (config.templateId ? [config.templateId] : []),
                                     pages: config.pages?.length ? config.pages : [
                                       { id: 'p1', name: 'Deckblatt', orientation: 'portrait', headerText: '', footerText: '', useGlobalHeader: false, elements: [] }
                                     ]
                                   })
                                 } catch {
-                                  setPdfDesignConfig({ globalHeaderText:'', globalFooterText:'', showPrintArea:true, pages:[{id:'p1',name:'Deckblatt',orientation:'portrait',headerText:'',footerText:'',useGlobalHeader:false,elements:[]}] })
+                                  setPdfDesignConfig({ globalHeaderText:'', globalFooterText:'', showPrintArea:true, templateIds:[], pages:[{id:'p1',name:'Deckblatt',orientation:'portrait',headerText:'',footerText:'',useGlobalHeader:false,elements:[]}] })
                                 }
                               }}>✏️ Bearbeiten</button>
+                              <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={async()=>{
+                                if (!session) return
+                                try {
+                                  const res = await apiRequest<PdfDesign>('/api/pdfdesigns', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:`${d.name} (Kopie)`,description:d.description,configJson:d.configJson})})
+                                  setPdfDesigns(p=>[...p,res])
+                                } catch { setError('Design konnte nicht dupliziert werden.') }
+                              }}>⧉ Duplizieren</button>
                               <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/pdfdesigns/${d.id}`,session,{method:'DELETE'});setPdfDesigns(p=>p.filter(x=>x.id!==d.id))}}>Löschen</button>
                             </div></td>
                           </tr>
@@ -2153,10 +2674,30 @@ function App() {
                         <input type="checkbox" checked={pdfDesignConfig.showPrintArea} onChange={e=>setPdfDesignConfig(p=>({...p,showPrintArea:e.target.checked}))} />
                         Druckbereich
                       </label>
-                      <select value={pdfDesignConfig.templateId||''} onChange={e=>setPdfDesignConfig(p=>({...p,templateId:parseInt(e.target.value)||undefined}))} style={{padding:'6px 10px',borderRadius:'8px',border:'1px solid var(--border)',background:'var(--surface)',color:'var(--text-h)',fontSize:'0.85rem'}}>
-                        <option value="">Vorlage wählen...</option>
-                        {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                      </select>
+                      <div style={{position:'relative'}}>
+                        <button type="button" className="secondary-button" style={{padding:'6px 10px',fontSize:'0.85rem'}} onClick={()=>setShowPdfTemplatePicker(v=>!v)}>
+                          📎 Auditvorlagen{pdfDesignConfig.templateIds?.length ? ` (${pdfDesignConfig.templateIds.length})` : ''}
+                        </button>
+                        {showPdfTemplatePicker && (
+                          <div style={{position:'absolute',top:'110%',right:0,zIndex:20,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'10px',padding:'10px',minWidth:'220px',boxShadow:'0 8px 24px rgba(0,0,0,0.18)'}}>
+                            <p style={{margin:'0 0 8px',fontSize:'0.78rem',color:'var(--muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.05em'}}>Diesem Design zugewiesene Vorlagen</p>
+                            {templates.map(t=>{
+                              const checked = (pdfDesignConfig.templateIds ?? []).includes(t.id)
+                              return (
+                                <label key={t.id} style={{display:'flex',alignItems:'center',gap:'8px',padding:'4px 0',fontSize:'0.85rem',cursor:'pointer'}}>
+                                  <input type="checkbox" checked={checked} onChange={e=>setPdfDesignConfig(p=>{
+                                    const current = p.templateIds ?? []
+                                    const next = e.target.checked ? [...current, t.id] : current.filter(id=>id!==t.id)
+                                    return {...p, templateIds: next}
+                                  })} />
+                                  {t.name}
+                                </label>
+                              )
+                            })}
+                            {templates.length===0 && <p className="empty-hint" style={{margin:0}}>Keine Vorlagen vorhanden.</p>}
+                          </div>
+                        )}
+                      </div>
                       <button type="button" className="primary-button" onClick={async()=>{
                         if (!session) return
                         try {
@@ -2175,7 +2716,14 @@ function App() {
                     onGlobalHeaderChange={t=>setPdfDesignConfig(p=>({...p,globalHeaderText:t}))}
                     onGlobalFooterChange={t=>setPdfDesignConfig(p=>({...p,globalFooterText:t}))}
                     showPrintArea={pdfDesignConfig.showPrintArea}
-                    templateFields={pdfDesignConfig.templateId ? (templates.find(t=>t.id===pdfDesignConfig.templateId)?.fields ?? []) : []}
+                    templateFields={(() => {
+                      const ids = pdfDesignConfig.templateIds ?? []
+                      const selected = templates.filter(t=>ids.includes(t.id))
+                      const seen = new Set<string>()
+                      const merged: TemplateField[] = []
+                      selected.forEach(t=>t.fields.forEach(f=>{ if(!seen.has(f.name)){ seen.add(f.name); merged.push(f) } }))
+                      return merged
+                    })()}
                   />
                 </div>
               )}
@@ -2474,26 +3022,36 @@ function App() {
           <div className="gallery-modal" onClick={e=>e.stopPropagation()}>
             <button className="gallery-modal-close" onClick={()=>setGalleryModalImages([])}>✕</button>
             <div className="gallery-modal-image-wrap"
-              onWheel={e=>{e.preventDefault();setGalleryModalZoom(z=>Math.max(0.5,Math.min(4,z+(e.deltaY<0?0.2:-0.2))))}}
-              style={{overflow:'auto',display:'flex',alignItems:'center',justifyContent:'center',flex:1}}>
+              style={{overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',flex:1,touchAction:'none',cursor:galleryModalZoom>1?'move':'default'}}
+              onWheel={galleryWheelZoom}
+              onMouseDown={galleryMouseDown}
+              onMouseMove={galleryMouseMove}
+              onMouseUp={galleryMouseUp}
+              onMouseLeave={galleryMouseUp}
+              onTouchStart={galleryTouchStart}
+              onTouchMove={galleryTouchMove}
+              onTouchEnd={galleryTouchEnd}
+            >
               <img
                 src={galleryModalImages[galleryModalIndex]}
                 alt=""
-                style={{maxWidth:'100%',maxHeight:'100%',transform:`scale(${galleryModalZoom})`,transformOrigin:'center',transition:'transform 0.1s',cursor:galleryModalZoom>1?'move':'zoom-in'}}
+                draggable={false}
+                onClick={galleryImageClick}
+                style={{maxWidth:'100%',maxHeight:'100%',transform:`translate(${galleryModalPan.x}px, ${galleryModalPan.y}px) scale(${galleryModalZoom})`,transformOrigin:'center',transition:galleryDragRef.current?'none':'transform 0.1s',cursor:galleryModalZoom>1?'move':'zoom-in',userSelect:'none'}}
               />
             </div>
             <div className="gallery-modal-footer">
-              <button className="gallery-nav-btn" disabled={galleryModalIndex===0} onClick={()=>{setGalleryModalIndex(i=>i-1);setGalleryModalZoom(1)}}>‹</button>
+              <button className="gallery-nav-btn" disabled={galleryModalIndex===0} onClick={()=>{setGalleryModalIndex(i=>i-1);resetGalleryZoom()}}>‹</button>
               <div className="gallery-modal-info">
                 <span>{galleryModalIndex+1} / {galleryModalImages.length}</span>
                 <div className="gallery-zoom-controls">
                   <button onClick={()=>setGalleryModalZoom(z=>Math.max(0.5,z-0.25))}>−</button>
                   <span>{Math.round(galleryModalZoom*100)}%</span>
                   <button onClick={()=>setGalleryModalZoom(z=>Math.min(4,z+0.25))}>+</button>
-                  <button onClick={()=>setGalleryModalZoom(1)}>1:1</button>
+                  <button onClick={resetGalleryZoom}>1:1</button>
                 </div>
               </div>
-              <button className="gallery-nav-btn" disabled={galleryModalIndex===galleryModalImages.length-1} onClick={()=>{setGalleryModalIndex(i=>i+1);setGalleryModalZoom(1)}}>›</button>
+              <button className="gallery-nav-btn" disabled={galleryModalIndex===galleryModalImages.length-1} onClick={()=>{setGalleryModalIndex(i=>i+1);resetGalleryZoom()}}>›</button>
             </div>
           </div>
         </div>

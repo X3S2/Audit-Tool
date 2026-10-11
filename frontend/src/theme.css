@@ -30,6 +30,17 @@
   --btn-secondary-border: rgba(148, 163, 184, 0.3);
   --btn-danger-bg: rgba(239, 68, 68, 0.15);
   --btn-danger-border: rgba(239, 68, 68, 0.4);
+
+  /* Eingabefelder (theme-abhängig, damit Text im Lightmode lesbar bleibt) */
+  --input-bg: rgba(15, 23, 42, 0.3);
+
+  /* Status-/Badge-Textfarben (theme-abhängig für ausreichenden Kontrast) */
+  --danger-text: #fecaca;
+  --danger-text-strong: #fca5a5;
+  --success-text: #86efac;
+  --info-text: #93c5fd;
+  --warning-text: #fbbf24;
+  --purple-text: #c084fc;
 }
 
 /* Light Mode */
@@ -64,6 +75,17 @@
   --btn-secondary-border: rgba(71, 85, 105, 0.3);
   --btn-danger-bg: rgba(239, 68, 68, 0.1);
   --btn-danger-border: rgba(239, 68, 68, 0.3);
+
+  /* Eingabefelder: heller Hintergrund statt dunkler Navy-Überlagerung, sonst unlesbar */
+  --input-bg: #f1f5f9;
+
+  /* Status-/Badge-Textfarben: kräftige, dunkle Varianten für Kontrast auf hellem Grund */
+  --danger-text: #b91c1c;
+  --danger-text-strong: #991b1b;
+  --success-text: #15803d;
+  --info-text: #1d4ed8;
+  --warning-text: #92400e;
+  --purple-text: #7e22ce;
 }
 
 html {

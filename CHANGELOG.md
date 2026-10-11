@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.8.0] - 2026-10-11
+
+### Dokumentenverwaltung, Datenablage-Drilldown, Backup-Überarbeitung & Passwort-Sicherheit
+
+#### Neu: Vollständige Dokumentenverwaltung je Audit
+- Im Audits-Bereich gibt es im Tab „📄 Dokumente" jetzt pro Audit einen aufklappbaren Bereich „Dokument erstellen": PDF-Design auswählen (nur Designs, die der jeweiligen Vorlage zugeordnet sind), Titel wird automatisch vorgeschlagen (editierbar), Fortschrittsanzeige während der Erzeugung
+- Erzeugte Dokumente landen in einer vollwertigen Dateiverwaltung: Ordner anlegen, Dokumente in Unterordner verschieben, umbenennen, archivieren/dearchivieren, löschen, öffnen (Vorschau) und herunterladen
+- Die Datenablage zeigt denselben Dokumentenbestand pro Standort **read-only** an (mit Hinweis, dass Verwaltung im Audits-Bereich erfolgt), damit nichts versehentlich aus der Ablage heraus verändert wird
+
+#### Neu: Datenablage — Räume und Grunddaten zeigen jetzt echte Audit-Historie
+- **Räume:** Klick auf einen Raumnamen zeigt alle Audit-Durchläufe, die diesen Raum erfasst haben, inkl. aller Feldwerte und Bilder (passend zum jeweiligen Vorlagen-Feldtyp formatiert) sowie einen Button „✏️ Im Audit bearbeiten", der direkt in den laufenden Audit zur Bearbeitung des Raums springt
+- **Grunddaten:** Zusätzlich zu den aktuellen (live) Standortdaten werden jetzt eingefrorene Grunddaten-Snapshots je Audit-Durchlauf als eigene Karten angezeigt
+- Der vorherige, fehlerhafte generische Raum-PDF-Button (falscher Verweis) wurde entfernt
+
+#### Backup — jetzt wirklich vollständig und menschenlesbar
+- **Logs waren bisher nicht im Backup enthalten** — `logs/audit_logs.jsonl` und `logs/error_logs.jsonl` werden jetzt in jedes Backup aufgenommen und beim Restore korrekt wiederhergestellt
+- **Neu:** Zusätzlich zum technischen Backup (`database/audit-tool.db`, `uploads/`, `documents/` — unverändert die Grundlage für die Wiederherstellung) enthält jedes Backup jetzt einen Ordner `Lesbare-Struktur/` mit einer für Menschen nachvollziehbaren Ordnerhierarchie: `<Kategorie>/<Standort>/Grunddaten/…`, `.../Raeume/<Raumname>/…` und `.../Dokumente/…`, jeweils getrennt nach „Aktuell (live)" und den einzelnen Audit-Durchläufen
+- In diesen lesbaren Ordnern werden Bilder (die technisch als Base64 in den Felddaten liegen) als **echte Bilddateien** extrahiert, alle übrigen Feldwerte stehen leserlich in `Daten.txt`
+- `manifest.json` im Backup dokumentiert jetzt auch, dass Benutzerpasswörter ausschließlich als Einweg-Hash vorliegen
+- Live getestet: Backup erstellen → herunterladen → Struktur geprüft (echte JPEGs, lesbare `Daten.txt`) → Restore durchgeführt → Datenbestand unverändert vorhanden
+
+#### Sicherheit: Benutzerpasswörter werden jetzt gehasht gespeichert
+- **Root-Cause:** Passwörter wurden bisher im Klartext in der Datenbank gespeichert und per einfachem String-Vergleich geprüft — dadurch lagen sie auch im Klartext in jedem Datenbank-Backup
+- Passwörter werden jetzt mit **PBKDF2 (SHA-256, 100.000 Iterationen, zufälliges Salt)** gehasht gespeichert
+- Bestehende Klartext-Konten werden **transparent beim nächsten erfolgreichen Login** auf den Hash migriert (kein Zwangs-Reset, kein Unterbruch)
+- Alle Standard-Benutzer (`superadmin`, `admin`, `user`, `azubi`) werden ab sofort ebenfalls bereits gehasht angelegt
+- Login-Funktion live getestet und funktioniert unverändert
+
+#### Sonstiges
+- Zeichenkodierungs-Fehler (Mojibake, z. B. „lÃ¶schen" statt „löschen") in mehreren deutschen UI-Texten der Dokumentenverwaltung behoben
+
 ## [1.7.9] - 2026-10-11
 
 ### Logs-Fix, Fehler-Styling, zweigeteilter Feld-Builder, UI-Politur

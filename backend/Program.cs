@@ -81,9 +81,11 @@ builder.Services.AddAuthorization(options =>
 var storageDirectory = Path.Combine(builder.Environment.ContentRootPath, "..", "storage");
 var backupDirectory = Path.Combine(storageDirectory, "backups");
 var uploadDirectory = Path.Combine(storageDirectory, "uploads");
+var documentsDirectory = Path.Combine(storageDirectory, "documents");
 Directory.CreateDirectory(storageDirectory);
 Directory.CreateDirectory(backupDirectory);
 Directory.CreateDirectory(uploadDirectory);
+Directory.CreateDirectory(documentsDirectory);
 
 var appDatabase = new AppDatabase(Path.Combine(storageDirectory, "audit-tool.db"));
 var userStore = new UserStore(appDatabase);
@@ -92,7 +94,7 @@ var auditStore = new AuditStore(appDatabase);
 builder.Services.AddSingleton(appDatabase);
 builder.Services.AddSingleton(userStore);
 builder.Services.AddSingleton(auditStore);
-builder.Services.AddSingleton(new BackupStore(backupDirectory, userStore));
+builder.Services.AddSingleton(new BackupStore(backupDirectory, uploadDirectory, documentsDirectory, storageDirectory, appDatabase, userStore, auditStore));
 builder.Services.AddSingleton<BackupScheduleStore>();
 builder.Services.AddSingleton(new RefreshTokenStore(storageDirectory));
 builder.Services.AddSingleton(new AuditLogger(storageDirectory));
@@ -339,8 +341,23 @@ app.MapDelete("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess
     return Results.Ok(new { message = "Vorlage gelöscht." });
 });
 
-app.MapGet("/api/rooms", [Authorize] (AuditStore store, int? siteId) =>
-    Results.Ok(siteId.HasValue ? store.Rooms.Where(room => room.SiteId == siteId.Value).ToList() : store.Rooms));
+app.MapGet("/api/rooms", [Authorize] (AuditStore store, int? siteId, int? auditId, bool? all) =>
+{
+    IEnumerable<AuditRoom> query = store.Rooms;
+    if (siteId.HasValue) query = query.Where(room => room.SiteId == siteId.Value);
+    if (auditId.HasValue)
+    {
+        // Explicit snapshot lookup: rooms frozen for one specific audit (used by Dokumente-Generierung/Datenablage-Drilldown).
+        query = query.Where(room => room.AuditId == auditId.Value);
+    }
+    else if (all != true)
+    {
+        // Default: only the "live" rooms currently being edited via Räume/Grunddaten (AuditId == 0).
+        // Historical per-audit snapshots are only shown when explicitly requested (auditId=... or all=true).
+        query = query.Where(room => room.AuditId == 0);
+    }
+    return Results.Ok(query.ToList());
+});
 app.MapPost("/api/rooms", [Authorize] async (CreateRoomRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (request.SiteId <= 0 || string.IsNullOrWhiteSpace(request.Name))
@@ -629,6 +646,191 @@ app.MapDelete("/api/checklisttemplates/{id:int}", [Authorize(Policy = "RequireAd
     return Results.Ok(new { message = "Checkliste gelöscht." });
 });
 
+// Dokumentenablage: Ordner
+app.MapGet("/api/folders", [Authorize] (AuditStore store, int? siteId) =>
+    Results.Ok(siteId.HasValue ? store.Folders.Where(f => f.SiteId == siteId.Value).ToList() : store.Folders));
+
+app.MapPost("/api/folders", [Authorize] async (AuditStore store, CreateFolderRequest request, int siteId, AuditLogger logger, HttpContext httpContext) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Ordnername ist erforderlich." });
+    var folder = store.CreateFolder(siteId, request.Name.Trim(), request.ParentFolderId ?? 0);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Ordner erstellt", $"Ordner \"{folder.Name}\" (ID {folder.Id})");
+    return Results.Ok(folder);
+});
+
+app.MapDelete("/api/folders/{id:int}", [Authorize] async (AuditStore store, int id, AuditLogger logger, HttpContext httpContext) =>
+{
+    var folder = store.Folders.FirstOrDefault(f => f.Id == id);
+    if (!store.DeleteFolder(id)) return Results.NotFound();
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Ordner gelöscht", folder is null ? $"Ordner ID {id}" : $"Ordner \"{folder.Name}\" (ID {id})");
+    return Results.Ok(new { message = "Ordner gelöscht." });
+});
+
+// Dokumentenablage: Dokumente (generierte PDFs aus PDF-Designs + hochgeladene Fremddokumente)
+app.MapGet("/api/documents", [Authorize] (AuditStore store, int? siteId, int? auditId) =>
+{
+    IEnumerable<AuditDocument> query = store.Documents;
+    if (siteId.HasValue) query = query.Where(d => d.SiteId == siteId.Value);
+    if (auditId.HasValue) query = query.Where(d => d.AuditId == auditId.Value);
+    return Results.Ok(query.OrderByDescending(d => d.CreatedAtUtc).ToList());
+});
+
+app.MapPost("/api/audits/{auditId:int}/documents/generate", [Authorize] async (int auditId, GenerateDocumentRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
+{
+    var audit = store.Audits.FirstOrDefault(a => a.Id == auditId);
+    if (audit is null) return Results.NotFound(new { message = "Audit nicht gefunden." });
+    if (string.IsNullOrWhiteSpace(request.Title)) return Results.BadRequest(new { message = "Titel ist erforderlich." });
+    if (!request.PdfDesignId.HasValue) return Results.BadRequest(new { message = "Bitte ein PDF-Design auswählen." });
+
+    var design = store.PdfDesigns.FirstOrDefault(d => d.Id == request.PdfDesignId.Value);
+    if (design is null) return Results.NotFound(new { message = "PDF-Design nicht gefunden." });
+
+    var site = store.Sites.FirstOrDefault(s => s.Id == audit.SiteId);
+    var category = site is null ? null : store.Categories.FirstOrDefault(c => c.Id == site.CategoryId);
+    var template = store.Templates.FirstOrDefault(t => t.Id == audit.TemplateId);
+    var snapshotRoomsRaw = store.Rooms.Where(r => r.AuditId == auditId).ToList();
+
+    // Keys must match the {{variable}} placeholders offered by the frontend PDF designer (PdfDesignerCanvas.tsx).
+    var variables = new Dictionary<string, string>
+    {
+        ["{{siteName}}"] = site?.Name ?? string.Empty,
+        ["{{category}}"] = category?.Name ?? string.Empty,
+        ["{{address}}"] = site?.Address ?? string.Empty,
+        ["{{phone}}"] = site?.Phone ?? string.Empty,
+        ["{{caretakerPhone}}"] = site?.CaretakerPhone ?? string.Empty,
+        ["{{auditTitle}}"] = audit.Title,
+        ["{{date}}"] = audit.CreatedAtUtc.ToString("dd.MM.yyyy"),
+        ["{{createdBy}}"] = audit.CreatedBy,
+        ["{{totalRooms}}"] = snapshotRoomsRaw.Count.ToString()
+    };
+
+    var snapshotRooms = snapshotRoomsRaw
+        .Select(r =>
+        {
+            Dictionary<string, string> fields;
+            try { fields = JsonSerializer.Deserialize<Dictionary<string, string>>(r.FieldsJson) ?? new(); }
+            catch { fields = new(); }
+            return new PdfDesignRenderer.RoomRenderData(r.Name, fields);
+        })
+        .ToList();
+
+    var fieldTypesByName = (template?.Fields ?? Enumerable.Empty<TemplateField>())
+        .GroupBy(f => f.Name)
+        .ToDictionary(g => g.Key, g => g.First().Type);
+
+    byte[] pdfBytes;
+    try
+    {
+        var config = PdfDesignRenderer.ParseConfig(design.ConfigJson);
+        pdfBytes = PdfDesignRenderer.Render(config, variables, snapshotRooms, fieldTypesByName);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"PDF konnte nicht erstellt werden: {ex.Message}");
+    }
+
+    var safeFileName = $"{Guid.NewGuid():N}.pdf";
+    var folderPath = Path.Combine(documentsDirectory, audit.SiteId.ToString());
+    Directory.CreateDirectory(folderPath);
+    await File.WriteAllBytesAsync(Path.Combine(folderPath, safeFileName), pdfBytes);
+
+    var document = store.AddDocument(auditId, audit.SiteId, request.Title.Trim(), design.Id, design.Name, Path.Combine(audit.SiteId.ToString(), safeFileName), pdfBytes.LongLength, request.FolderId ?? 0);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Dokument erstellt", $"Dokument \"{document.Title}\" für Audit \"{audit.Title}\" (ID {document.Id})");
+    return Results.Ok(document);
+});
+
+app.MapPost("/api/documents/upload", [Authorize] async (HttpRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
+{
+    if (!request.HasFormContentType) return Results.BadRequest(new { message = "Multipart-Formular erwartet." });
+
+    var form = await request.ReadFormAsync();
+    var file = form.Files.FirstOrDefault();
+    if (file is null || file.Length == 0) return Results.BadRequest(new { message = "Keine Datei hochgeladen." });
+
+    if (!int.TryParse(form["siteId"], out var siteId) || siteId <= 0)
+        return Results.BadRequest(new { message = "Standort ist erforderlich." });
+
+    var title = form["title"].ToString();
+    if (string.IsNullOrWhiteSpace(title)) title = Path.GetFileNameWithoutExtension(file.FileName);
+    int.TryParse(form["folderId"], out var folderId);
+
+    var safeFileName = $"{Guid.NewGuid():N}{Path.GetExtension(file.FileName)}";
+    var folderPath = Path.Combine(documentsDirectory, siteId.ToString());
+    Directory.CreateDirectory(folderPath);
+    var fullPath = Path.Combine(folderPath, safeFileName);
+    await using (var output = File.Create(fullPath))
+    {
+        await file.CopyToAsync(output);
+    }
+
+    var document = store.AddDocument(0, siteId, title.Trim(), null, null, Path.Combine(siteId.ToString(), safeFileName), file.Length, folderId, isUploaded: true);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Dokument hochgeladen", $"Dokument \"{document.Title}\" (ID {document.Id})");
+    return Results.Ok(document);
+});
+
+app.MapPut("/api/documents/{id:int}", [Authorize] async (int id, UpdateDocumentRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
+{
+    var document = store.UpdateDocument(id, request.Title?.Trim(), request.FolderId, request.IsArchived);
+    if (document is null) return Results.NotFound();
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Dokument bearbeitet", $"Dokument \"{document.Title}\" (ID {document.Id})");
+    return Results.Ok(document);
+});
+
+app.MapGet("/api/documents/{id:int}/view", [Authorize] (int id, AuditStore store) =>
+{
+    var document = store.Documents.FirstOrDefault(d => d.Id == id);
+    if (document is null) return Results.NotFound();
+    var fullPath = Path.Combine(documentsDirectory, document.FileName);
+    if (!File.Exists(fullPath)) return Results.NotFound(new { message = "Datei nicht gefunden." });
+    var bytes = File.ReadAllBytes(fullPath);
+    var ext = Path.GetExtension(document.FileName).ToLowerInvariant();
+    var contentType = ext switch
+    {
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        _ => "application/octet-stream"
+    };
+    // Kein Dateiname => kein "attachment"-Header, Browser zeigt PDFs/Bilder inline an statt sie herunterzuladen.
+    return Results.File(bytes, contentType);
+});
+
+app.MapGet("/api/documents/{id:int}/download", [Authorize] (int id, AuditStore store) =>
+{
+    var document = store.Documents.FirstOrDefault(d => d.Id == id);
+    if (document is null) return Results.NotFound();
+    var fullPath = Path.Combine(documentsDirectory, document.FileName);
+    if (!File.Exists(fullPath)) return Results.NotFound(new { message = "Datei nicht gefunden." });
+    var bytes = File.ReadAllBytes(fullPath);
+    var ext = Path.GetExtension(document.FileName).ToLowerInvariant();
+    var contentType = ext switch
+    {
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".doc" => "application/msword",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls" => "application/vnd.ms-excel",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream"
+    };
+    return Results.File(bytes, contentType, $"{document.Title}{ext}");
+});
+
+app.MapDelete("/api/documents/{id:int}", [Authorize] async (int id, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
+{
+    var document = store.Documents.FirstOrDefault(d => d.Id == id);
+    if (document is null) return Results.NotFound();
+    var fullPath = Path.Combine(documentsDirectory, document.FileName);
+    if (File.Exists(fullPath))
+    {
+        try { File.Delete(fullPath); } catch { /* best-effort */ }
+    }
+    store.DeleteDocument(id);
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Dokument gelöscht", $"Dokument \"{document.Title}\" (ID {id})");
+    return Results.Ok(new { message = "Dokument gelöscht." });
+});
+
 app.MapGet("/api/users", [Authorize(Policy = "RequireAdminAccess")] (UserStore users) =>
     Results.Ok(users.All.Select(u => new UserSummary(u.Id, u.UserName, u.DisplayName, u.Role, u.IsActive))));
 
@@ -689,7 +891,7 @@ app.MapPut("/api/users/{userId:int}/change-password", [Authorize] (int userId, C
         return Results.Forbid();
     }
 
-    if (!string.Equals(user.Password, request.CurrentPassword, StringComparison.Ordinal))
+    if (!users.VerifyPassword(user, request.CurrentPassword))
     {
         return Results.BadRequest(new { message = "Aktuelles Passwort ist nicht korrekt." });
     }
@@ -899,6 +1101,7 @@ public sealed class AppDatabase
     }
 
     public string ConnectionString => $"Data Source={_databasePath};";
+    public string DatabasePath => _databasePath;
 
     public T Load<T>(string key, T fallback)
     {
@@ -989,6 +1192,8 @@ public sealed class AuditStore
     private readonly List<AuditChecklistEntry> _checklistEntries;
     private readonly List<PdfDesign> _pdfDesigns;
     private readonly List<ChecklistTemplate> _checklistTemplates;
+    private readonly List<AuditDocument> _documents;
+    private readonly List<DocumentFolder> _folders;
 
     public AuditStore(AppDatabase database)
     {
@@ -1002,6 +1207,24 @@ public sealed class AuditStore
         _checklistEntries = _database.Load("audit_checklist_entries", CreateInitialChecklistEntries());
         _pdfDesigns = _database.Load("pdf_designs", new List<PdfDesign>());
         _checklistTemplates = _database.Load("checklist_templates", new List<ChecklistTemplate>());
+        _documents = _database.Load("audit_documents", new List<AuditDocument>());
+        _folders = _database.Load("document_folders", new List<DocumentFolder>());
+
+        RemoveLegacySeedAudits();
+    }
+
+    // One-time cleanup: older builds always seeded two demo audit/document records at startup, which ended up
+    // permanently attached to real sites (e.g. "Steinweg Berufsschule"). Remove them if they are still untouched.
+    private void RemoveLegacySeedAudits()
+    {
+        var removed = _audits.RemoveAll(a =>
+            (a.Id == 1 && a.Title == "Jahresaudit Gebäude A" && a.CreatedBy == "superadmin") ||
+            (a.Id == 2 && a.Title == "Audit Schulungsräume" && a.CreatedBy == "admin"));
+        if (removed > 0)
+        {
+            _checklistEntries.RemoveAll(e => e.AuditId == 1 || e.AuditId == 2);
+            Persist();
+        }
     }
 
     public IReadOnlyList<AuditCategory> Categories => _categories;
@@ -1010,6 +1233,8 @@ public sealed class AuditStore
     public IReadOnlyList<AuditRoom> Rooms => _rooms;
     public IReadOnlyList<AuditObject> Objects => _objects;
     public IReadOnlyList<AuditInstance> Audits => _audits;
+    public IReadOnlyList<AuditDocument> Documents => _documents;
+    public IReadOnlyList<DocumentFolder> Folders => _folders;
 
     private void Persist()
     {
@@ -1022,6 +1247,30 @@ public sealed class AuditStore
         _database.Save("audit_checklist_entries", _checklistEntries);
         _database.Save("pdf_designs", _pdfDesigns);
         _database.Save("checklist_templates", _checklistTemplates);
+        _database.Save("audit_documents", _documents);
+        _database.Save("document_folders", _folders);
+    }
+
+    // Re-reads every collection from the (possibly just restored) database file. Used after a backup restore.
+    public void ReloadFromDatabase()
+    {
+        ReplaceAll(_categories, _database.Load("audit_categories", CreateInitialCategories()));
+        ReplaceAll(_sites, _database.Load("audit_sites", CreateInitialSites()));
+        ReplaceAll(_templates, _database.Load("audit_templates", CreateInitialTemplates()));
+        ReplaceAll(_rooms, _database.Load("audit_rooms", CreateInitialRooms()));
+        ReplaceAll(_objects, _database.Load("audit_objects", CreateInitialObjects()));
+        ReplaceAll(_audits, _database.Load("audit_instances", CreateInitialAudits()));
+        ReplaceAll(_checklistEntries, _database.Load("audit_checklist_entries", CreateInitialChecklistEntries()));
+        ReplaceAll(_pdfDesigns, _database.Load("pdf_designs", new List<PdfDesign>()));
+        ReplaceAll(_checklistTemplates, _database.Load("checklist_templates", new List<ChecklistTemplate>()));
+        ReplaceAll(_documents, _database.Load("audit_documents", new List<AuditDocument>()));
+        ReplaceAll(_folders, _database.Load("document_folders", new List<DocumentFolder>()));
+    }
+
+    private static void ReplaceAll<T>(List<T> target, List<T> source)
+    {
+        target.Clear();
+        target.AddRange(source);
     }
 
     public AuditCategory CreateCategory(string name, string description)
@@ -1080,8 +1329,24 @@ public sealed class AuditStore
     public AuditInstance CreateAudit(int siteId, int templateId, string title, string createdBy, string templateName)
     {
         var id = _audits.Count == 0 ? 1 : _audits.Max(x => x.Id) + 1;
-        var audit = new AuditInstance(id, siteId, templateId, title, templateName, createdBy, DateTime.UtcNow, "In Bearbeitung", Array.Empty<AuditChecklistEntry>());
+        var site = _sites.FirstOrDefault(s => s.Id == siteId);
+        var groundDataJson = site?.GroundDataJson ?? "{}";
+        var audit = new AuditInstance(id, siteId, templateId, title, templateName, createdBy, DateTime.UtcNow, "In Bearbeitung", Array.Empty<AuditChecklistEntry>())
+        {
+            GroundDataJson = groundDataJson
+        };
         _audits.Add(audit);
+
+        // Freeze the current state of all live rooms (AuditId == 0) for this site into this audit's own
+        // room snapshot, so later edits to the live rooms never change what this audit's documents show.
+        var liveRooms = _rooms.Where(r => r.SiteId == siteId && r.AuditId == 0).ToList();
+        var nextRoomId = _rooms.Count == 0 ? 1 : _rooms.Max(r => r.Id) + 1;
+        foreach (var liveRoom in liveRooms)
+        {
+            var snapshot = liveRoom with { Id = nextRoomId++, AuditId = id };
+            _rooms.Add(snapshot);
+        }
+
         Persist();
         return audit;
     }
@@ -1161,6 +1426,64 @@ public sealed class AuditStore
     }
 
     public void DeleteChecklistTemplate(int id) { _checklistTemplates.RemoveAll(t => t.Id == id); Persist(); }
+
+    public DocumentFolder CreateFolder(int siteId, string name, int parentFolderId)
+    {
+        var id = _folders.Count == 0 ? 1 : _folders.Max(x => x.Id) + 1;
+        var folder = new DocumentFolder(id, siteId, parentFolderId, name, DateTime.UtcNow);
+        _folders.Add(folder);
+        Persist();
+        return folder;
+    }
+
+    public bool DeleteFolder(int id)
+    {
+        var removed = _folders.RemoveAll(f => f.Id == id);
+        if (removed > 0)
+        {
+            // Move any documents that were inside the deleted folder back to the root level.
+            for (var i = 0; i < _documents.Count; i++)
+            {
+                if (_documents[i].FolderId == id)
+                {
+                    _documents[i] = _documents[i] with { FolderId = 0 };
+                }
+            }
+            Persist();
+        }
+        return removed > 0;
+    }
+
+    public AuditDocument AddDocument(int auditId, int siteId, string title, int? pdfDesignId, string? pdfDesignName, string fileName, long sizeBytes, int folderId, bool isUploaded = false)
+    {
+        var id = _documents.Count == 0 ? 1 : _documents.Max(x => x.Id) + 1;
+        var document = new AuditDocument(id, auditId, siteId, title, pdfDesignId, pdfDesignName, fileName, sizeBytes, DateTime.UtcNow, false, isUploaded, folderId);
+        _documents.Add(document);
+        Persist();
+        return document;
+    }
+
+    public AuditDocument? UpdateDocument(int id, string? title, int? folderId, bool? isArchived)
+    {
+        var idx = _documents.FindIndex(d => d.Id == id);
+        if (idx < 0) return null;
+        var updated = _documents[idx] with
+        {
+            Title = title ?? _documents[idx].Title,
+            FolderId = folderId ?? _documents[idx].FolderId,
+            IsArchived = isArchived ?? _documents[idx].IsArchived
+        };
+        _documents[idx] = updated;
+        Persist();
+        return updated;
+    }
+
+    public bool DeleteDocument(int id)
+    {
+        var removed = _documents.RemoveAll(d => d.Id == id);
+        if (removed > 0) Persist();
+        return removed > 0;
+    }
 
     public AuditCategory? UpdateCategory(int id, string name, string description)
     {
@@ -1285,43 +1608,37 @@ public sealed class AuditStore
         new AuditObject(3, 3, "Messtechnik", "Gerät", "Gut", "Letzte Prüfung vor 2 Wochen")
     };
 
-    private static List<AuditInstance> CreateInitialAudits() => new()
-    {
-        new AuditInstance(1, 1, 1, "Jahresaudit Gebäude A", "Gebäudebewertung", "superadmin", DateTime.UtcNow.AddDays(-6), "In Bearbeitung", new[]
-        {
-            new AuditChecklistEntry(1, 1, 1, "Raumname", "Haupthalle", "ok"),
-            new AuditChecklistEntry(2, 1, 2, "Zustand", "Gut", "ok")
-        }),
-        new AuditInstance(2, 2, 2, "Audit Schulungsräume", "Räume & Objekte", "admin", DateTime.UtcNow.AddDays(-2), "Erfasst", new[]
-        {
-            new AuditChecklistEntry(3, 2, 4, "Objektname", "Messtechnik", "ok")
-        })
-    };
+    private static List<AuditInstance> CreateInitialAudits() => new();
 
-    private static List<AuditChecklistEntry> CreateInitialChecklistEntries() => new()
-    {
-        new AuditChecklistEntry(1, 1, 1, "Raumname", "Haupthalle", "ok"),
-        new AuditChecklistEntry(2, 1, 2, "Zustand", "Gut", "ok"),
-        new AuditChecklistEntry(3, 2, 4, "Objektname", "Messtechnik", "ok")
-    };
+    private static List<AuditChecklistEntry> CreateInitialChecklistEntries() => new();
 }
 
 public sealed class BackupStore
 {
     private readonly string _folderPath;
+    private readonly string _uploadDirectory;
+    private readonly string _documentsDirectory;
+    private readonly string _storageDirectory;
+    private readonly AppDatabase _appDatabase;
     private readonly UserStore _userStore;
+    private readonly AuditStore _auditStore;
     private const int DEFAULT_MAX_BACKUPS = 10;
 
-    public BackupStore(string folderPath, UserStore userStore)
+    public BackupStore(string folderPath, string uploadDirectory, string documentsDirectory, string storageDirectory, AppDatabase appDatabase, UserStore userStore, AuditStore auditStore)
     {
         _folderPath = folderPath;
+        _uploadDirectory = uploadDirectory;
+        _documentsDirectory = documentsDirectory;
+        _storageDirectory = storageDirectory;
+        _appDatabase = appDatabase;
         _userStore = userStore;
+        _auditStore = auditStore;
         Directory.CreateDirectory(_folderPath);
     }
 
     public IReadOnlyList<BackupRecord> List()
     {
-        return Directory.GetFiles(_folderPath)
+        return Directory.GetFiles(_folderPath, "*.zip")
             .Select(filePath =>
             {
                 var fileInfo = new FileInfo(filePath);
@@ -1330,39 +1647,215 @@ public sealed class BackupStore
                     fileInfo.Name,
                     fileInfo.LastWriteTimeUtc,
                     fileInfo.Length,
-                    "Vollbackup");
+                    fileInfo.Name.StartsWith("upload_", StringComparison.OrdinalIgnoreCase) ? "Hochgeladen" : "Vollbackup");
             })
             .OrderByDescending(record => record.CreatedAtUtc)
             .ToList();
     }
 
+    // Produces a comprehensive, restorable backup: the raw SQLite database file (jede Liste der App inkl.
+    // Kategorien/Standorte/Räume/Audits/Dokumente/PDF-Designs/Checklisten/Benutzer/Backup-Zeitplan), die
+    // Logs, sowie die uploads- und documents-Verzeichnisse - alles technisch 1:1 restaurierbar. Zusätzlich
+    // wird unter "Lesbare-Struktur/" eine für Menschen nachvollziehbare Ordnerhierarchie
+    // (Kategorie/Standort/Grunddaten|Raeume|Dokumente, Bilder als echte Dateien) abgelegt, rein zur
+    // Durchsicht - diese wird beim Wiederherstellen nicht benötigt und auch nicht gelesen.
     public BackupRecord Create(AuditStore store)
     {
         var fileName = $"backup_{DateTime.UtcNow:yyyyMMdd_HHmmss}.zip";
         var fullPath = Path.Combine(_folderPath, fileName);
 
-        using var archiveStream = File.Create(fullPath);
-        using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true);
-
-        var snapshot = new
+        using (var archiveStream = File.Create(fullPath))
+        using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
         {
-            generatedUtc = DateTime.UtcNow,
-            categories = store.Categories,
-            sites = store.Sites,
-            rooms = store.Rooms,
-            objects = store.Objects,
-            audits = store.Audits,
-            users = _userStore.All.Select(user => new { user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive })        };
+            var manifest = new
+            {
+                generatedUtc = DateTime.UtcNow,
+                kategorien = store.Categories.Select(c => c.Name),
+                standorte = store.Sites.Select(s => s.Name),
+                anzahlRaeume = store.Rooms.Count,
+                anzahlAudits = store.Audits.Count,
+                anzahlDokumente = store.Documents.Count,
+                anzahlBenutzer = _userStore.All.Count(),
+                hinweis = "Benutzerpasswörter liegen in der Datenbank ausschließlich als Einweg-Hash (PBKDF2) vor, niemals im Klartext."
+            };
 
-        var entry = archive.CreateEntry("backup/manifest.json");
-        using var stream = new StreamWriter(entry.Open(), Encoding.UTF8);
-        stream.Write(JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
+            var manifestEntry = archive.CreateEntry("manifest.json");
+            using (var manifestStream = new StreamWriter(manifestEntry.Open(), Encoding.UTF8))
+            {
+                manifestStream.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+            }
+
+            if (File.Exists(_appDatabase.DatabasePath))
+            {
+                archive.CreateEntryFromFile(_appDatabase.DatabasePath, "database/audit-tool.db");
+            }
+
+            AddDirectoryToArchive(archive, _uploadDirectory, "uploads");
+            AddDirectoryToArchive(archive, _documentsDirectory, "documents");
+            AddLogsToArchive(archive);
+            AddHumanReadableStructure(archive, store);
+        }
 
         var info = new FileInfo(fullPath);
-        
         ApplyBackupRotation(DEFAULT_MAX_BACKUPS);
-        
         return new BackupRecord(Path.GetFileNameWithoutExtension(info.Name), info.Name, info.LastWriteTimeUtc, info.Length, "Vollbackup");
+    }
+
+    private void AddLogsToArchive(ZipArchive archive)
+    {
+        foreach (var logFileName in new[] { "audit_logs.jsonl", "error_logs.jsonl" })
+        {
+            var logFilePath = Path.Combine(_storageDirectory, logFileName);
+            if (File.Exists(logFilePath))
+            {
+                archive.CreateEntryFromFile(logFilePath, $"logs/{logFileName}");
+            }
+        }
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
+        return string.IsNullOrWhiteSpace(cleaned) ? "Unbenannt" : cleaned;
+    }
+
+    // Zerlegt ein Feld-JSON (fieldsJson/groundDataJson) in Text-Werte (-> Textdatei) und Bild-Werte
+    // (Base64-Data-URLs, mit "||" getrennt für Mehrfachbilder) -> echte, einzeln öffenbare Bilddateien.
+    private static void WriteFieldDataToArchive(ZipArchive archive, string folderPath, string fieldsJson)
+    {
+        Dictionary<string, string>? fields;
+        try
+        {
+            fields = JsonSerializer.Deserialize<Dictionary<string, string>>(fieldsJson);
+        }
+        catch
+        {
+            fields = null;
+        }
+        if (fields is null || fields.Count == 0) return;
+
+        var textLines = new List<string>();
+        foreach (var (key, value) in fields)
+        {
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (value.Contains("data:image", StringComparison.OrdinalIgnoreCase))
+            {
+                var images = value.Split("||", StringSplitOptions.RemoveEmptyEntries);
+                for (var i = 0; i < images.Length; i++)
+                {
+                    WriteDataUrlImage(archive, folderPath, SanitizeFileName(key), i, images[i]);
+                }
+            }
+            else
+            {
+                textLines.Add($"{key}: {value}");
+            }
+        }
+
+        if (textLines.Count > 0)
+        {
+            var entry = archive.CreateEntry($"{folderPath}/Daten.txt");
+            using var stream = new StreamWriter(entry.Open(), Encoding.UTF8);
+            stream.Write(string.Join(Environment.NewLine, textLines));
+        }
+    }
+
+    private static void WriteDataUrlImage(ZipArchive archive, string folderPath, string fieldName, int index, string dataUrl)
+    {
+        var commaIndex = dataUrl.IndexOf(',');
+        if (commaIndex < 0) return;
+        var header = dataUrl[..commaIndex];
+        var payload = dataUrl[(commaIndex + 1)..];
+        var extension = header.Contains("png", StringComparison.OrdinalIgnoreCase) ? "png"
+            : header.Contains("webp", StringComparison.OrdinalIgnoreCase) ? "webp"
+            : header.Contains("gif", StringComparison.OrdinalIgnoreCase) ? "gif"
+            : "jpg";
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(payload);
+        }
+        catch
+        {
+            return;
+        }
+
+        var suffix = index > 0 ? $"_{index + 1}" : "";
+        var entry = archive.CreateEntry($"{folderPath}/{fieldName}{suffix}.{extension}");
+        using var entryStream = entry.Open();
+        entryStream.Write(bytes, 0, bytes.Length);
+    }
+
+    private static string ResolveFolderPath(AuditStore store, int folderId)
+    {
+        var segments = new List<string>();
+        var currentId = folderId;
+        var guard = 0;
+        while (currentId > 0 && guard++ < 50)
+        {
+            var folder = store.Folders.FirstOrDefault(f => f.Id == currentId);
+            if (folder is null) break;
+            segments.Insert(0, SanitizeFileName(folder.Name));
+            currentId = folder.ParentFolderId;
+        }
+        return string.Join("/", segments);
+    }
+
+    private void AddHumanReadableStructure(ZipArchive archive, AuditStore store)
+    {
+        const string root = "Lesbare-Struktur";
+        foreach (var category in store.Categories)
+        {
+            var categoryFolder = SanitizeFileName(category.Name);
+            foreach (var site in store.Sites.Where(s => s.CategoryId == category.Id))
+            {
+                var basePath = $"{root}/{categoryFolder}/{SanitizeFileName(site.Name)}";
+
+                // Grunddaten: aktueller (Live-)Stand sowie der zum jeweiligen Audit eingefrorene Stand.
+                WriteFieldDataToArchive(archive, $"{basePath}/Grunddaten/Aktuell (live)", site.GroundDataJson);
+                foreach (var audit in store.Audits.Where(a => a.SiteId == site.Id))
+                {
+                    var auditLabel = SanitizeFileName($"{audit.Title} ({audit.CreatedAtUtc:yyyy-MM-dd})");
+                    WriteFieldDataToArchive(archive, $"{basePath}/Grunddaten/{auditLabel}", audit.GroundDataJson);
+                }
+
+                // Räume/Objekte: Live-Stand plus jeder je Audit eingefrorene Snapshot, gruppiert nach Raumname.
+                foreach (var room in store.Rooms.Where(r => r.SiteId == site.Id))
+                {
+                    var versionLabel = room.AuditId == 0
+                        ? "Aktuell (live)"
+                        : SanitizeFileName(store.Audits.FirstOrDefault(a => a.Id == room.AuditId)?.Title ?? $"Audit {room.AuditId}");
+                    WriteFieldDataToArchive(archive, $"{basePath}/Raeume/{SanitizeFileName(room.Name)}/{versionLabel}", room.FieldsJson);
+                }
+
+                // Dokumente: echte Dateien (generierte PDFs + hochgeladene Fremddokumente), inkl. Archiv und Unterordner.
+                foreach (var document in store.Documents.Where(d => d.SiteId == site.Id))
+                {
+                    var sourcePath = Path.Combine(_documentsDirectory, document.FileName.Replace('/', Path.DirectorySeparatorChar));
+                    if (!File.Exists(sourcePath)) continue;
+
+                    var pathSegments = new List<string> { $"{basePath}/Dokumente" };
+                    if (document.IsArchived) pathSegments.Add("Archiv");
+                    var folderPath = document.FolderId > 0 ? ResolveFolderPath(store, document.FolderId) : "";
+                    if (!string.IsNullOrEmpty(folderPath)) pathSegments.Add(folderPath);
+
+                    var extension = Path.GetExtension(sourcePath);
+                    archive.CreateEntryFromFile(sourcePath, $"{string.Join("/", pathSegments)}/{SanitizeFileName(document.Title)}{extension}");
+                }
+            }
+        }
+    }
+
+    private static void AddDirectoryToArchive(ZipArchive archive, string sourceDirectory, string entryPrefix)
+    {
+        if (!Directory.Exists(sourceDirectory)) return;
+        foreach (var filePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourceDirectory, filePath).Replace('\\', '/');
+            archive.CreateEntryFromFile(filePath, $"{entryPrefix}/{relative}");
+        }
     }
 
     public void ApplyBackupRotation(int maxBackups = DEFAULT_MAX_BACKUPS)
@@ -1380,20 +1873,84 @@ public sealed class BackupStore
         }
     }
 
+    // Overwrites the live database file and the uploads/documents directories with the contents of the
+    // backup, then reloads every in-memory store from the restored database so changes take effect
+    // immediately without needing a manual application restart.
     public bool Restore(string backupId, AuditStore store)
     {
-        var filePath = Path.Combine(_folderPath, $"{backupId}.zip");
-        if (!File.Exists(filePath))
+        var filePath = GetFilePath(backupId);
+        if (filePath is null)
         {
-            filePath = Path.Combine(_folderPath, backupId);
-            if (!File.Exists(filePath))
-            {
-                return false;
-            }
+            return false;
         }
 
-        // In-memory prototype: restore is acknowledged after backup validation and the application can reload the snapshot in the next version.
+        using var archive = ZipFile.OpenRead(filePath);
+        // Supports both this store's own backup layout ("database/audit-tool.db" + uploads/documents trees)
+        // and the simpler scheduled-backup layout written by BackupService ("audit-tool.db" at the zip root).
+        var databaseEntry = archive.GetEntry("database/audit-tool.db") ?? archive.GetEntry("audit-tool.db");
+        if (databaseEntry is null)
+        {
+            // Not a restorable backup (e.g. a legacy manifest-only export) - nothing we can safely restore.
+            return false;
+        }
+
+        var databaseDirectory = Path.GetDirectoryName(_appDatabase.DatabasePath);
+        if (!string.IsNullOrWhiteSpace(databaseDirectory))
+        {
+            Directory.CreateDirectory(databaseDirectory);
+        }
+
+        databaseEntry.ExtractToFile(_appDatabase.DatabasePath, overwrite: true);
+
+        RestoreDirectoryFromArchive(archive, "uploads/", _uploadDirectory);
+        RestoreDirectoryFromArchive(archive, "documents/", _documentsDirectory);
+        RestoreLogsFromArchive(archive);
+
+        store.ReloadFromDatabase();
+        _userStore.ReloadFromDatabase();
+
         return true;
+    }
+
+    private void RestoreLogsFromArchive(ZipArchive archive)
+    {
+        foreach (var logFileName in new[] { "audit_logs.jsonl", "error_logs.jsonl" })
+        {
+            var entry = archive.GetEntry($"logs/{logFileName}");
+            if (entry is not null)
+            {
+                entry.ExtractToFile(Path.Combine(_storageDirectory, logFileName), overwrite: true);
+            }
+        }
+    }
+
+    private static void RestoreDirectoryFromArchive(ZipArchive archive, string entryPrefix, string targetDirectory)
+    {
+        var entries = archive.Entries.Where(e => e.FullName.StartsWith(entryPrefix, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(e.Name)).ToList();
+        if (entries.Count == 0)
+        {
+            // Older/scheduled backups only contain the database file - leave the current uploads/documents
+            // on disk untouched instead of wiping them for data we have no replacement for.
+            return;
+        }
+
+        if (Directory.Exists(targetDirectory))
+        {
+            Directory.Delete(targetDirectory, recursive: true);
+        }
+        Directory.CreateDirectory(targetDirectory);
+
+        foreach (var entry in entries)
+        {
+            var relative = entry.FullName.Substring(entryPrefix.Length);
+            var destination = Path.Combine(targetDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
+            var destinationDirectory = Path.GetDirectoryName(destination);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+            entry.ExtractToFile(destination, overwrite: true);
+        }
     }
 
     public bool Delete(string backupId)
@@ -1431,6 +1988,37 @@ public sealed class BackupStore
         return new BackupRecord(Path.GetFileNameWithoutExtension(info.Name), info.Name, info.LastWriteTimeUtc, info.Length, "Hochgeladen");
     }
 }
+// PBKDF2-Passworthashing (reiner BCL-Code, keine zusätzliche NuGet-Abhängigkeit). Format der gespeicherten
+// Zeichenkette: "PBKDF2$<Iterationen>$<Salt-Base64>$<Hash-Base64>". Damit landen im Datenbank-Backup (und
+// damit im Vollbackup-ZIP) niemals Klartext-Passwörter, sondern nur Einweg-Hashes.
+public static class PasswordHasher
+{
+    private const int SaltSize = 16;
+    private const int HashSize = 32;
+    private const int Iterations = 100_000;
+    private const string Prefix = "PBKDF2";
+
+    public static bool IsHashed(string stored) => stored.StartsWith(Prefix + "$", StringComparison.Ordinal);
+
+    public static string Hash(string password)
+    {
+        var salt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(SaltSize);
+        var hash = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(password, salt, Iterations, System.Security.Cryptography.HashAlgorithmName.SHA256, HashSize);
+        return $"{Prefix}${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+    }
+
+    public static bool Verify(string stored, string password)
+    {
+        var parts = stored.Split('$');
+        if (parts.Length != 4 || parts[0] != Prefix) return false;
+        if (!int.TryParse(parts[1], out var iterations)) return false;
+        var salt = Convert.FromBase64String(parts[2]);
+        var expectedHash = Convert.FromBase64String(parts[3]);
+        var actualHash = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, System.Security.Cryptography.HashAlgorithmName.SHA256, expectedHash.Length);
+        return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(expectedHash, actualHash);
+    }
+}
+
 public sealed class UserStore
 {
     private readonly AppDatabase _database;
@@ -1444,12 +2032,43 @@ public sealed class UserStore
 
     public IEnumerable<AppUser> All => _users;
 
+    // Re-reads users from the (possibly just restored) database file. Used after a backup restore.
+    public void ReloadFromDatabase()
+    {
+        var reloaded = _database.Load("app_users", CreateDefaultUsers());
+        _users.Clear();
+        _users.AddRange(reloaded);
+    }
+
+    // Prüft ein Passwort gegen den gespeicherten Hash. Ältere Konten (vor Einführung des Hashings) mit
+    // Klartext-Passwort werden bei erfolgreichem Login transparent auf PBKDF2 migriert.
+    public bool VerifyPassword(AppUser user, string password)
+    {
+        if (PasswordHasher.IsHashed(user.Password))
+        {
+            return PasswordHasher.Verify(user.Password, password);
+        }
+
+        if (!string.Equals(user.Password, password, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        UpdatePassword(user.Id, password);
+        return true;
+    }
+
     public AppUser? Authenticate(string username, string password)
     {
-        return _users.FirstOrDefault(u =>
-            string.Equals(u.UserName, username, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(u.Password, password, StringComparison.Ordinal)
-            && u.IsActive);
+        var user = _users.FirstOrDefault(u =>
+            string.Equals(u.UserName, username, StringComparison.OrdinalIgnoreCase) && u.IsActive);
+
+        if (user is null || !VerifyPassword(user, password))
+        {
+            return null;
+        }
+
+        return GetById(user.Id);
     }
 
     public AppUser? GetByUsername(string? username)
@@ -1465,7 +2084,7 @@ public sealed class UserStore
     public AppUser Create(string userName, string password, string? displayName, string role)
     {
         var nextId = _users.Count == 0 ? 1 : _users.Max(x => x.Id) + 1;
-        var user = new AppUser(nextId, userName, password, role, displayName ?? userName);
+        var user = new AppUser(nextId, userName, PasswordHasher.Hash(password), role, displayName ?? userName);
         _users.Add(user);
         _database.Save("app_users", _users);
         return user;
@@ -1477,7 +2096,7 @@ public sealed class UserStore
         if (user is not null)
         {
             var index = _users.IndexOf(user);
-            _users[index] = user with { Password = newPassword };
+            _users[index] = user with { Password = PasswordHasher.Hash(newPassword) };
             _database.Save("app_users", _users);
         }
     }
@@ -1505,10 +2124,10 @@ public sealed class UserStore
 
     private static List<AppUser> CreateDefaultUsers() => new()
     {
-        new AppUser(1, "superadmin", "AuditTool!2026", "Superadmin", "Superadmin"),
-        new AppUser(2, "admin", "AuditTool!2026", "Admin", "Administrator"),
-        new AppUser(3, "user", "Password123!", "Benutzer", "Standard Nutzer"),
-        new AppUser(4, "azubi", "Password123!", "Azubi", "Auszubildender")
+        new AppUser(1, "superadmin", PasswordHasher.Hash("AuditTool!2026"), "Superadmin", "Superadmin"),
+        new AppUser(2, "admin", PasswordHasher.Hash("AuditTool!2026"), "Admin", "Administrator"),
+        new AppUser(3, "user", PasswordHasher.Hash("Password123!"), "Benutzer", "Standard Nutzer"),
+        new AppUser(4, "azubi", PasswordHasher.Hash("Password123!"), "Azubi", "Auszubildender")
     };
 }
 
@@ -1525,11 +2144,15 @@ public sealed record AuditSite(int Id, int CategoryId, string Name, string Addre
 public sealed record AuditRoom(int Id, int SiteId, string Name, string Description, string Capacity, string Area, string Notes)
 {
     public string FieldsJson { get; init; } = "{}";
+    public int AuditId { get; init; } = 0;
 }
 
 public sealed record AuditObject(int Id, int RoomId, string Name, string ObjectType, string Status, string Notes);
 public sealed record AuditChecklistEntry(int Id, int AuditId, int TemplateFieldId, string Question, string Answer, string Status);
-public sealed record AuditInstance(int Id, int SiteId, int TemplateId, string Title, string TemplateName, string CreatedBy, DateTime CreatedAtUtc, string Status, IEnumerable<AuditChecklistEntry> ChecklistEntries);
+public sealed record AuditInstance(int Id, int SiteId, int TemplateId, string Title, string TemplateName, string CreatedBy, DateTime CreatedAtUtc, string Status, IEnumerable<AuditChecklistEntry> ChecklistEntries)
+{
+    public string GroundDataJson { get; init; } = "{}";
+}
 public sealed record AuditInstanceSummary(int Id, int SiteId, string Title, int TemplateId, string TemplateName, string CreatedBy, DateTime CreatedAtUtc, string Status, int EntryCount);
 public sealed record TemplateField(int Id, string Name, string Type, int Order, bool RelevantForProgress);
 public sealed record AuditTemplate(int Id, string Name, string Description, IEnumerable<TemplateField> Fields);
@@ -1537,6 +2160,8 @@ public sealed record PdfDesign(int Id, string Name, string Description, string C
 public sealed record ChecklistTemplate(int Id, string Name, int TemplateId, string ColumnsJson, DateTime CreatedAtUtc);
 public sealed record UserSummary(int Id, string UserName, string DisplayName, string Role, bool IsActive);
 public sealed record BackupRecord(string Id, string FileName, DateTime CreatedAtUtc, long SizeBytes, string Type);
+public sealed record DocumentFolder(int Id, int SiteId, int ParentFolderId, string Name, DateTime CreatedAtUtc);
+public sealed record AuditDocument(int Id, int AuditId, int SiteId, string Title, int? PdfDesignId, string? PdfDesignName, string FileName, long SizeBytes, DateTime CreatedAtUtc, bool IsArchived, bool IsUploaded, int FolderId);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record CreateUserRequest(string UserName, string Password, string Role, string DisplayName);
 public sealed record ResetPasswordRequest(string NewPassword);
@@ -1560,3 +2185,6 @@ public sealed record UpdateSiteRequest(int CategoryId, string? Name, string? Add
 public sealed record UpdateGroundDataRequest(string? GroundDataJson);
 public sealed record CreatePdfDesignRequest(string Name, string? Description, string? ConfigJson);
 public sealed record CreateChecklistTemplateRequest(string Name, int? TemplateId, string? ColumnsJson);
+public sealed record GenerateDocumentRequest(string Title, int? PdfDesignId, int? FolderId);
+public sealed record UpdateDocumentRequest(string? Title, int? FolderId, bool? IsArchived);
+public sealed record CreateFolderRequest(string Name, int? ParentFolderId);
