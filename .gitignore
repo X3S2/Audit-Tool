@@ -13,3 +13,7 @@ storage/*.db
 storage/refresh_tokens.json
 !storage/backups/.gitkeep
 !storage/exports/.gitkeep
+*.backup
+*.backup.*
+*.bak
+Audit2.zip

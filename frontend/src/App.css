@@ -2413,9 +2413,13 @@ table { margin-top: 0; }
 
 .gallery-zoom-controls button:hover { background: rgba(96,165,250,0.12); }
 
-/* Mobile adjustments */
+/* Mobile adjustments: Modal zuvor volle 100vh hoch bei gleichzeitig 20px Overlay-Padding ->
+   dadurch wurde oben UND unten etwas vom Modal abgeschnitten (es passte nicht in den sichtbaren
+   Bereich). Jetzt 80vh (20% kleiner) bei 0 Overlay-Padding, dadurch bleibt es dank
+   justify-content/align-items: center automatisch mittig mit ca. 10% Luft oben und unten. */
 @media (max-width: 600px) {
-  .gallery-modal { width: 100vw; height: 100vh; border-radius: 0; }
+  .gallery-modal-overlay { padding: 0; }
+  .gallery-modal { width: 100vw; height: 80vh; border-radius: 0; }
   .gallery-modal-image-wrap { padding: 44px 8px 8px; }
 }
 
@@ -2498,6 +2502,13 @@ table { margin-top: 0; }
   text-decoration: underline;
 }
 .link-button:hover { filter: brightness(1.15); }
+
+/* Umschaltung Desktop/Mobile-Vorschau fuer gekuerzte Tabellenwerte (siehe renderTruncatable) */
+.truncatable-mobile { display: none; }
+@media (max-width: 768px) {
+  .truncatable-desktop { display: none; }
+  .truncatable-mobile { display: inline; }
+}
 
 .repeat-block-modal-overlay {
   position: fixed;

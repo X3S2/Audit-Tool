@@ -1,4 +1,4 @@
-# 🎯 Audit-Tool v1.10.4 – Professionelles Audit-Management
+# 🎯 Audit-Tool v2.0.0 – Professionelles Audit-Management
 
 **Enterprise-Ready | Deutsch | React + TypeScript + ASP.NET Core + PostgreSQL | Docker**
 
@@ -8,7 +8,7 @@
 
 **Audit-Tool** ist eine professionelle, deutschsprachige Web-Anwendung zur Verwaltung von Audits, Standorten, Räumen, Objekten, Bildern und Checklisten. Das System bietet vollständiges Account-Management, PDF-Designer, Checklisten, Datenbankbackups und ein sicheres Token-basiertes Authentifizierungssystem.
 
-### 🎯 Kernfunktionen (v1.10.4)
+### 🎯 Kernfunktionen (v2.0.0)
 
 | Feature | Status |
 |---------|--------|
@@ -53,9 +53,12 @@ cd Audit-Tool/audittool
 docker-compose up -d
 
 # 3. Im Browser öffnen
-# Frontend: http://localhost:4714
-# Backend:  http://localhost:5050/api/health
+# Frontend (inkl. API über internen Reverse-Proxy): http://localhost:4714
+# Backend direkt (optional, nur für Diagnose): http://localhost:5050/api/health
 ```
+
+> 💡 **Hinweis für Reverse-Proxy/CDN/Router-Betrieb (z. B. Synology NAS, CloudRouter, ipv64.net):**
+> Das Frontend spricht die API seit v2.0.0 ausschließlich über relative, same-origin Pfade (`/api/...`) an und leitet diese intern per nginx an das Backend weiter. Es muss daher nach außen **nur der Frontend-Port (4714)** weitergeleitet werden — der Backend-Port 5050 ist rein optional für direkte Diagnosezwecke und muss nicht öffentlich erreichbar sein.
 
 ### Standard-Zugangsdaten
 
@@ -73,11 +76,16 @@ docker-compose up -d
 ## 🏗️ Architektur
 
 ```
-Browser (localhost:4714)
+Browser (localhost:4714 / externer Host über Reverse-Proxy/CDN)
   React + TypeScript + Vite
-        │ HTTP/JSON
+        │ HTTP/JSON (same-origin, relative /api/-Pfade)
         ▼
-ASP.NET Core API (localhost:5050)
+nginx (im Frontend-Container)
+  • Statisches Frontend-Hosting  • SPA-Fallback
+  • Reverse-Proxy /api/ → Backend (intern, Docker-Netzwerk)
+        │
+        ▼
+ASP.NET Core API (intern, optional zusätzlich extern auf :5050)
   • JWT Auth (8h)   • Token Refresh (7d)
   • CORS            • Request Logging
   • Circuit Breaker • Input Validation
@@ -126,4 +134,4 @@ docker-compose up -d --build
 
 Alle Änderungen sind im [CHANGELOG.md](CHANGELOG.md) dokumentiert.
 
-**Aktuelle Version:** v1.10.4
+**Aktuelle Version:** v2.0.0

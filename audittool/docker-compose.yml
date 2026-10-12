@@ -1,5 +1,4 @@
-﻿version: '3.9'
-name: audittool
+﻿name: audittool
 
 services:
   audittool-postgres-db:
@@ -31,6 +30,12 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE:-audit-tool-clients}
     ports:
       - "5050:8080"
+    # Hinweis: Dieser Port wird vom Browser NICHT mehr benoetigt (das Frontend ruft die API ueber
+    # seinen eigenen nginx-Reverse-Proxy unter "/api" auf, der intern an diesen Container
+    # weiterleitet). Die Freigabe hier dient nur optionalen Zwecken wie direktem API-Zugriff fuer
+    # Diagnose/Tools. Fuer Deployments hinter einem Router/CDN (z.B. Synology NAS +
+    # CloudRouter/CDN) MUSS nur der Frontend-Port (siehe unten, Standard 4714) nach aussen
+    # weitergeleitet werden - dieser Port kann dort ungenutzt/ungeforwardet bleiben.
     depends_on:
       - audittool-postgres-db
     volumes:

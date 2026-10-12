@@ -1,6 +1,8 @@
 using System.Text.Json;
+using iText.IO.Font.Constants;
 using iText.IO.Image;
 using iText.Kernel.Colors;
+using iText.Kernel.Font;
 using iText.Kernel.Geom;
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Canvas;
@@ -20,6 +22,10 @@ public static class PdfDesignRenderer
     private const float Margin = 36f;
     private const float HeaderBandHeight = 26f;
     private const float FooterBandHeight = 26f;
+
+    // Für die Breiten-Abschätzung beim Kürzen langer Tabellenzellen-Texte (siehe TruncateForTableCell) -
+    // Helvetica entspricht der iText-Standardschrift, die Paragraph ohne explizites SetFont() verwendet.
+    private static readonly PdfFont TableCellFont = PdfFontFactory.CreateFont(StandardFonts.HELVETICA);
 
     public sealed record RoomRenderData(string Name, Dictionary<string, string> Fields);
 
@@ -367,7 +373,9 @@ public static class PdfDesignRenderer
 
         var currentPage = startPage;
         var rect = ToRect(element, pageSize.GetHeight());
-        var rowHeight = 20f;
+        // 30pt statt zuvor 20pt: bietet Platz für bis zu 2 Textzeilen bei 9pt Schriftgröße (vorher wurde ein
+        // langer Zellenwert einfach nach dem ersten Teilstück abgeschnitten, ohne jeden Hinweis darauf).
+        var rowHeight = 30f;
         var headerHeight = 22f;
         var y = rect.GetY() + rect.GetHeight();
         // Optionaler Deckel für die Zeilenanzahl pro Seite; bei Überschreitung wird eine neue Seite mit
@@ -418,11 +426,49 @@ public static class PdfDesignRenderer
                 }
                 var cellRect = new Rectangle(rect.GetX() + i * colWidth, y - rowHeight, colWidth, rowHeight);
                 using var canvas = new Canvas(currentPage, cellRect);
-                canvas.Add(new Paragraph(value).SetFontSize(9).SetTextAlignment(TextAlignment.LEFT).SetVerticalAlignment(VerticalAlignment.MIDDLE));
+                var displayValue = TruncateForTableCell(value, 9f, colWidth, maxLines: 2);
+                canvas.Add(new Paragraph(displayValue).SetFontSize(9).SetTextAlignment(TextAlignment.LEFT).SetVerticalAlignment(VerticalAlignment.MIDDLE));
             }
             y -= rowHeight;
             rowsOnCurrentPage++;
         }
+    }
+
+    /// <summary>
+    /// Kürzt einen Zellenwert so, dass er voraussichtlich innerhalb von <paramref name="maxLines"/>
+    /// Textzeilen bei gegebener Spaltenbreite passt, und hängt bei Kürzung "..." an (statt den Text
+    /// kommentarlos mitten im Wort abzuschneiden/verschwinden zu lassen, wie es zuvor implizit durch
+    /// das Überlaufverhalten der festen Zellenhöhe passierte). Die Schätzung basiert auf der tatsächlich
+    /// gemessenen Textbreite der Standardschrift (Helvetica) und ist bewusst etwas konservativ (nutzt die
+    /// volle Spaltenbreite als Zeilenbudget je Zeile), da der exakte Zeilenumbruch von Wortgrenzen abhängt.
+    /// </summary>
+    private static string TruncateForTableCell(string text, float fontSize, float colWidth, int maxLines)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        const float horizontalPadding = 6f; // kleiner Sicherheitsabstand zu den Zellenrändern
+        var usableWidth = Math.Max(colWidth - horizontalPadding, 10f);
+        var budget = usableWidth * maxLines;
+        if (TableCellFont.GetWidth(text, fontSize) <= budget) return text;
+
+        const string ellipsis = "…";
+        var low = 0;
+        var high = text.Length;
+        var best = ellipsis;
+        while (low <= high)
+        {
+            var mid = (low + high) / 2;
+            var candidate = text.Substring(0, mid).TrimEnd() + ellipsis;
+            if (TableCellFont.GetWidth(candidate, fontSize) <= budget)
+            {
+                best = candidate;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+        return best;
     }
 
     private static string FieldLabel(string key) => key switch

@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.0.0] - 2026-10-12
+
+### CDN-/NAS-Erreichbarkeit, PDF-Tabellen-Umbruch & Mobile-Feinschliff (fix008.md)
+
+#### Fix: API über CloudRouter/CDN (z. B. Synology NAS, ipv64.net) nicht erreichbar
+- Root Cause: Das Frontend hat die Backend-API bisher über eine fest hinterlegte Portnummer (`:5050`) direkt angesprochen (`window.location.hostname + ":5050"`). Sobald ein Reverse-Proxy/CDN/Router (wie CloudRouter) nur einen einzigen externen Port auf das Frontend weiterleitet, war die API dadurch von außen grundsätzlich nicht erreichbar — unabhängig von CORS-Einstellungen (die bereits korrekt konfiguriert waren)
+- Das Frontend ruft die API jetzt ausschließlich über relative, same-origin Pfade auf (`/api/...`) statt über einen fest einprogrammierten Host/Port
+- Neuer nginx-Reverse-Proxy im Frontend-Container (`audittool/nginx.conf`): leitet alle `/api/`-Anfragen intern an den Backend-Container weiter, bevor sie den Browser überhaupt verlassen — es muss also nur noch **ein einziger externer Port** (der des Frontends) durch Router/CDN/CloudRouter weitergeleitet werden
+- Vite-Dev-Server-Proxy ergänzt (`frontend/vite.config.ts`), damit `npm run dev` weiterhin lokal ohne Umwege funktioniert
+- `docker-compose.yml` bereinigt (veraltetes `version:`-Attribut entfernt) und kommentiert: die Portfreigabe `5050:8080` des Backends ist jetzt rein optional (nur für direkte API-Diagnose), nicht mehr für den normalen Betrieb erforderlich
+- Lokal end-to-end verifiziert: Login, CORS-Preflight und alle API-Aufrufe funktionieren vollständig über den Frontend-Port (same-origin), ohne dass der Browser Port 5050 direkt kontaktiert
+- Hinweis: Die konkrete Erreichbarkeit über die individuelle CloudRouter-/ipv64.net-Konfiguration kann nur auf dem tatsächlichen NAS final geprüft werden — nach dem Deployment bitte erneut testen
+
+#### Sicherheitslücken in NuGet-Abhängigkeiten geprüft und teilweise behoben
+- `Microsoft.Data.Sqlite` von 10.0.0 auf 10.0.12 aktualisiert — behebt eine als **hoch** eingestufte Schwachstelle in der transitiven Abhängigkeit `SQLitePCLRaw.lib.e_sqlite3` (NU1903)
+- `Microsoft.IdentityModel.Tokens` von 8.19.2 auf 8.23.0 aktualisiert (zusätzliches sicherheitsrelevantes Update ohne Breaking Changes)
+- Die verbleibenden 3 als **mittel** eingestuften Warnungen (NU1902, `BouncyCastle.Cryptography` über `itext7.bouncy-castle-adapter`) wurden **bewusst nicht behoben**: Die einzige verfügbare Lösung wäre ein Sprung von iText7 8.0.5 direkt auf Version 9.x (keine Zwischenversion behebt die Abhängigkeit), was angesichts der umfangreichen PDF-Rendering-Codebasis ein hohes Risiko für Breaking Changes darstellt. Die betroffenen BouncyCastle-Funktionen (kryptografische Signaturen) werden von der PDF-Erzeugung dieser Anwendung nicht genutzt — das Restrisiko wird daher als vertretbar eingestuft und dokumentiert
+
+#### PDF-Tabellen: Lange Kommentartexte wurden abgeschnitten statt umgebrochen
+- Tabellenzellen mit langem Text (z. B. Kommentarspalten) zeigten bisher nur die ersten paar Wörter, der Rest wurde kommentarlos nicht gerendert
+- Zellen brechen jetzt auf bis zu 2 Textzeilen um (Zeilenhöhe der Tabelle dafür von 20pt auf 30pt erhöht); passt der Text auch dann nicht vollständig, wird er anhand der tatsächlich gemessenen Textbreite der verwendeten Schriftart gekürzt und mit „…" gekennzeichnet, statt wortweise und ohne Hinweis abgeschnitten zu werden
+- Die automatische Seitenumbruch-Logik der Tabelle bleibt unverändert
+
+#### Mobile Galerie-Modal war oben und unten abgeschnitten
+- Auf schmalen Bildschirmen (≤600px) füllte das Bild-Galerie-Modal die volle Viewport-Höhe (`100vh`) innerhalb eines zusätzlich gepolsterten Overlays — dadurch ragte es oben und unten über den sichtbaren Bereich hinaus
+- Modal-Höhe auf Mobilgeräten auf `80vh` reduziert, Overlay-Padding auf `0` gesetzt — durch die vorhandene Flexbox-Zentrierung ergibt sich dadurch automatisch ein gleichmäßiger Abstand von ca. 10% der Viewport-Höhe oben und unten
+
+#### Mobile Darstellung: „mehr Details…"-Kürzung jetzt noch kompakter
+- Auf Mobilgeräten (≤768px) wird bei Werten über 20 Zeichen jetzt **ausschließlich** der „mehr Details…"-Link angezeigt (kein Textauszug mehr davor) — der vollständige Text bleibt über das bereits bestehende Detail-Modal (seit fix007.md) weiterhin vollständig einsehbar
+- Die Desktop-Darstellung (Kürzung ab 60 Zeichen mit Textauszug) bleibt unverändert
+
+### 🎉 Versionssprung auf 2.0.0
+Mit Abschluss von fix008.md sind alle für den produktiven Einsatz als wichtig erachteten Kernfunktionen, Stabilitätsfixes und Deployment-Voraussetzungen (insbesondere die CDN-/Reverse-Proxy-Portabilität) umgesetzt — daher Versionssprung von 1.10.x auf **2.0.0** statt eines weiteren Patch-Releases.
+
 ## [1.10.4] - 2026-10-11
 
 ### Wiederholblock-Datenstand & lange Texte in Tabellen (fix007.md)
