@@ -1,4 +1,4 @@
-﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import './theme.css'
 import './App.css'
 import { compressImage } from './imageCompression'
