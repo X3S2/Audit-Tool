@@ -334,6 +334,11 @@ function App() {
   const [auditView, setAuditView] = useState<'categories' | 'standorte' | 'standort'>('categories')
   const [auditSelectedCategory, setAuditSelectedCategory] = useState<Category | null>(null)
   const [auditSelectedSite, setAuditSelectedSite] = useState<Site | null>(null)
+  // fix009: Synchron aktualisierte Referenz auf die aktuell ausgewählte Standort-ID, damit
+  // refreshCoreData (siehe unten) auch bei einem Seitenwechsel ohne Standortwechsel die
+  // Grunddaten-Werte korrekt mit frisch geladenen Serverdaten abgleichen kann.
+  const auditSelectedSiteIdRef = useRef<number | null>(null)
+  auditSelectedSiteIdRef.current = auditSelectedSite?.id ?? null
   const [auditTab, setAuditTab] = useState<'raume' | 'grunddaten' | 'checklisten' | 'dokumente'>('raume')
   const [auditSelectedTemplate, setAuditSelectedTemplate] = useState<Template | null>(null)
   // Datenablage drill-down state
@@ -431,6 +436,7 @@ function App() {
   const [auditForm, setAuditForm] = useState({ siteId: '1', templateId: '1', title: '' })
   const [newAuditPdfDesignId, setNewAuditPdfDesignId] = useState('')
   const [newAuditDocTitle, setNewAuditDocTitle] = useState('')
+  const [newPdfTemplateFormOpen, setNewPdfTemplateFormOpen] = useState(false)
   const [checklistForm, setChecklistForm] = useState({ auditId: '', question: '', answer: '', status: 'offen' })
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
   // Generisches Bestätigungs-Modal (ersetzt window.confirm für Raum-/Dokument-/Audit-Löschung)
@@ -490,6 +496,15 @@ function App() {
       setAudits(auditData)
       setAuditSelectedSite(previous => previous ? (siteData.find(s => s.id === previous.id) ?? previous) : previous)
       setDatenablageSite(previous => previous ? (siteData.find(s => s.id === previous.id) ?? previous) : previous)
+      // fix009: Grunddaten-Werte des aktuell geöffneten Standorts mit den frisch geladenen Serverdaten
+      // abgleichen. Ohne dies blieben die Felder nach einem Seitenwechsel (gleicher Standort weiterhin
+      // ausgewählt) leer, weil der Effekt, der siteGroundDataValues befüllt, nur bei einem Wechsel der
+      // Standort-ID erneut ausgeführt wird.
+      const currentSiteId = auditSelectedSiteIdRef.current
+      if (currentSiteId !== null) {
+        const freshSite = siteData.find(s => s.id === currentSiteId)
+        if (freshSite) setSiteGroundDataValues(parseStringMap(freshSite.groundDataJson))
+      }
     } catch {
       // Stille Fehlerbehandlung: Hintergrund-Refresh soll bestehende Eingaben nicht stören
     }
@@ -520,7 +535,10 @@ function App() {
     // Reset room form on page change
     setRoomForm({ siteId: '1', name: '', description: '', capacity: '', area: '', notes: '' })
     setRoomFieldValues({})
-    setSiteGroundDataValues({})
+    // fix009: siteGroundDataValues hier NICHT mehr blind leeren - sonst blieben die Grunddaten-Felder
+    // nach einem Seitenwechsel zurück zu "Audits" (gleicher Standort weiterhin ausgewählt) leer, weil
+    // der befüllende Effekt nur bei einem Wechsel der Standort-ID erneut läuft. refreshCoreData()
+    // (siehe unten) gleicht die Werte stattdessen aktiv mit dem Server ab.
     setEditingRoomId(null)
     // Reset Vorlagen-Feldbuilder, sonst bleiben Datenfelder einer zuvor bearbeiteten
     // Vorlage sichtbar, obwohl Name/Beschreibung bereits zurückgesetzt wurden
@@ -1401,9 +1419,12 @@ function App() {
       if (mode === 'view') {
         window.open(url, '_blank')
       } else {
+        // Menschenlesbarer Dateiname aus dem Dokumententitel statt des intern generierten Dateinamens.
+        const ext = doc.fileName.includes('.') ? doc.fileName.slice(doc.fileName.lastIndexOf('.')) : ''
+        const safeTitle = doc.title.replace(/[\\/:*?"<>|]/g, '_').trim() || 'Dokument'
         const link = document.createElement('a')
         link.href = url
-        link.download = doc.fileName.split('/').pop() ?? doc.title
+        link.download = `${safeTitle}${ext}`
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)
@@ -1430,11 +1451,12 @@ function App() {
 
   const deleteDocFolder = async (id: number) => {
     if (!session) return
-    askConfirm('Ordner wirklich löschen? Enthaltene Dokumente werden ins Hauptverzeichnis verschoben.', async () => {
+    askConfirm('Ordner wirklich löschen? Enthaltene Unterordner werden mitgelöscht, enthaltene Dokumente werden ins Hauptverzeichnis verschoben.', async () => {
       try {
-        await apiRequest(`/api/folders/${id}`, session, { method: 'DELETE' })
-        setFolders(p => p.filter(f => f.id !== id))
-        setDocuments(p => p.map(d => d.folderId === id ? { ...d, folderId: 0 } : d))
+        const result = await apiRequest<{ deletedFolderIds: number[]; movedDocumentIds: number[] }>(`/api/folders/${id}`, session, { method: 'DELETE' })
+        const deletedIds = new Set(result.deletedFolderIds ?? [id])
+        setFolders(p => p.filter(f => !deletedIds.has(f.id)))
+        setDocuments(p => p.map(d => deletedIds.has(d.folderId) ? { ...d, folderId: 0 } : d))
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Ordner konnte nicht gelöscht werden.')
       }
@@ -2510,26 +2532,41 @@ function App() {
                         return (
                         <div className="tab-content">
                           <form className="form-card" onSubmit={createAuditAndGenerateDocument}>
-                            <h4>Neues Audit erfassen &amp; PDF erzeugen</h4>
-                            <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong> — beim Anlegen werden die aktuellen Räume/Grunddaten des Standorts als unveränderlicher Stand dieses Audits gesichert und direkt als PDF-Dokument erzeugt.</p>
-                            {eligibleDesignsForNew.length===0 ? (
-                              <p className="empty-hint">Kein PDF-Design ist der Vorlage „{auditSelectedTemplate.name}" zugewiesen. Bitte im PDF-Designer zuweisen, bevor ein Audit angelegt werden kann.</p>
-                            ) : (
+                            <button
+                              type="button"
+                              onClick={()=>setNewPdfTemplateFormOpen(v=>!v)}
+                              style={{
+                                display:'flex', alignItems:'center', gap:'8px', width:'100%', textAlign:'left',
+                                background:'none', border:'none', padding:0, margin:'0 0 4px', cursor:'pointer',
+                                font:'inherit', color:'inherit'
+                              }}
+                            >
+                              <span style={{ transform: newPdfTemplateFormOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>▸</span>
+                              <h4 style={{margin:0}}>Neue PDF Vorlage erstellen</h4>
+                            </button>
+                            {newPdfTemplateFormOpen && (
                               <>
-                                <div className="form-grid">
-                                  <label>Titel / Bezeichnung des Audits<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value,siteId:String(auditSelectedSite.id),templateId:String(auditSelectedTemplate.id)}))} required /></label>
-                                  <label>PDF-Design<select value={newAuditPdfDesignId} onChange={e=>{
-                                    const id=e.target.value
-                                    setNewAuditPdfDesignId(id)
-                                    const design=eligibleDesignsForNew.find(d=>String(d.id)===id)
-                                    if(design && auditForm.title) setNewAuditDocTitle(`${design.name} – ${auditForm.title}`)
-                                  }} required>
-                                    <option value="">Design wählen...</option>
-                                    {eligibleDesignsForNew.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
-                                  </select></label>
-                                  <label>Titel des Dokuments<input value={newAuditDocTitle} onChange={e=>setNewAuditDocTitle(e.target.value)} placeholder="Dokumententitel (optional)" /></label>
-                                </div>
-                                <button type="submit" className="primary-button" disabled={docGenInProgress || !newAuditPdfDesignId}>{docGenInProgress ? '⏳ Wird erstellt...' : '📋 Audit anlegen & PDF erzeugen'}</button>
+                                <p style={{color:'var(--muted)',fontSize:'0.88rem',marginBottom:'12px'}}>Vorlage: <strong>{auditSelectedTemplate.name}</strong> — beim Anlegen werden die aktuellen Räume/Grunddaten des Standorts als unveränderlicher Stand dieses Audits gesichert und direkt als PDF-Dokument erzeugt.</p>
+                                {eligibleDesignsForNew.length===0 ? (
+                                  <p className="empty-hint">Kein PDF-Design ist der Vorlage „{auditSelectedTemplate.name}" zugewiesen. Bitte im PDF-Designer zuweisen, bevor ein Audit angelegt werden kann.</p>
+                                ) : (
+                                  <>
+                                    <div className="form-grid">
+                                      <label>Titel / Bezeichnung des Audits<input value={auditForm.title} onChange={e=>setAuditForm(p=>({...p,title:e.target.value,siteId:String(auditSelectedSite.id),templateId:String(auditSelectedTemplate.id)}))} required /></label>
+                                      <label>PDF-Design<select value={newAuditPdfDesignId} onChange={e=>{
+                                        const id=e.target.value
+                                        setNewAuditPdfDesignId(id)
+                                        const design=eligibleDesignsForNew.find(d=>String(d.id)===id)
+                                        if(design && auditForm.title) setNewAuditDocTitle(`${design.name} – ${auditForm.title}`)
+                                      }} required>
+                                        <option value="">Design wählen...</option>
+                                        {eligibleDesignsForNew.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+                                      </select></label>
+                                      <label>Titel des Dokuments<input value={newAuditDocTitle} onChange={e=>setNewAuditDocTitle(e.target.value)} placeholder="Dokumententitel (optional)" /></label>
+                                    </div>
+                                    <button type="submit" className="primary-button" disabled={docGenInProgress || !newAuditPdfDesignId}>{docGenInProgress ? '⏳ Wird erstellt...' : '📋 Audit anlegen & PDF erzeugen'}</button>
+                                  </>
+                                )}
                               </>
                             )}
                           </form>
@@ -2731,13 +2768,29 @@ function App() {
                         const groundData = parseStringMap(datenablageSite.groundDataJson)
                         const keys = Object.keys(groundData).filter(k=>groundData[k])
                         if (keys.length === 0) return null
+                        // Feldtypen (z.B. Bild) über alle Vorlagen hinweg ermitteln, damit Bild-Felder
+                        // hier genauso korrekt dargestellt werden wie in den Audit-Grunddaten.
+                        const liveFieldTypeMap = new Map<string, string>()
+                        templates.forEach(t => t.fields.forEach(f => {
+                          const parsed = parseTemplateFieldType(f.type)
+                          if (parsed.scope === 'site') liveFieldTypeMap.set(f.name, parsed.baseType)
+                        }))
                         return (
                           <div className="ground-data-card">
                             <h4 style={{margin:'0 0 12px',fontSize:'0.9rem',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.07em',fontWeight:600}}>Aktuelle Grunddaten (live)</h4>
                             <div className="info-grid">
-                              {keys.map(key=>(
-                                <div key={key} className="info-row"><span>{key}</span><strong>{groundData[key]}</strong></div>
-                              ))}
+                              {keys.map(key=>{
+                                const baseType = liveFieldTypeMap.get(key)
+                                if (baseType === 'image') {
+                                  const imgs = groundData[key].split('||').filter(Boolean)
+                                  return imgs.length>0 ? (
+                                    <div key={key} className="info-row"><span>{key}</span>
+                                      <button type="button" className="secondary-button" style={{padding:'3px 8px',fontSize:'0.8rem'}} onClick={()=>openGallery(imgs,0)}>🖼 {imgs.length} Bild{imgs.length!==1?'er':''}</button>
+                                    </div>
+                                  ) : null
+                                }
+                                return <div key={key} className="info-row"><span>{key}</span><strong>{baseType==='checkbox'?(groundData[key]==='true'?'✓':'✗'):groundData[key]}</strong></div>
+                              })}
                             </div>
                           </div>
                         )
@@ -3074,17 +3127,28 @@ function App() {
                 <>
                   <div className="form-card">
                     <h4>Neues PDF-Design erstellen</h4>
-                    <div className="form-grid">
-                      <label>Design-Name<input value={newPdfDesignName} onChange={e=>setNewPdfDesignName(e.target.value)} placeholder="z.B. Standard Schulaudit PDF" /></label>
-                      <label>Beschreibung<input value={newPdfDesignDesc} onChange={e=>setNewPdfDesignDesc(e.target.value)} placeholder="Kurze Beschreibung" /></label>
-                    </div>
-                    <button type="button" className="primary-button" style={{marginTop:'12px'}} onClick={async()=>{
+                    {(() => {
+                      const trimmedDesignName = newPdfDesignName.trim()
+                      const existingDesignNames = pdfDesigns.map(x=>x.name.trim().toLowerCase())
+                      const designNameIsDuplicate = trimmedDesignName !== '' && existingDesignNames.includes(trimmedDesignName.toLowerCase())
+                      const designNameStatusClass = trimmedDesignName === '' ? 'field-required-missing' : designNameIsDuplicate ? 'field-required-duplicate' : 'field-required-ok'
+                      return (
+                        <div className="form-grid">
+                          <label className={designNameStatusClass}>Design-Name
+                            <input value={newPdfDesignName} onChange={e=>setNewPdfDesignName(e.target.value)} placeholder="z.B. Standard Schulaudit PDF" />
+                            {designNameIsDuplicate && <span className="field-hint-warning">⚠️ Ein PDF-Design mit diesem Namen existiert bereits.</span>}
+                          </label>
+                          <label>Beschreibung<input value={newPdfDesignDesc} onChange={e=>setNewPdfDesignDesc(e.target.value)} placeholder="Kurze Beschreibung" /></label>
+                        </div>
+                      )
+                    })()}
+                    <button type="button" className="primary-button" style={{marginTop:'12px'}} disabled={!newPdfDesignName.trim()||pdfDesigns.some(x=>x.name.trim().toLowerCase()===newPdfDesignName.trim().toLowerCase())} onClick={async()=>{
                       if (!session||!newPdfDesignName) return
                       try {
                         const res = await apiRequest<PdfDesign>('/api/pdfdesigns', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:newPdfDesignName,description:newPdfDesignDesc,configJson:JSON.stringify(pdfDesignConfig)})})
                         setPdfDesigns(p=>[...p,res])
                         setNewPdfDesignName(''); setNewPdfDesignDesc('')
-                      } catch { setError('Design konnte nicht gespeichert werden.') }
+                      } catch (e) { setError(e instanceof Error ? e.message : 'Design konnte nicht gespeichert werden.') }
                     }}>Design anlegen & Bearbeiten</button>
                   </div>
                   <div style={{marginTop:'24px'}}>
@@ -3115,10 +3179,17 @@ function App() {
                               }}>✏️ Bearbeiten</button>
                               <button type="button" className="secondary-button" style={{padding:'4px 10px',fontSize:'0.82rem'}} onClick={async()=>{
                                 if (!session) return
+                                const existingNames = new Set(pdfDesigns.map(x=>x.name.trim().toLowerCase()))
+                                let copyName = `${d.name} (Kopie)`
+                                let copyIndex = 2
+                                while (existingNames.has(copyName.trim().toLowerCase())) {
+                                  copyName = `${d.name} (Kopie ${copyIndex})`
+                                  copyIndex++
+                                }
                                 try {
-                                  const res = await apiRequest<PdfDesign>('/api/pdfdesigns', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:`${d.name} (Kopie)`,description:d.description,configJson:d.configJson})})
+                                  const res = await apiRequest<PdfDesign>('/api/pdfdesigns', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:copyName,description:d.description,configJson:d.configJson})})
                                   setPdfDesigns(p=>[...p,res])
-                                } catch { setError('Design konnte nicht dupliziert werden.') }
+                                } catch (e) { setError(e instanceof Error ? e.message : 'Design konnte nicht dupliziert werden.') }
                               }}>⧉ Duplizieren</button>
                               <button type="button" className="danger-button" style={{padding:'4px 8px',fontSize:'0.82rem'}} onClick={async()=>{if(session)await apiRequest(`/api/pdfdesigns/${d.id}`,session,{method:'DELETE'});setPdfDesigns(p=>p.filter(x=>x.id!==d.id))}}>Löschen</button>
                             </div></td>
@@ -3135,7 +3206,24 @@ function App() {
                   )}
                   <div className="pdf-designer-header">
                     <button type="button" className="back-btn" onClick={()=>setEditingPdfDesign(null)}>← Zurück zur Übersicht</button>
-                    <h4>✏️ {editingPdfDesign.name}</h4>
+                    {(() => {
+                      const trimmedEditName = editingPdfDesign.name.trim()
+                      const editNameIsDuplicate = trimmedEditName !== '' && pdfDesigns.some(x=>x.id!==editingPdfDesign.id && x.name.trim().toLowerCase()===trimmedEditName.toLowerCase())
+                      return (
+                        <div style={{display:'flex',flexDirection:'column',gap:'2px'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                            <span>✏️</span>
+                            <input
+                              value={editingPdfDesign.name}
+                              onChange={e=>{ const newName = e.target.value; setEditingPdfDesign(p=>p?{...p,name:newName}:p) }}
+                              placeholder="Design-Name"
+                              style={{fontSize:'1rem',fontWeight:600,padding:'5px 9px',border:'1px solid var(--border)',borderRadius:'6px',minWidth:'220px',background:'var(--surface)',color:'inherit'}}
+                            />
+                          </div>
+                          {editNameIsDuplicate && <span className="field-hint-warning">⚠️ Ein PDF-Design mit diesem Namen existiert bereits.</span>}
+                        </div>
+                      )
+                    })()}
                     <div style={{display:'flex',gap:'8px',alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
                       <label style={{display:'flex',alignItems:'center',gap:'6px',fontSize:'0.85rem',color:'var(--muted)',cursor:'pointer'}}>
                         <input type="checkbox" checked={pdfDesignConfig.showPrintArea} onChange={e=>setPdfDesignConfig(p=>({...p,showPrintArea:e.target.checked}))} />
@@ -3165,14 +3253,14 @@ function App() {
                           </div>
                         )}
                       </div>
-                      <button type="button" className="primary-button" onClick={async()=>{
+                      <button type="button" className="primary-button" disabled={!editingPdfDesign.name.trim()||pdfDesigns.some(x=>x.id!==editingPdfDesign.id&&x.name.trim().toLowerCase()===editingPdfDesign.name.trim().toLowerCase())} onClick={async()=>{
                         if (!session) return
                         try {
                           const res = await apiRequest<PdfDesign>(`/api/pdfdesigns/${editingPdfDesign.id}`, session, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:editingPdfDesign.name,description:editingPdfDesign.description,configJson:JSON.stringify(pdfDesignConfig)})})
                           setPdfDesigns(p=>p.map(x=>x.id===res.id?res:x))
                           setEditingPdfDesign(res)
                           setPdfSaveConfirm(true)
-                        } catch { setError('Speichern fehlgeschlagen.') }
+                        } catch (e) { setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen.') }
                       }}>💾 Speichern</button>
                     </div>
                   </div>

@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.0.1] - 2026-10-13
+
+### PDF-Designer, Dokumentenablage & Grunddaten-Stabilität (fix009.md)
+
+#### PDF-Design: Umbenennen möglich, Duplikat-Namen werden verhindert
+- Der Name eines PDF-Designs lässt sich im Design-Editor jetzt direkt über ein Eingabefeld ändern (statt einer starren Überschrift)
+- Sowohl beim Anlegen als auch beim Umbenennen eines Designs erscheint ein Warnhinweis, falls der Name bereits vergeben ist (nach dem bekannten Muster der Raumnamen-Duplikat-Prüfung); der jeweilige Speichern-Button wird dabei deaktiviert
+- Zusätzliche serverseitige Prüfung (Backend) verhindert Namensduplikate auch dann, wenn der Hinweis clientseitig umgangen würde (HTTP 409 bei Kollision)
+- „⧉ Duplizieren" erzeugt jetzt garantiert eindeutige Namen („… (Kopie)", „… (Kopie 2)", „… (Kopie 3)" usw.) statt bei mehrfacher Duplizierung in einen Namenskonflikt zu laufen
+
+#### Formular „Neue PDF Vorlage erstellen" ist jetzt einklappbar
+- Das bisher immer ausgeklappte Formular „Neues Audit erfassen & PDF erzeugen" wurde in „Neue PDF Vorlage erstellen" umbenannt und ist nun standardmäßig eingeklappt, da das Anlegen neuer Vorlagen seltener vorkommt als das reine Einsehen bestehender Dokumente
+- Lässt sich über einen Klick auf die Überschrift auf-/zuklappen (gleiches Verhalten wie bei den bestehenden Checklisten-Bereichen)
+
+#### Ordner in der Dokumentenablage löschten Unterordner nicht mit
+- Beim Löschen eines Ordners mit Unterordnern blieben die Unterordner bisher bestehen (als „Datenleichen" ohne erreichbaren Elternordner) und tauchten weiterhin fälschlich in der „In Ordner verschieben"-Auswahl auf
+- Das Löschen eines Ordners entfernt jetzt rekursiv alle enthaltenen Unterordner; Dokumente in einem der gelöschten Ordner werden automatisch ins Hauptverzeichnis verschoben statt verwaist zu bleiben
+- Der Bestätigungsdialog weist jetzt explizit darauf hin, dass enthaltene Unterordner mitgelöscht werden
+
+#### Bilder in Datenablage → Grunddaten wurden als Rohcode statt als Bild angezeigt
+- Im Bereich „Aktuelle Grunddaten (live)" der Datenablage wurden Bild-Felder bisher unabhängig vom Feldtyp immer als reiner Text gerendert — bei Bildfeldern erschien dadurch der rohe Bilddaten-Code statt einer Vorschau
+- Bild- und Checkbox-Felder werden dort jetzt genauso erkannt und dargestellt wie in den bereits korrekt funktionierenden Bereichen Audits → Grunddaten (Bildfelder zeigen einen „🖼 N Bild(er)"-Button, der die bestehende Bild-Galerie öffnet)
+
+#### Heruntergeladene Dokumente hatten einen unleserlichen internen Dateinamen
+- Trotz korrekt gesetztem Dateinamen auf Server-Seite wurde beim Download durch das `download`-Attribut des Browsers immer der interne, GUID-artige Dateiname verwendet statt des vom Nutzer vergebenen Dokumenttitels
+- Heruntergeladene Dateien verwenden jetzt den Dokumenttitel als Dateinamen (mit automatisch angehängter, korrekter Dateiendung); unzulässige Zeichen für Windows-Dateinamen (`\ / : * ? " < > |`) werden dabei automatisch durch „_" ersetzt
+
+#### Audits → Standort → Grunddaten zeigte nach Seitenwechsel manchmal leere Felder (nur durch Strg+F5 behebbar)
+- Root Cause: Ein Seitenwechsel-Effekt leerte die Grunddaten-Werte bei jedem Seitenwechsel bedingungslos, während der Effekt, der die Werte wiederherstellt, nur bei einem tatsächlichen Standortwechsel (nicht bei einem reinen Seitenwechsel innerhalb desselben Standorts, z. B. über „🛠 Zu Audits wechseln" aus der Datenablage) erneut auslöste
+- Die bedingungslose Leerung wurde entfernt; stattdessen gleichen sich die Grunddaten bei jedem Hintergrund-Datenabgleich automatisch mit dem zuletzt gespeicherten Serverstand ab, unabhängig vom Navigationsweg
+- Live im Browser verifiziert: Werte bleiben nach Navigation über „🛠 Zu Audits wechseln" zwischen Datenablage und Audits korrekt erhalten, ein harter Reload ist nicht mehr nötig
+
 ## [2.0.0] - 2026-10-12
 
 ### CDN-/NAS-Erreichbarkeit, PDF-Tabellen-Umbruch & Mobile-Feinschliff (fix008.md)

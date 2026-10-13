@@ -628,12 +628,21 @@ app.MapGet("/api/pdfdesigns/{id:int}", [Authorize] (AuditStore store, int id) =>
 app.MapPost("/api/pdfdesigns", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, CreatePdfDesignRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
+    if (store.PdfDesigns.Any(d => string.Equals(d.Name.Trim(), request.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+    {
+        return Results.Conflict(new { message = "Ein PDF-Design mit diesem Namen existiert bereits." });
+    }
     var design = store.CreatePdfDesign(request.Name, request.Description ?? string.Empty, request.ConfigJson ?? "{}");
     await logger.LogActionAsync(ResolveUserId(httpContext), "PDF-Design erstellt", $"Design \"{design.Name}\" (ID {design.Id})");
     return Results.Ok(design);
 });
 app.MapPut("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, int id, CreatePdfDesignRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
+    if (store.PdfDesigns.Any(d => d.Id != id && string.Equals(d.Name.Trim(), request.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+    {
+        return Results.Conflict(new { message = "Ein PDF-Design mit diesem Namen existiert bereits." });
+    }
     var design = store.UpdatePdfDesign(id, request.Name ?? string.Empty, request.Description ?? string.Empty, request.ConfigJson ?? "{}");
     if (design is null) return Results.NotFound();
     await logger.LogActionAsync(ResolveUserId(httpContext), "PDF-Design bearbeitet", $"Design \"{design.Name}\" (ID {design.Id})");
@@ -704,9 +713,10 @@ app.MapPost("/api/folders", [Authorize] async (AuditStore store, CreateFolderReq
 app.MapDelete("/api/folders/{id:int}", [Authorize] async (AuditStore store, int id, AuditLogger logger, HttpContext httpContext) =>
 {
     var folder = store.Folders.FirstOrDefault(f => f.Id == id);
-    if (!store.DeleteFolder(id)) return Results.NotFound();
-    await logger.LogActionAsync(ResolveUserId(httpContext), "Ordner gelöscht", folder is null ? $"Ordner ID {id}" : $"Ordner \"{folder.Name}\" (ID {id})");
-    return Results.Ok(new { message = "Ordner gelöscht." });
+    var result = store.DeleteFolder(id);
+    if (result is null) return Results.NotFound();
+    await logger.LogActionAsync(ResolveUserId(httpContext), "Ordner gelöscht", folder is null ? $"Ordner ID {id}" : $"Ordner \"{folder.Name}\" (ID {id}), inkl. {result.DeletedFolderIds.Count - 1} Unterordner");
+    return Results.Ok(new { message = "Ordner gelöscht.", deletedFolderIds = result.DeletedFolderIds, movedDocumentIds = result.MovedDocumentIds });
 });
 
 // Dokumentenablage: Dokumente (generierte PDFs aus PDF-Designs + hochgeladene Fremddokumente)
@@ -1710,23 +1720,42 @@ public sealed class AuditStore
         return folder;
     }
 
-    public bool DeleteFolder(int id)
-    {
-        var removed = _folders.RemoveAll(f => f.Id == id);
-        if (removed > 0)
+    public DeleteFolderResult? DeleteFolder(int id)
         {
-            // Move any documents that were inside the deleted folder back to the root level.
+            if (!_folders.Any(f => f.Id == id)) return null;
+            // Rekursiv alle Unterordner (beliebiger Tiefe) ermitteln, damit beim Löschen eines Ordners
+            // auch sämtliche darin verschachtelten Unterordner mitgelöscht werden.
+            var toDelete = new HashSet<int> { id };
+            bool added;
+            do
+            {
+                added = false;
+                foreach (var f in _folders)
+                {
+                    if (!toDelete.Contains(f.Id) && toDelete.Contains(f.ParentFolderId))
+                    {
+                        toDelete.Add(f.Id);
+                        added = true;
+                    }
+                }
+            } while (added);
+
+            _folders.RemoveAll(f => toDelete.Contains(f.Id));
+
+            // Dokumente aus allen gelöschten Ordnern (inkl. Unterordnern) ins Hauptverzeichnis verschieben,
+            // damit sie nicht unerreichbar werden.
+            var movedDocumentIds = new List<int>();
             for (var i = 0; i < _documents.Count; i++)
             {
-                if (_documents[i].FolderId == id)
+                if (toDelete.Contains(_documents[i].FolderId))
                 {
                     _documents[i] = _documents[i] with { FolderId = 0 };
+                    movedDocumentIds.Add(_documents[i].Id);
                 }
             }
             Persist();
+            return new DeleteFolderResult(toDelete.ToList(), movedDocumentIds);
         }
-        return removed > 0;
-    }
 
     public AuditDocument AddDocument(int auditId, int siteId, string title, int? pdfDesignId, string? pdfDesignName, string fileName, long sizeBytes, int folderId, bool isUploaded = false)
     {
@@ -2456,6 +2485,7 @@ public sealed record ChecklistValue(int Id, int ChecklistTemplateId, int RoomId,
 public sealed record UserSummary(int Id, string UserName, string DisplayName, string Role, bool IsActive);
 public sealed record BackupRecord(string Id, string FileName, DateTime CreatedAtUtc, long SizeBytes, string Type);
 public sealed record DocumentFolder(int Id, int SiteId, int ParentFolderId, string Name, DateTime CreatedAtUtc);
+public sealed record DeleteFolderResult(List<int> DeletedFolderIds, List<int> MovedDocumentIds);
 public sealed record AuditDocument(int Id, int AuditId, int SiteId, string Title, int? PdfDesignId, string? PdfDesignName, string FileName, long SizeBytes, DateTime CreatedAtUtc, bool IsArchived, bool IsUploaded, int FolderId);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record CreateUserRequest(string UserName, string Password, string Role, string DisplayName);
