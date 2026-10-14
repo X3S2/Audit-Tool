@@ -1,5 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import type { DesignElement } from './PdfDesignerCanvas'
+import { AuthImage } from './AuthImage'
+import { uploadMediaImage } from '../mediaUpload'
 
 type FieldOption = { key: string; label: string }
 
@@ -192,7 +194,7 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
       inner = <div style={{ width: '100%', height: '100%', background: s.background === 'transparent' ? undefined : s.background, border: `1px solid ${s.borderColor || '#94a3b8'}`, borderRadius: s.borderRadius }} />
     } else if (c.type === 'image-static') {
       inner = c.imageData
-        ? <img src={c.imageData} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        ? <AuthImage src={c.imageData} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         : <div style={{ width: '100%', height: '100%', border: '2px dashed #94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#94a3b8' }}>📷 Bild</div>
     } else if (c.type === 'repeat-field') {
       const label = allFieldOptions.find(f => f.key === c.fieldKey)?.label || c.fieldKey || '?'
@@ -308,12 +310,17 @@ export const RepeatBlockEditorModal: React.FC<Props> = ({ block, templateFields,
 
                 {selected.type === 'image-static' && (
                   <div className="pdf-prop-group">
-                    <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => {
+                    <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
                       const file = e.target.files?.[0]
                       if (!file) return
-                      const reader = new FileReader()
-                      reader.onload = ev => updateChild(selected.id, { imageData: ev.target?.result as string })
-                      reader.readAsDataURL(file)
+                      try {
+                        const url = await uploadMediaImage(file)
+                        updateChild(selected.id, { imageData: url })
+                      } catch {
+                        window.alert('Bild konnte nicht hochgeladen werden.')
+                      } finally {
+                        e.target.value = ''
+                      }
                     }} />
                     <button type="button" className="secondary-button" style={{ width: '100%' }} onClick={() => fileInputRef.current?.click()}>📁 Bild wählen...</button>
                     {selected.imageData && <div style={{ marginTop: 4, fontSize: '0.78rem', color: 'var(--muted)' }}>✓ Bild geladen</div>}

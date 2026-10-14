@@ -680,11 +680,14 @@ public static class PdfDesignRenderer
         return text;
     }
 
+    // Liest Bildbytes sowohl aus alten eingebetteten "data:image/...;base64,..."-Werten als auch aus
+    // neuen "/api/media/{name}"-Verweisen (siehe MediaStore) - so lassen sich auch ältere Backups mit
+    // noch nicht ausgelagerten Bildern weiterhin korrekt zu PDF rendern.
     private static byte[] DecodeDataUrl(string dataUrl)
     {
-        var commaIndex = dataUrl.IndexOf(',');
-        var base64 = commaIndex >= 0 ? dataUrl[(commaIndex + 1)..] : dataUrl;
-        return Convert.FromBase64String(base64);
+        var resolved = MediaStore.ResolveImageBytes(dataUrl);
+        if (resolved is null) throw new FormatException("Bilddaten konnten nicht aufgelöst werden.");
+        return resolved.Value.Bytes;
     }
 
     private static DeviceRgb ColorFromHex(string hex)

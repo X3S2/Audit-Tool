@@ -1,12 +1,15 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import './theme.css'
 import './App.css'
-import { compressImage } from './imageCompression'
+import { compressImage, createThumbnail } from './imageCompression'
+import { SESSION_KEY } from './session'
 import { Header } from './components/Header'
 import { Navigation, type PageKey } from './components/Navigation'
 import { Tabs, type TabItem } from './components/Tabs'
 import { Alert } from './components/Alert'
 import { PdfDesignerCanvas, type DesignElement } from './components/PdfDesignerCanvas'
+import { AuthImage } from './components/AuthImage'
+import { InputValidator } from './InputValidator'
 
 type ThemeMode = 'dark' | 'light'
 
@@ -41,6 +44,11 @@ type Site = {
   caretakerPhone: string
   active: boolean
   groundDataJson?: string
+  version?: number
+  // fix010 Schritt 2b: Nur beim Laden EINES Standorts (/api/standorte/{id}) vorhanden;
+  // in der Listenansicht (/api/standorte) liefert der Server stattdessen roomCount/auditCount.
+  roomCount?: number
+  auditCount?: number
 }
 
 type TemplateField = {
@@ -68,6 +76,7 @@ type Room = {
   notes: string
   fieldsJson: string
   auditId: number
+  version?: number
 }
 
 type AuditObject = {
@@ -191,7 +200,6 @@ type ChecklistValue = {
   updatedAtUtc: string
 }
 
-const SESSION_KEY = 'audit-tool-session'
 const THEME_KEY = 'audit-tool-theme'
 // Relative, same-origin API-Basis: Das Frontend ruft die API ausschließlich über "/api/..."
 // auf, statt einen festen Host/Port (z.B. ":5050") anzunehmen. Dadurch funktioniert die App auch
@@ -228,6 +236,15 @@ function readSession(): Session | null {
 function readTheme(): ThemeMode {
   const stored = localStorage.getItem(THEME_KEY)
   return stored === 'light' ? 'light' : 'dark'
+}
+
+// Leitet aus einer Medien-URL ("/api/media/{guid}.{ext}") den Namen des zugehörigen, beim Upload parallel
+// erzeugten Thumbnails ("/api/media/{guid}.thumb.jpg") ab. Alte, noch nicht migrierte Data-URLs sowie
+// bereits migrierte Bilder ohne eigenes Thumbnail haben keine Entsprechung - in diesen Fällen wird der
+// unveränderte Wert zurückgegeben, AuthImage fällt dann automatisch auf "fallbackSrc" (das Vollbild) zurück.
+function deriveThumbUrl(url: string): string {
+  const match = url.match(/^(\/api\/media\/[a-f0-9]{32})\.(jpg|jpeg|png|webp|gif)$/i)
+  return match ? `${match[1]}.thumb.jpg` : url
 }
 
 const canManageUsers = (role: string) => ['Superadmin', 'Admin'].includes(role)
@@ -295,6 +312,17 @@ const parseStringMap = (raw: string | undefined) => {
   }
 }
 
+// fix010 Schritt 2c: Generischer Merge-Helfer für Collections, die nur noch gezielt (nicht mehr
+// komplett für alle Standorte) nachgeladen werden (Räume, Dokumente, Ordner). Ersetzt innerhalb des
+// übergebenen "scope" (z.B. ein bestimmter Standort) alle Einträge durch den frischen Stand, lässt
+// aber alles außerhalb des Scopes (z.B. andere Standorte) unangetastet im State.
+const mergeByScope = <T,>(previous: T[], fresh: T[], inScope: (item: T) => boolean): T[] => {
+  const kept = previous.filter(item => !inScope(item))
+  return [...kept, ...fresh]
+}
+const mergeRoomsForScope = (previous: Room[], fresh: Room[], inScope: (room: Room) => boolean): Room[] =>
+  mergeByScope(previous, fresh, inScope)
+
 const getDesignTemplateIds = (design: PdfDesign): number[] => {
   try {
     const config = JSON.parse(design.configJson) as PdfDesignConfig
@@ -345,6 +373,10 @@ function App() {
   const [datenablageView, setDatenablageView] = useState<'categories' | 'standorte' | 'standort'>('categories')
   const [datenablageCategory, setDatenablageCategory] = useState<Category | null>(null)
   const [datenablageSite, setDatenablageSite] = useState<Site | null>(null)
+  // fix010 Schritt 2c: Analog zu auditSelectedSiteIdRef, damit refreshCoreData weiß, ob auch für die
+  // Datenablage gerade ein Standort offen ist und dessen Räume (inkl. Snapshots) mit aktualisiert werden müssen.
+  const datenablageSiteIdRef = useRef<number | null>(null)
+  datenablageSiteIdRef.current = datenablageSite?.id ?? null
   const [datenablageTab, setDatenablageTab] = useState<'raume' | 'grunddaten' | 'checklisten' | 'dokumente'>('raume')
   const [datenablageSelectedRoomName, setDatenablageSelectedRoomName] = useState<string | null>(null)
   const [datenablageChecklistTemplate, setDatenablageChecklistTemplate] = useState<Template | null>(null)
@@ -366,6 +398,17 @@ function App() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [newUserForm, setNewUserForm] = useState({ userName: '', displayName: '', password: '', role: 'Benutzer' })
   const [showNewUserForm, setShowNewUserForm] = useState(false)
+  // fix010 Schritt 6c: Eigener State für den Admin-Passwort-Reset (statt onBlur-Auto-Save) - Passwort,
+  // Bestätigung und ein Anzeigen-Schalter, wird beim Öffnen/Schließen des Bearbeiten-Formulars geleert.
+  const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirmPassword: '', showPassword: false })
+
+  // fix010 Schritt 6c: Formular leeren, sobald ein anderer Benutzer zum Bearbeiten geöffnet oder das
+  // Formular geschlossen wird - verhindert, dass ein zuvor eingetipptes Passwort versehentlich auf
+  // einen anderen Account angewendet wird.
+  useEffect(() => {
+    setResetPasswordForm({ password: '', confirmPassword: '', showPassword: false })
+  }, [editingUser?.id])
+
   // Einstellungen Edit state
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
   const [editingSite, setEditingSite] = useState<Site | null>(null)
@@ -409,7 +452,7 @@ function App() {
   const [audits, setAudits] = useState<AuditInstance[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [backups, setBackups] = useState<BackupRecord[]>([])
-  const [backupSchedule, setBackupSchedule] = useState<{ enabled: boolean; time: string; days: string[]; maxBackups: number }>({ enabled: false, time: '02:00', days: [], maxBackups: 10 })
+  const [backupSchedule, setBackupSchedule] = useState<{ enabled: boolean; time: string; days: string[]; maxBackups: number; lastRunUtc?: string | null; nextRunBerlin?: string | null }>({ enabled: false, time: '02:00', days: [], maxBackups: 10 })
   const [exportSiteId, setExportSiteId] = useState('1')
   const [imageGalleryObject, setImageGalleryObject] = useState<AuditObject | null>(null)
   const [galleryImages, setGalleryImages] = useState<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>([])
@@ -482,27 +525,48 @@ function App() {
   const refreshCoreData = useCallback(async () => {
     if (!session) return
     try {
-      const [categoryData, siteData, templateData, roomData, auditData] = await Promise.all([
+      const [categoryData, siteData, templateData, auditData] = await Promise.all([
         apiRequest<Category[]>('/api/categories', session),
         apiRequest<Site[]>('/api/standorte', session),
         apiRequest<Template[]>('/api/templates', session),
-        apiRequest<Room[]>('/api/rooms?all=true', session),
         apiRequest<AuditInstance[]>('/api/audits', session)
       ])
       setCategories(categoryData)
-      setSites(siteData)
       setTemplates(templateData)
-      setRooms(roomData)
       setAudits(auditData)
-      setAuditSelectedSite(previous => previous ? (siteData.find(s => s.id === previous.id) ?? previous) : previous)
-      setDatenablageSite(previous => previous ? (siteData.find(s => s.id === previous.id) ?? previous) : previous)
+
+      // fix010 Schritt 2c: /api/rooms?all=true wird nicht mehr verwendet - stattdessen werden nur
+      // die Räume des/der gerade geöffneten Standorts/Standorte (Audits bzw. Datenablage) gezielt
+      // nachgeladen; alle anderen bereits bekannten Räume bleiben unangetastet im State.
+      const relevantSiteIds = Array.from(new Set(
+        [auditSelectedSiteIdRef.current, datenablageSiteIdRef.current].filter((id): id is number => id !== null)
+      ))
+      const freshSitesById = new Map<number, Site>()
+      await Promise.all(relevantSiteIds.map(async (siteId) => {
+        try {
+          const [roomData, fullSite] = await Promise.all([
+            apiRequest<Room[]>(`/api/rooms?siteId=${siteId}&all=true`, session),
+            apiRequest<Site>(`/api/standorte/${siteId}`, session)
+          ])
+          freshSitesById.set(siteId, fullSite)
+          setRooms(previous => mergeRoomsForScope(previous, roomData, room => room.siteId === siteId))
+        } catch {
+          // Stille Fehlerbehandlung je Standort: lokal bekannter Stand bleibt sichtbar
+        }
+      }))
+
+      // Die schlanke Liste (für Zähler/Übersichten) mit evtl. frisch geladenen vollen Standort-
+      // Datensätzen (inkl. groundDataJson) zusammenführen, damit dabei nichts verloren geht.
+      setSites(siteData.map(s => freshSitesById.get(s.id) ?? s))
+      setAuditSelectedSite(previous => previous ? (freshSitesById.get(previous.id) ?? previous) : previous)
+      setDatenablageSite(previous => previous ? (freshSitesById.get(previous.id) ?? previous) : previous)
       // fix009: Grunddaten-Werte des aktuell geöffneten Standorts mit den frisch geladenen Serverdaten
       // abgleichen. Ohne dies blieben die Felder nach einem Seitenwechsel (gleicher Standort weiterhin
       // ausgewählt) leer, weil der Effekt, der siteGroundDataValues befüllt, nur bei einem Wechsel der
       // Standort-ID erneut ausgeführt wird.
       const currentSiteId = auditSelectedSiteIdRef.current
       if (currentSiteId !== null) {
-        const freshSite = siteData.find(s => s.id === currentSiteId)
+        const freshSite = freshSitesById.get(currentSiteId)
         if (freshSite) setSiteGroundDataValues(parseStringMap(freshSite.groundDataJson))
       }
     } catch {
@@ -578,23 +642,28 @@ function App() {
     // fix006: ...und sofort frische Räume/Grunddaten vom Server nachladen (z.B. falls ein Kollege
     // parallel am selben Standort etwas eingetragen hat), statt auf dem beim Login geladenen,
     // möglicherweise veralteten Stand sitzen zu bleiben.
+    // fix010 Schritt 2c: Nur noch die Räume DIESES Standorts laden (/api/rooms?siteId=), nicht mehr
+    // ALLE Räume ALLER Standorte; die vollen Standortdaten (inkl. groundDataJson) kommen separat
+    // über /api/standorte/{id}, die schlanke Liste (für Zähler) weiterhin über /api/standorte.
     const siteId = auditSelectedSite.id
     let cancelled = false
     if (session) {
       void (async () => {
         try {
-          const [roomData, siteData] = await Promise.all([
-            apiRequest<Room[]>('/api/rooms?all=true', session),
-            apiRequest<Site[]>('/api/standorte', session)
+          const [roomData, fullSite, siteListData, documentData, folderData] = await Promise.all([
+            apiRequest<Room[]>(`/api/rooms?siteId=${siteId}&all=true`, session),
+            apiRequest<Site>(`/api/standorte/${siteId}`, session),
+            apiRequest<Site[]>('/api/standorte', session),
+            apiRequest<AuditDocument[]>(`/api/documents?siteId=${siteId}`, session),
+            apiRequest<DocumentFolder[]>(`/api/folders?siteId=${siteId}`, session)
           ])
           if (cancelled) return
-          setRooms(roomData)
-          setSites(siteData)
-          const freshSite = siteData.find(s => s.id === siteId)
-          if (freshSite) {
-            setAuditSelectedSite(freshSite)
-            setSiteGroundDataValues(parseStringMap(freshSite.groundDataJson))
-          }
+          setRooms(previous => mergeRoomsForScope(previous, roomData, room => room.siteId === siteId))
+          setDocuments(previous => mergeByScope(previous, documentData, doc => doc.siteId === siteId))
+          setFolders(previous => mergeByScope(previous, folderData, folder => folder.siteId === siteId))
+          setSites(siteListData.map(s => (s.id === siteId ? fullSite : s)))
+          setAuditSelectedSite(fullSite)
+          setSiteGroundDataValues(parseStringMap(fullSite.groundDataJson))
         } catch {
           // Stille Fehlerbehandlung: lokal bekannter Stand bleibt sichtbar
         }
@@ -783,11 +852,16 @@ function App() {
     })
   }
 
-  // Live-Sync: Checklisten-Werte alle 10s neu laden, solange der Checklisten-Tab aktiv ist
+  // Live-Sync: Checklisten-Werte alle 15s neu laden, solange der Checklisten-Tab aktiv UND der
+  // Browser-Tab sichtbar ist (fix010 Schritt 2: kein Polling mehr im Hintergrund-Tab, zusätzlich
+  // ein In-Flight-Schutz, damit sich bei langsamen Antworten keine Anfragen überlappen).
   useEffect(() => {
     if (!session || auditTab !== 'checklisten' || activeChecklistTemplates.length === 0) return
     let cancelled = false
+    let inFlight = false
     const loadAll = async () => {
+      if (inFlight || document.visibilityState !== 'visible') return
+      inFlight = true
       try {
         const results = await Promise.all(activeChecklistTemplates.map(c =>
           apiRequest<ChecklistValue[]>(`/api/checklist-values?checklistTemplateId=${c.id}`, session)
@@ -795,10 +869,12 @@ function App() {
         if (!cancelled) setChecklistValues(results.flat())
       } catch {
         // Stille Fehlerbehandlung beim Hintergrund-Polling, um die Eingabe nicht zu stören
+      } finally {
+        inFlight = false
       }
     }
     loadAll()
-    const interval = setInterval(loadAll, 10000)
+    const interval = setInterval(loadAll, 15000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [session, auditTab, auditSelectedTemplate?.id])
 
@@ -806,7 +882,10 @@ function App() {
   useEffect(() => {
     if (!session || datenablageTab !== 'checklisten' || datenablageChecklists.length === 0) return
     let cancelled = false
+    let inFlight = false
     const loadAll = async () => {
+      if (inFlight || document.visibilityState !== 'visible') return
+      inFlight = true
       try {
         const results = await Promise.all(datenablageChecklists.map(c =>
           apiRequest<ChecklistValue[]>(`/api/checklist-values?checklistTemplateId=${c.id}`, session)
@@ -814,10 +893,12 @@ function App() {
         if (!cancelled) setChecklistValues(results.flat())
       } catch {
         // Stille Fehlerbehandlung beim Hintergrund-Polling
+      } finally {
+        inFlight = false
       }
     }
     loadAll()
-    const interval = setInterval(loadAll, 10000)
+    const interval = setInterval(loadAll, 15000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [session, datenablageTab, datenablageChecklistTemplate?.id])
 
@@ -826,15 +907,23 @@ function App() {
     setDatenablageChecklistTemplate(null)
     // fix006: Auch in der (nur lesenden) Datenablage beim Betreten eines Standorts frische
     // Räume/Grunddaten nachladen statt den ggf. veralteten Login-Stand zu zeigen.
+    // fix010 Schritt 2c: Räume/Dokumente/Ordner nur noch für DIESEN Standort nachladen (siteId-Scope),
+    // nicht mehr pauschal für alle Standorte.
     if (session && datenablageSite) {
+      const siteId = datenablageSite.id
       void (async () => {
         try {
-          const [roomData, siteData] = await Promise.all([
-            apiRequest<Room[]>('/api/rooms?all=true', session),
-            apiRequest<Site[]>('/api/standorte', session)
+          const [roomData, fullSite, siteListData, documentData, folderData] = await Promise.all([
+            apiRequest<Room[]>(`/api/rooms?siteId=${siteId}&all=true`, session),
+            apiRequest<Site>(`/api/standorte/${siteId}`, session),
+            apiRequest<Site[]>('/api/standorte', session),
+            apiRequest<AuditDocument[]>(`/api/documents?siteId=${siteId}`, session),
+            apiRequest<DocumentFolder[]>(`/api/folders?siteId=${siteId}`, session)
           ])
-          setRooms(roomData)
-          setSites(siteData)
+          setRooms(previous => mergeRoomsForScope(previous, roomData, room => room.siteId === siteId))
+          setDocuments(previous => mergeByScope(previous, documentData, doc => doc.siteId === siteId))
+          setFolders(previous => mergeByScope(previous, folderData, folder => folder.siteId === siteId))
+          setSites(siteListData.map(s => (s.id === siteId ? fullSite : s)))
         } catch {
           // Stille Fehlerbehandlung: lokal bekannter Stand bleibt sichtbar
         }
@@ -912,27 +1001,25 @@ function App() {
 
     const loadData = async () => {
       try {
-        const [categoryData, siteData, templateData, roomData, auditData, pdfDesignData, checklistTmplData, documentData, folderData] = await Promise.all([
+        // fix010 Schritt 2c: Räume (/api/rooms?all=true) sowie Dokumente/Ordner werden nicht mehr
+        // pauschal beim Login geladen, sondern erst gezielt beim Betreten des jeweiligen Standorts
+        // (siehe Audits- bzw. Datenablage-Standort-Effekt weiter unten) - das spart insbesondere bei
+        // vielen Standorten/Audits unnötigen Datenverkehr direkt nach dem Login.
+        const [categoryData, siteData, templateData, auditData, pdfDesignData, checklistTmplData] = await Promise.all([
           apiRequest<Category[]>('/api/categories', session),
           apiRequest<Site[]>('/api/standorte', session),
           apiRequest<Template[]>('/api/templates', session),
-          apiRequest<Room[]>('/api/rooms?all=true', session),
           apiRequest<AuditInstance[]>('/api/audits', session),
           apiRequest<PdfDesign[]>('/api/pdfdesigns', session),
-          apiRequest<ChecklistTemplate[]>('/api/checklisttemplates', session),
-          apiRequest<AuditDocument[]>('/api/documents', session),
-          apiRequest<DocumentFolder[]>('/api/folders', session)
+          apiRequest<ChecklistTemplate[]>('/api/checklisttemplates', session)
         ])
 
         setCategories(categoryData)
         setSites(siteData)
         setTemplates(templateData)
-        setRooms(roomData)
         setAudits(auditData)
         setPdfDesigns(pdfDesignData)
         setChecklistTemplates(checklistTmplData)
-        setDocuments(documentData)
-        setFolders(folderData)
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Daten konnten nicht geladen werden.')
       }
@@ -942,30 +1029,40 @@ function App() {
   }, [session])
 
   useEffect(() => {
+    // fix010 Schritt 2: Benutzer-/Backup-Listen werden nicht mehr bei jedem Login pauschal
+    // mitgeladen, sondern nur noch dann, wenn die jeweilige Admin-Unterseite auch tatsächlich
+    // geöffnet wird (gleiches Muster wie beim schon vorher nur bei Bedarf geladenen Logs-Tab).
     if (!session || !canManageUsers(session.user.role)) {
       setUsers([])
       setBackups([])
       return
     }
 
+    if (page !== 'admin-benutzer' && page !== 'admin-backup') {
+      return
+    }
+
     const loadUsers = async () => {
       try {
-        const [userData, backupData, scheduleData] = await Promise.all([
-          apiRequest<User[]>('/api/users', session),
-          apiRequest<BackupRecord[]>('/api/admin/backups', session),
-          apiRequest<{ enabled: boolean; time: string; days: string[]; maxBackups: number }>('/api/admin/backup-schedule', session)
-        ])
-
-        setUsers(userData)
-        setBackups(backupData)
-        setBackupSchedule(scheduleData)
+        if (page === 'admin-benutzer') {
+          const userData = await apiRequest<User[]>('/api/users', session)
+          setUsers(userData)
+        }
+        if (page === 'admin-backup') {
+          const [backupData, scheduleData] = await Promise.all([
+            apiRequest<BackupRecord[]>('/api/admin/backups', session),
+            apiRequest<{ enabled: boolean; time: string; days: string[]; maxBackups: number; lastRunUtc?: string | null; nextRunBerlin?: string | null }>('/api/admin/backup-schedule', session)
+          ])
+          setBackups(backupData)
+          setBackupSchedule(scheduleData)
+        }
       } catch (apiError) {
         setError(apiError instanceof Error ? apiError.message : 'Admin-Daten konnten nicht geladen werden.')
       }
     }
 
     void loadUsers()
-  }, [session])
+  }, [session, page])
 
   useEffect(() => {
     if (!session || page !== 'admin-logs' || !canManageUsers(session.user.role)) {
@@ -1049,22 +1146,31 @@ function App() {
     }
   }
 
-  const resetUserPassword = async (userId: number) => {
-    if (!session) {
+  // fix010 Schritt 6c: Ersetzt den alten (ungenutzten) prompt()-basierten Reset durch einen expliziten
+  // Vorgang mit Bestätigungsfeld - validiert clientseitig, zeigt die echte Serverfehlermeldung an.
+  const setUserPassword = async () => {
+    if (!session || !editingUser) {
       return
     }
 
-    const newPassword = prompt('Neues Passwort eingeben:')
-    if (!newPassword) {
+    const validation = InputValidator.validatePassword(resetPasswordForm.password)
+    if (!validation.valid) {
+      setError(validation.error ?? 'Ungültiges Passwort.')
+      return
+    }
+
+    if (resetPasswordForm.password !== resetPasswordForm.confirmPassword) {
+      setError('Die Passwörter stimmen nicht überein.')
       return
     }
 
     try {
-      await apiRequest<{ message: string }>(`/api/users/${userId}/password`, session, {
+      await apiRequest<{ message: string }>(`/api/users/${editingUser.id}/password`, session, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPassword })
+        body: JSON.stringify({ newPassword: resetPasswordForm.password })
       })
+      setResetPasswordForm({ password: '', confirmPassword: '', showPassword: false })
       setError('Passwort erfolgreich zurückgesetzt.')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Passwort konnte nicht zurückgesetzt werden.')
@@ -1103,20 +1209,51 @@ function App() {
     }
   }
 
+  const reloadBackupData = async () => {
+    if (!session) {
+      return
+    }
+
+    try {
+      const [backupData, scheduleData] = await Promise.all([
+        apiRequest<BackupRecord[]>('/api/admin/backups', session),
+        apiRequest<{ enabled: boolean; time: string; days: string[]; maxBackups: number; lastRunUtc?: string | null; nextRunBerlin?: string | null }>('/api/admin/backup-schedule', session)
+      ])
+      setBackups(backupData)
+      setBackupSchedule(scheduleData)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Backup-Liste konnte nicht aktualisiert werden.')
+    }
+  }
+
   const createBackup = async () => {
     if (!session) {
       return
     }
 
     try {
-      const backup = await apiRequest<BackupRecord>('/api/admin/backups', session, {
+      await apiRequest<BackupRecord>('/api/admin/backups', session, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       })
-      setBackups((previous) => [backup, ...previous])
+      await reloadBackupData()
       setError('')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Backup konnte nicht erstellt werden.')
+    }
+  }
+
+  const testScheduledBackup = async () => {
+    if (!session) {
+      return
+    }
+
+    try {
+      await apiRequest<BackupRecord>('/api/admin/backups/test-schedule', session, { method: 'POST' })
+      await reloadBackupData()
+      setError('Test-Backup (automatisches Format) wurde erstellt.')
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Test-Backup konnte nicht erstellt werden.')
     }
   }
 
@@ -1127,6 +1264,7 @@ function App() {
 
     try {
       await apiRequest<{ message: string }>(`/api/admin/backups/${backupId}/restore`, session, { method: 'POST' })
+      await reloadBackupData()
       setError('Backup wiederhergestellt.')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Backup konnte nicht wiederhergestellt werden.')
@@ -1214,7 +1352,7 @@ function App() {
           caretakerPhone: siteForm.caretakerPhone
         })
       })
-      setSites((previous) => [...previous, site])
+      setSites((previous) => [...previous, { ...site, roomCount: 0, auditCount: 0 }])
       setSiteForm({ categoryId: '1', name: '', address: '', phone: '', caretakerPhone: '' })
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Standort konnte nicht gespeichert werden.')
@@ -1529,7 +1667,7 @@ function App() {
       return
     }
 
-    if (!window.confirm(`M?chten Sie das Bild "${imageName}" wirklich l?schen?`)) {
+    if (!window.confirm(`Möchten Sie das Bild "${imageName}" wirklich löschen?`)) {
       return
     }
 
@@ -1541,14 +1679,14 @@ function App() {
 
       if (!response.ok) {
         const errorData = (await response.json()) as { message?: string }
-        throw new Error(errorData.message || `L?schen fehlgeschlagen: ${response.statusText}`)
+        throw new Error(errorData.message || `Löschen fehlgeschlagen: ${response.statusText}`)
       }
 
       const images = await apiRequest<Array<{ name: string; sizeBytes: number; createdAtUtc: string }>>(`/api/objects/${imageGalleryObject.id}/images`, session)
       setGalleryImages(images)
       setError('')
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Bild konnte nicht gel?scht werden.')
+      setError(deleteError instanceof Error ? deleteError.message : 'Bild konnte nicht gelöscht werden.')
     }
   }
 
@@ -1563,7 +1701,8 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(backupSchedule)
       })
-      setError('')
+      await reloadBackupData()
+      setError('Backup-Zeitplan gespeichert.')
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Backup-Zeitplan konnte nicht gespeichert werden.')
     }
@@ -1580,8 +1719,9 @@ function App() {
       return
     }
 
-    if (passwordForm.newPassword.length < 8) {
-      setError('Das Passwort muss mindestens 8 Zeichen lang sein.')
+    const validation = InputValidator.validatePassword(passwordForm.newPassword)
+    if (!validation.valid) {
+      setError(validation.error ?? 'Ungültiges Passwort.')
       return
     }
 
@@ -1858,14 +1998,23 @@ function App() {
               if (files.length === 0) return
               const newImages: string[] = []
               for (const file of files) {
-                const compressed = await compressImage(file)
-                const dataUrl = await new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader()
-                  reader.onload = ev => resolve(ev.target?.result as string)
-                  reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'))
-                  reader.readAsDataURL(compressed)
-                })
-                newImages.push(dataUrl)
+                try {
+                  const compressed = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.75 })
+                  const thumb = await createThumbnail(file)
+                  const formData = new FormData()
+                  formData.append('file', compressed, 'bild.jpg')
+                  formData.append('thumb', thumb, 'bild-thumb.jpg')
+                  const res = await fetch(`${API_BASE}/api/media`, {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${session?.token ?? ''}` },
+                    body: formData
+                  })
+                  if (!res.ok) throw new Error('Bild-Upload fehlgeschlagen.')
+                  const uploaded = await res.json() as { url: string }
+                  newImages.push(uploaded.url)
+                } catch {
+                  setError(`Bild "${file.name}" konnte nicht hochgeladen werden.`)
+                }
               }
               setValue(previous => {
                 const existing = (previous ?? '').split('||').filter(Boolean)
@@ -1878,7 +2027,7 @@ function App() {
             <div className="room-image-thumbs">
               {imageList.map((imageSrc,imgIdx)=>(
                 <div key={`${key}-${imgIdx}`} className="room-image-thumb">
-                  <img src={imageSrc} alt={`${label}-${imgIdx+1}`} onClick={()=>openGallery(imageList,imgIdx)} />
+                  <AuthImage src={deriveThumbUrl(imageSrc)} fallbackSrc={imageSrc} alt={`${label}-${imgIdx+1}`} onClick={()=>openGallery(imageList,imgIdx)} />
                   <button type="button" className="thumb-remove" onClick={()=>setValue(previous=>{
                     const current = (previous ?? '').split('||').filter(Boolean)
                     return current.filter((_, idx) => idx !== imgIdx).join('||')
@@ -2049,6 +2198,7 @@ function App() {
             <input
               value={loginForm.username}
               onChange={(event) => setLoginForm((previous) => ({ ...previous, username: event.target.value }))}
+              autoComplete="username"
             />
           </label>
 
@@ -2058,6 +2208,7 @@ function App() {
               type="password"
               value={loginForm.password}
               onChange={(event) => setLoginForm((previous) => ({ ...previous, password: event.target.value }))}
+              autoComplete="current-password"
             />
           </label>
 
@@ -2338,25 +2489,30 @@ function App() {
                             <div style={{display:'flex',gap:'8px',marginTop:'16px'}}>
                               <button type="button" className="primary-button" onClick={async()=>{
                                 if(!session||!roomForm.name.trim())return
-                                const effectiveFieldValues = { ...roomFieldValues }
-                                auditSelectedTemplate.fields.forEach(f=>{
-                                  const { baseType, scope, defaultValue } = parseTemplateFieldType(f.type)
-                                  if (scope==='room' && baseType==='dropdown' && !effectiveFieldValues[f.name] && defaultValue) {
-                                    effectiveFieldValues[f.name] = defaultValue
+                                try{
+                                  const effectiveFieldValues = { ...roomFieldValues }
+                                  auditSelectedTemplate.fields.forEach(f=>{
+                                    const { baseType, scope, defaultValue } = parseTemplateFieldType(f.type)
+                                    if (scope==='room' && baseType==='dropdown' && !effectiveFieldValues[f.name] && defaultValue) {
+                                      effectiveFieldValues[f.name] = defaultValue
+                                    }
+                                  })
+                                  const fieldsJson=JSON.stringify(effectiveFieldValues)
+                                  const body:any={siteId:auditSelectedSite.id,name:roomForm.name,description:'',capacity:'',area:'',notes:'',fieldsJson}
+                                  if(editingRoomId){
+                                    body.expectedVersion = rooms.find(r=>r.id===editingRoomId)?.version
+                                    const res=await apiRequest<Room>(`/api/rooms/${editingRoomId}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+                                    setRooms(p=>p.map(r=>r.id===res.id?res:r))
+                                  } else {
+                                    const res=await apiRequest<Room>('/api/rooms',session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+                                    setRooms(p=>[...p,res])
                                   }
-                                })
-                                const fieldsJson=JSON.stringify(effectiveFieldValues)
-                                const body={siteId:auditSelectedSite.id,name:roomForm.name,description:'',capacity:'',area:'',notes:'',fieldsJson}
-                                if(editingRoomId){
-                                  const res=await apiRequest<Room>(`/api/rooms/${editingRoomId}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-                                  setRooms(p=>p.map(r=>r.id===res.id?res:r))
-                                } else {
-                                  const res=await apiRequest<Room>('/api/rooms',session,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-                                  setRooms(p=>[...p,res])
+                                  setRoomForm({siteId:String(auditSelectedSite.id),name:'',description:'',capacity:'',area:'',notes:''})
+                                  setRoomFieldValues({});setEditingRoomId(null)
+                                  void refreshCoreData()
+                                }catch(err){
+                                  setError(err instanceof Error?err.message:'Raum konnte nicht gespeichert werden.')
                                 }
-                                setRoomForm({siteId:String(auditSelectedSite.id),name:'',description:'',capacity:'',area:'',notes:''})
-                                setRoomFieldValues({});setEditingRoomId(null)
-                                void refreshCoreData()
                               }}>{editingRoomId?'Änderungen speichern':'Raum speichern'}</button>
                               {editingRoomId&&<button type="button" className="secondary-button" onClick={()=>{setEditingRoomId(null);setRoomForm({siteId:'1',name:'',description:'',capacity:'',area:'',notes:''});setRoomFieldValues({})}}>Abbrechen</button>}
                             </div>
@@ -2510,8 +2666,8 @@ function App() {
                                       effectiveGroundData[f.name] = defaultValue
                                     }
                                   })
-                                  const updated = await apiRequest<Site>(`/api/standorte/${auditSelectedSite.id}/grounddata`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groundDataJson:JSON.stringify(effectiveGroundData)})})
-                                  setSites(p=>p.map(s=>s.id===updated.id?updated:s))
+                                  const updated = await apiRequest<Site>(`/api/standorte/${auditSelectedSite.id}/grounddata`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({groundDataJson:JSON.stringify(effectiveGroundData),expectedVersion:auditSelectedSite.version})})
+                                  setSites(p=>p.map(s=>s.id===updated.id?{...updated,roomCount:s.roomCount,auditCount:s.auditCount}:s))
                                   setAuditSelectedSite(updated)
                                   void refreshCoreData()
                                 }catch(err){
@@ -2668,7 +2824,7 @@ function App() {
                     {[...sites].filter(s=>s.categoryId===datenablageCategory.id).sort((a,b)=>a.name.localeCompare(b.name)).map(site=>(
                       <button key={site.id} type="button" className="list-item" onClick={()=>{setDatenablageSite(site);setDatenablageView('standort');setDatenablageTab('raume')}}>
                         <span className="list-icon">🏢</span><span className="list-name">{site.name}</span>
-                        <span className="list-meta">{rooms.filter(r=>r.siteId===site.id&&r.auditId===0).length} Räume · {audits.filter(a=>a.siteId===site.id).length} Audits</span>
+                        <span className="list-meta">{site.roomCount ?? rooms.filter(r=>r.siteId===site.id&&r.auditId===0).length} Räume · {audits.filter(a=>a.siteId===site.id).length} Audits</span>
                         <span className="list-arrow">›</span>
                       </button>
                     ))}
@@ -2915,7 +3071,7 @@ function App() {
             <section className="panel">
               <div className="page-header"><h3>Standorte</h3></div>
               {editingSite ? (
-                <form className="form-card" onSubmit={async e=>{e.preventDefault();if(!session)return;const res=await apiRequest<Site>(`/api/standorte/${editingSite.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({categoryId:editingSite.categoryId,name:editingSite.name,address:editingSite.address,phone:editingSite.phone,caretakerPhone:editingSite.caretakerPhone})});setSites(p=>p.map(s=>s.id===res.id?res:s));setEditingSite(null)}}>
+                <form className="form-card" onSubmit={async e=>{e.preventDefault();if(!session)return;try{const res=await apiRequest<Site>(`/api/standorte/${editingSite.id}`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({categoryId:editingSite.categoryId,name:editingSite.name,address:editingSite.address,phone:editingSite.phone,caretakerPhone:editingSite.caretakerPhone,expectedVersion:editingSite.version})});setSites(p=>p.map(s=>s.id===res.id?{...res,roomCount:s.roomCount,auditCount:s.auditCount}:s));setEditingSite(null)}catch(err){setError(err instanceof Error?err.message:'Standort konnte nicht gespeichert werden.')}}}>
                   <h4>Standort bearbeiten</h4>
                   <div className="form-grid">
                     <label>Kategorie<select value={editingSite.categoryId} onChange={e=>setEditingSite(p=>p?{...p,categoryId:parseInt(e.target.value)}:p)}>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
@@ -3302,6 +3458,8 @@ function App() {
                 <form className="form-card" onSubmit={async e=>{
                   e.preventDefault()
                   if (!session) return
+                  const validation = InputValidator.validatePassword(newUserForm.password)
+                  if (!validation.valid) { setError(validation.error ?? 'Ungültiges Passwort.'); return }
                   try {
                     const res = await apiRequest<{user:User}>('/api/users', session, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userName:newUserForm.userName,displayName:newUserForm.displayName,password:newUserForm.password,role:newUserForm.role})})
                     setUsers(p=>[...p,res.user])
@@ -3313,9 +3471,12 @@ function App() {
                   <div className="form-grid">
                     <label>Benutzername<input value={newUserForm.userName} onChange={e=>setNewUserForm(p=>({...p,userName:e.target.value}))} placeholder="benutzername" required /></label>
                     <label>Anzeigename<input value={newUserForm.displayName} onChange={e=>setNewUserForm(p=>({...p,displayName:e.target.value}))} placeholder="Vor- und Nachname" required /></label>
-                    <label>Passwort<input type="password" value={newUserForm.password} onChange={e=>setNewUserForm(p=>({...p,password:e.target.value}))} placeholder="Mindestens 8 Zeichen" required /></label>
+                    <label>Passwort<input type="password" autoComplete="new-password" value={newUserForm.password} onChange={e=>setNewUserForm(p=>({...p,password:e.target.value}))} placeholder="Mind. 8 Zeichen, Groß-/Kleinbuchstabe und Ziffer" required /></label>
                     <label>Rolle<select value={newUserForm.role} onChange={e=>setNewUserForm(p=>({...p,role:e.target.value}))}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option>{activeSession.user.role==='Superadmin'&&<option>Superadmin</option>}</select></label>
                   </div>
+                  {newUserForm.password&&!InputValidator.validatePassword(newUserForm.password).valid&&(
+                    <p style={{color:'var(--danger,#ef4444)',fontSize:'0.82rem',marginTop:'4px'}}>{InputValidator.validatePassword(newUserForm.password).error}</p>
+                  )}
                   <button type="submit" className="primary-button">Benutzer anlegen</button>
                 </form>
               )}
@@ -3333,18 +3494,40 @@ function App() {
                   <div className="form-grid">
                     <label>Anzeigename<input value={editingUser.displayName} onChange={e=>setEditingUser(p=>p?{...p,displayName:e.target.value}:p)} /></label>
                     <label>Rolle<select value={editingUser.role} onChange={e=>setEditingUser(p=>p?{...p,role:e.target.value}:p)}><option>Benutzer</option>{activeSession.user.role==='Superadmin'&&<option>Admin</option>}<option>Azubi</option>{activeSession.user.role==='Superadmin'&&<option>Superadmin</option>}</select></label>
-                    <label className="full-width">Passwort zurücksetzen (leer lassen = keine Änderung)
-                      <input type="password" id="resetPwInput" placeholder="Neues Passwort eingeben..." onBlur={async e=>{
-                        const pw=e.target.value
-                        if (pw.length>=8&&session) {
-                          try { await apiRequest(`/api/users/${editingUser.id}/password`,session,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({newPassword:pw})}); e.target.value=''; e.target.placeholder='✓ Passwort gesetzt' } catch { setError('Passwort konnte nicht gesetzt werden.') }
-                        }
-                      }} />
-                    </label>
                   </div>
                   <div style={{display:'flex',gap:'8px'}}>
                     <button type="submit" className="primary-button">Änderungen speichern</button>
                     <button type="button" className="secondary-button" onClick={()=>setEditingUser(null)}>Abbrechen</button>
+                  </div>
+                  <div className="form-card" style={{marginTop:'16px',background:'rgba(0,0,0,0.12)'}}>
+                    <h4>Passwort zurücksetzen</h4>
+                    <div className="form-grid">
+                      <label>Neues Passwort
+                        <input
+                          type={resetPasswordForm.showPassword?'text':'password'}
+                          autoComplete="new-password"
+                          placeholder="Mind. 8 Zeichen, Groß-/Kleinbuchstabe und Ziffer"
+                          value={resetPasswordForm.password}
+                          onChange={e=>setResetPasswordForm(p=>({...p,password:e.target.value}))}
+                        />
+                      </label>
+                      <label>Passwort bestätigen
+                        <input
+                          type={resetPasswordForm.showPassword?'text':'password'}
+                          autoComplete="new-password"
+                          placeholder="Passwort wiederholen"
+                          value={resetPasswordForm.confirmPassword}
+                          onChange={e=>setResetPasswordForm(p=>({...p,confirmPassword:e.target.value}))}
+                        />
+                      </label>
+                    </div>
+                    {resetPasswordForm.password&&!InputValidator.validatePassword(resetPasswordForm.password).valid&&(
+                      <p style={{color:'var(--danger,#ef4444)',fontSize:'0.82rem',marginTop:'4px'}}>{InputValidator.validatePassword(resetPasswordForm.password).error}</p>
+                    )}
+                    <div style={{display:'flex',gap:'8px',alignItems:'center',marginTop:'10px'}}>
+                      <button type="button" className="secondary-button" onClick={()=>setResetPasswordForm(p=>({...p,showPassword:!p.showPassword}))}>{resetPasswordForm.showPassword?'🙈 Verbergen':'👁 Anzeigen'}</button>
+                      <button type="button" className="primary-button" disabled={!resetPasswordForm.password} onClick={setUserPassword}>Passwort setzen</button>
+                    </div>
                   </div>
                 </form>
               )}
@@ -3376,6 +3559,7 @@ function App() {
               <div className="page-header"><h3>Datenbankbackup</h3></div>
               <div className="form-card" style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
                 <button type="button" className="primary-button" onClick={createBackup}>💾 Backup jetzt erstellen</button>
+                <button type="button" className="secondary-button" onClick={testScheduledBackup} title="Erstellt sofort ein Backup im automatischen Format, ohne den geplanten Lauf für heute zu beeinflussen.">🧪 Automatisches Backup testen</button>
                 <span style={{color:'var(--muted)',fontSize:'0.88rem'}}>oder</span>
                 <label className="secondary-button" style={{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',padding:'10px 16px'}}>
                   📤 Backup hochladen
@@ -3387,7 +3571,7 @@ function App() {
                       const res = await fetch(`${API_BASE}/api/admin/backups/upload`, {
                         method:'POST', headers:{'Authorization':`Bearer ${session.token}`}, body:formData
                       })
-                      if (res.ok) { const b = await res.json(); setBackups(p=>[b,...p]) }
+                      if (res.ok) { await reloadBackupData() } else { setError('Upload fehlgeschlagen.') }
                     } catch { setError('Upload fehlgeschlagen.') }
                     e.target.value = ''
                   }} />
@@ -3414,6 +3598,10 @@ function App() {
               </table>
               <div className="form-card" style={{marginTop:'20px'}}>
                 <h4>Automatische Backups</h4>
+                <label style={{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',marginBottom:'12px'}}>
+                  <input type="checkbox" checked={backupSchedule.enabled} onChange={e=>setBackupSchedule(p=>({...p,enabled:e.target.checked}))} />
+                  Automatische Backups aktiviert
+                </label>
                 <div className="form-grid">
                   <label>Uhrzeit<input type="time" value={backupSchedule.time} onChange={e=>setBackupSchedule(p=>({...p,time:e.target.value}))} /></label>
                   <label>Max. gespeicherte Backups<input type="number" min="1" max="100" value={backupSchedule.maxBackups} onChange={e=>setBackupSchedule(p=>({...p,maxBackups:parseInt(e.target.value)||10}))} /></label>
@@ -3427,6 +3615,10 @@ function App() {
                       </label>
                     ))}
                   </div>
+                </div>
+                <div style={{marginTop:'12px',color:'var(--muted)',fontSize:'0.85rem',display:'flex',flexDirection:'column',gap:'4px'}}>
+                  <span>Zuletzt ausgeführt: {backupSchedule.lastRunUtc?new Date(backupSchedule.lastRunUtc).toLocaleString('de-DE'):'noch nie'}</span>
+                  <span>Nächste geplante Ausführung: {backupSchedule.nextRunBerlin?new Date(backupSchedule.nextRunBerlin).toLocaleString('de-DE')+' (Berliner Zeit)':'keine (deaktiviert oder keine Wochentage gewählt)'}</span>
                 </div>
                 <button type="button" className="primary-button" style={{marginTop:'16px'}} onClick={saveBackupSchedule}>Zeitplan speichern</button>
               </div>
@@ -3544,6 +3736,7 @@ function App() {
                         type="password"
                         value={passwordForm.currentPassword}
                         onChange={(event) => setPasswordForm((previous) => ({ ...previous, currentPassword: event.target.value }))}
+                        autoComplete="current-password"
                         required
                       />
                     </label>
@@ -3554,6 +3747,8 @@ function App() {
                         type="password"
                         value={passwordForm.newPassword}
                         onChange={(event) => setPasswordForm((previous) => ({ ...previous, newPassword: event.target.value }))}
+                        autoComplete="new-password"
+                        placeholder="Mind. 8 Zeichen, Groß-/Kleinbuchstabe und Ziffer"
                         required
                       />
                     </label>
@@ -3564,10 +3759,14 @@ function App() {
                         type="password"
                         value={passwordForm.confirmPassword}
                         onChange={(event) => setPasswordForm((previous) => ({ ...previous, confirmPassword: event.target.value }))}
+                        autoComplete="new-password"
                         required
                       />
                     </label>
                   </div>
+                  {passwordForm.newPassword&&!InputValidator.validatePassword(passwordForm.newPassword).valid&&(
+                    <p style={{color:'var(--danger,#ef4444)',fontSize:'0.82rem',marginTop:'4px'}}>{InputValidator.validatePassword(passwordForm.newPassword).error}</p>
+                  )}
                   <button type="submit" className="primary-button">Passwort aktualisieren</button>
                 </form>
               )}
@@ -3592,7 +3791,7 @@ function App() {
               onTouchMove={galleryTouchMove}
               onTouchEnd={galleryTouchEnd}
             >
-              <img
+              <AuthImage
                 src={galleryModalImages[galleryModalIndex]}
                 alt=""
                 draggable={false}

@@ -1,75 +1,85 @@
-using System.Text.Json;
-
+// fix010 Schritt 5a: Nutzt jetzt denselben AppDatabase-Zugriffsweg (Tabelle app_state, Spalte "payload")
+// wie alle anderen Collections, statt einer eigenen, falsch benannten Spalte ("value" existiert dort gar
+// nicht) in einer separaten Verbindung. Fehler werden geloggt statt stillschweigend verschluckt;
+// UpdateSchedule wirft bei einem Speicherfehler eine Exception, damit der aufrufende Endpunkt dem Frontend
+// einen echten Fehler statt eines scheinbaren Erfolgs meldet.
 public class BackupScheduleStore
 {
-    private readonly string dbPath = Path.Combine(Directory.GetCurrentDirectory(), "storage", "audit-tool.db");
-    private BackupSchedule? schedule;
+    private readonly AppDatabase _database;
+    private readonly ILogger<BackupScheduleStore> _logger;
+    // fix010 Schritt 4a: Schützt die Zeitplan-Instanz vor gleichzeitigem Lesen (BackupService prüft jede
+    // Minute) und Schreiben (Admin speichert Änderungen / BackupService aktualisiert LastRunUtc).
+    private readonly object _lock = new();
+    private BackupSchedule _schedule;
 
-    public BackupScheduleStore()
+    public BackupScheduleStore(AppDatabase database, ILogger<BackupScheduleStore> logger)
     {
-        LoadSchedule();
+        _database = database;
+        _logger = logger;
+        _schedule = LoadSchedule();
     }
 
-    private void LoadSchedule()
+    private BackupSchedule LoadSchedule()
     {
-        if (!File.Exists(dbPath))
-        {
-            schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
-            return;
-        }
-
         try
         {
-            var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}");
-            connection.Open();
-
-            var command = connection.CreateCommand();
-            command.CommandText = "SELECT value FROM app_state WHERE key = 'backup_schedule'";
-
-            using var reader = command.ExecuteReader();
-            if (reader.Read())
-            {
-                var json = reader.GetString(0);
-                schedule = JsonSerializer.Deserialize<BackupSchedule>(json);
-            }
-            else
-            {
-                schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
-            }
-
-            connection.Close();
+            return _database.Load("backup_schedule", CreateDefaultSchedule());
         }
-        catch
+        catch (Exception ex)
         {
-            schedule = new BackupSchedule { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
+            _logger.LogError(ex, "Backup-Zeitplan konnte nicht geladen werden - verwende Standardwerte.");
+            return CreateDefaultSchedule();
         }
     }
 
-    public BackupSchedule? GetSchedule()
+    private static BackupSchedule CreateDefaultSchedule() =>
+        new() { Id = 1, Enabled = false, Time = new TimeOnly(2, 0), Days = Array.Empty<string>(), MaxBackups = 10 };
+
+    public BackupSchedule GetSchedule()
     {
-        return schedule;
+        lock (_lock)
+        {
+            return _schedule;
+        }
     }
 
     public void UpdateSchedule(BackupSchedule newSchedule)
     {
-        schedule = newSchedule;
-        schedule.UpdatedAtUtc = DateTime.UtcNow;
-
-        try
+        lock (_lock)
         {
-            var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}");
-            connection.Open();
+            newSchedule.UpdatedAtUtc = DateTime.UtcNow;
+            // LastRunUtc wird ausschließlich vom BackupService gepflegt (siehe UpdateLastRun) - ein vom
+            // Frontend übermittelter Zeitplan darf diesen Wert nicht überschreiben.
+            newSchedule.LastRunUtc = _schedule.LastRunUtc;
 
-            var command = connection.CreateCommand();
-            command.CommandText = "INSERT OR REPLACE INTO app_state (key, value) VALUES ('backup_schedule', @value)";
-            command.Parameters.AddWithValue("@value", JsonSerializer.Serialize(schedule));
-            command.ExecuteNonQuery();
+            try
+            {
+                _database.Save("backup_schedule", newSchedule);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Backup-Zeitplan konnte nicht gespeichert werden.");
+                throw;
+            }
 
-            connection.Close();
+            _schedule = newSchedule;
         }
-        catch
+    }
+
+    // Wird vom BackupService direkt nach einem tatsächlich ausgeführten automatischen Backup aufgerufen.
+    public void UpdateLastRun(DateTime utcTimestamp)
+    {
+        lock (_lock)
         {
-            // Silent fail
+            _schedule.LastRunUtc = utcTimestamp;
+            try
+            {
+                _database.Save("backup_schedule", _schedule);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Zeitpunkt des letzten automatischen Backups konnte nicht gespeichert werden.");
+            }
         }
     }
 }

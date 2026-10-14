@@ -9,6 +9,7 @@ using iText.Layout.Element;
 using iText.Layout.Properties;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Data.Sqlite;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -19,11 +20,38 @@ var jwtKey = builder.Configuration["Jwt:Key"] ?? "AuditTool-Dev-Key-Change-me-in
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "audit-tool";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "audit-tool-clients";
 
+// fix010-Nachbesserung: Kestrels Standard-Obergrenze fuer Request-Bodies liegt bei nur 30.000.000
+// Bytes (~28,6 MB), die separate Multipart-Formular-Obergrenze bei 128 MB - beides reichte nicht
+// aus, um ein reales Backup (Datenbank + ausgelagerte Mediendateien) hochzuladen, das durchaus
+// mehrere hundert MB gross werden kann. Beide Limits werden daher grosszuegig auf 1 GB angehoben
+// (Endpunkt ist ohnehin ueber RequireAdminAccess abgesichert); das nginx-client_max_body_size-Limit
+// im Reverse-Proxy wurde passend mit angehoben (siehe audittool/nginx.conf).
+const long MaxUploadBodyBytes = 1024L * 1024 * 1024;
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = MaxUploadBodyBytes;
+});
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = MaxUploadBodyBytes;
+});
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 builder.Services.AddAntiforgery();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
+
+// fix010 Schritt 3a: Server-seitige Kompression (Brotli bevorzugt, Gzip als Fallback) fuer alle
+// Antworten inkl. JSON ueber HTTPS aktivieren - bei nur 8 Mbit/s geteilter Bandbreite senkt das
+// den uebertragenen Umfang der (teils noch recht grossen) JSON-Listen erheblich.
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
+});
 
 builder.Services.AddCors(options =>
 {
@@ -87,25 +115,42 @@ var storageDirectory = Path.Combine(builder.Environment.ContentRootPath, "..", "
 var backupDirectory = Path.Combine(storageDirectory, "backups");
 var uploadDirectory = Path.Combine(storageDirectory, "uploads");
 var documentsDirectory = Path.Combine(storageDirectory, "documents");
+var mediaDirectory = Path.Combine(storageDirectory, "media");
 Directory.CreateDirectory(storageDirectory);
 Directory.CreateDirectory(backupDirectory);
 Directory.CreateDirectory(uploadDirectory);
 Directory.CreateDirectory(documentsDirectory);
+MediaStore.Initialize(mediaDirectory);
 
 var appDatabase = new AppDatabase(Path.Combine(storageDirectory, "audit-tool.db"));
 var userStore = new UserStore(appDatabase);
 var auditStore = new AuditStore(appDatabase);
 
+// Einmalige, idempotente Migration: löst noch eingebettete Base64-Bilder (alte "data:image/..."-Werte)
+// aus allen Datensätzen heraus in echte Dateien unter storage/media auf. Läuft bei jedem Start erneut
+// (sehr günstig, wenn nichts zu tun ist) und wird zusätzlich nach jedem Backup-Restore erneut
+// aufgerufen (siehe BackupStore.Restore) - so bleiben auch ältere, noch nicht migrierte Backups nach
+// dem Wiederherstellen jederzeit lauffähig und werden automatisch auf das neue Format gehoben.
+var migratedImageCount = auditStore.MigrateEmbeddedMedia(Path.Combine(storageDirectory, "audit-tool.db"), storageDirectory);
+if (migratedImageCount > 0)
+{
+    Console.WriteLine($"Medien-Migration: {migratedImageCount} eingebettete Bild(er) nach storage/media ausgelagert.");
+}
+
 builder.Services.AddSingleton(appDatabase);
 builder.Services.AddSingleton(userStore);
 builder.Services.AddSingleton(auditStore);
-builder.Services.AddSingleton(new BackupStore(backupDirectory, uploadDirectory, documentsDirectory, storageDirectory, appDatabase, userStore, auditStore));
+builder.Services.AddSingleton(new BackupStore(backupDirectory, uploadDirectory, documentsDirectory, mediaDirectory, storageDirectory, appDatabase, userStore, auditStore));
 builder.Services.AddSingleton<BackupScheduleStore>();
 builder.Services.AddSingleton(new RefreshTokenStore(storageDirectory));
 builder.Services.AddSingleton(new AuditLogger(storageDirectory));
 builder.Services.AddHostedService<BackupService>();
 
 var app = builder.Build();
+
+// fix010 Schritt 3a: Muss vor allen anderen Middleware-Aufrufen stehen, damit auch frueh
+// generierte Antworten (z.B. Fehlerseiten) komprimiert werden koennen.
+app.UseResponseCompression();
 
 app.UseExceptionHandler();
 
@@ -145,6 +190,25 @@ static int ResolveUserId(HttpContext httpContext)
     }
 
     return 0;
+}
+
+// fix010 Schritt 2: Liefert Listen-Endpunkte mit einem auf AuditStore.DataVersion basierenden
+// ETag aus. Stimmt der vom Client gesendete If-None-Match-Header mit dem aktuellen Datenstand
+// ueberein, wird nur "304 Not Modified" ohne Body zurueckgegeben - der Browser nutzt dann seine
+// zwischengespeicherte Antwort weiter, was bei wiederholten Seitenwechseln ohne fremde Aenderungen
+// fast die gesamte Bandbreite fuer diese Anfrage einspart. Grobkoernig (ein Zaehler fuer alle
+// Collections statt pro Collection), aber korrekt: jede Aenderung irgendwo invalidiert den Cache.
+static IResult ETagResult(HttpContext httpContext, AuditStore store, Func<object> dataFactory)
+{
+    var etag = $"\"{store.DataVersion}\"";
+    httpContext.Response.Headers.ETag = etag;
+    httpContext.Response.Headers.CacheControl = "private, no-cache";
+    if (httpContext.Request.Headers.IfNoneMatch.ToString() == etag)
+    {
+        return Results.StatusCode(StatusCodes.Status304NotModified);
+    }
+
+    return Results.Ok(dataFactory());
 }
 
 app.MapPost("/api/auth/login", (LoginRequest request, UserStore users, RefreshTokenStore refreshTokens) =>
@@ -212,18 +276,11 @@ app.MapGet("/api/auth/me", [Authorize] (HttpContext httpContext, UserStore users
     return Results.Ok(new { user = new UserSummary(user.Id, user.UserName, user.DisplayName, user.Role, user.IsActive) });
 });
 
-app.MapGet("/api/dashboard", [Authorize] () => Results.Ok(new
-{
-    title = "Dashboard",
-    widgets = new[]
-    {
-        new { key = "standorte", label = "Standorte", value = 18 },
-        new { key = "audits", label = "Audits", value = 6 },
-        new { key = "bilder", label = "Bilder", value = 142 }
-    }
-}));
+// fix010 Schritt 8b: /api/dashboard lieferte nur hartcodierte Platzhalterzahlen (18 Standorte, 6 Audits,
+// 142 Bilder) und wird vom Frontend nirgends aufgerufen - toter Endpunkt mit irreführenden Fake-Daten,
+// daher entfernt statt mit echten Zählern nachzurüsten (kein tatsächlicher Bedarf vorhanden).
 
-app.MapGet("/api/categories", [Authorize] (AuditStore store) => Results.Ok(store.Categories));
+app.MapGet("/api/categories", [Authorize] (AuditStore store, HttpContext httpContext) => ETagResult(httpContext, store, () => store.Categories));
 app.MapPost("/api/categories", [Authorize(Policy = "RequireAdminAccess")] async (CreateCategoryRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name))
@@ -256,7 +313,16 @@ app.MapDelete("/api/categories/{id:int}", [Authorize(Policy = "RequireAdminAcces
     return Results.Ok(new { message = "Kategorie gelöscht." });
 });
 
-app.MapGet("/api/standorte", [Authorize] (AuditStore store) => Results.Ok(store.Sites));
+app.MapGet("/api/standorte", [Authorize] (AuditStore store, HttpContext httpContext) => ETagResult(httpContext, store, () => store.Sites.Select(s => new SiteSummary(
+    s.Id, s.CategoryId, s.Name, s.Address, s.Phone, s.CaretakerPhone, s.Active, s.Version,
+    store.Rooms.Count(r => r.SiteId == s.Id && r.AuditId == 0),
+    store.Audits.Count(a => a.SiteId == s.Id)
+)).ToList()));
+app.MapGet("/api/standorte/{id:int}", [Authorize] (AuditStore store, int id) =>
+{
+    var site = store.Sites.FirstOrDefault(s => s.Id == id);
+    return site is null ? Results.NotFound() : Results.Ok(site);
+});
 app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] async (CreateSiteRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name) || request.CategoryId <= 0)
@@ -271,14 +337,23 @@ app.MapPost("/api/standorte", [Authorize(Policy = "RequireAdminAccess")] async (
 
 app.MapPut("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")] async (int id, UpdateSiteRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
-    var updated = store.UpdateSite(
-        id,
-        request.CategoryId,
-        request.Name ?? string.Empty,
-        request.Address ?? string.Empty,
-        request.Phone ?? string.Empty,
-        request.CaretakerPhone ?? string.Empty,
-        request.GroundDataJson);
+    AuditSite? updated;
+    try
+    {
+        updated = store.UpdateSite(
+            id,
+            request.CategoryId,
+            request.Name ?? string.Empty,
+            request.Address ?? string.Empty,
+            request.Phone ?? string.Empty,
+            request.CaretakerPhone ?? string.Empty,
+            request.GroundDataJson,
+            request.ExpectedVersion);
+    }
+    catch (VersionConflictException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
     if (updated is null)
     {
         return Results.NotFound();
@@ -290,7 +365,15 @@ app.MapPut("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess")]
 
 app.MapPut("/api/standorte/{id:int}/grounddata", [Authorize] async (int id, UpdateGroundDataRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
-    var updated = store.UpdateSiteGroundData(id, request.GroundDataJson ?? "{}");
+    AuditSite? updated;
+    try
+    {
+        updated = store.UpdateSiteGroundData(id, request.GroundDataJson ?? "{}", request.ExpectedVersion);
+    }
+    catch (VersionConflictException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
     if (updated is null)
     {
         return Results.NotFound();
@@ -308,7 +391,7 @@ app.MapDelete("/api/standorte/{id:int}", [Authorize(Policy = "RequireAdminAccess
     return Results.Ok(new { message = "Standort gelöscht." });
 });
 
-app.MapGet("/api/templates", [Authorize] (AuditStore store) => Results.Ok(store.Templates));
+app.MapGet("/api/templates", [Authorize] (AuditStore store, HttpContext httpContext) => ETagResult(httpContext, store, () => store.Templates));
 app.MapPost("/api/templates", [Authorize(Policy = "RequireAdminAccess")] async (CreateTemplateRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name))
@@ -346,7 +429,7 @@ app.MapDelete("/api/templates/{id:int}", [Authorize(Policy = "RequireAdminAccess
     return Results.Ok(new { message = "Vorlage gelöscht." });
 });
 
-app.MapGet("/api/rooms", [Authorize] (AuditStore store, int? siteId, int? auditId, bool? all) =>
+app.MapGet("/api/rooms", [Authorize] (AuditStore store, HttpContext httpContext, int? siteId, int? auditId, bool? all) =>
 {
     IEnumerable<AuditRoom> query = store.Rooms;
     if (siteId.HasValue) query = query.Where(room => room.SiteId == siteId.Value);
@@ -361,7 +444,7 @@ app.MapGet("/api/rooms", [Authorize] (AuditStore store, int? siteId, int? auditI
         // Historical per-audit snapshots are only shown when explicitly requested (auditId=... or all=true).
         query = query.Where(room => room.AuditId == 0);
     }
-    return Results.Ok(query.ToList());
+    return ETagResult(httpContext, store, () => query.ToList());
 });
 app.MapPost("/api/rooms", [Authorize] async (CreateRoomRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
@@ -377,7 +460,15 @@ app.MapPost("/api/rooms", [Authorize] async (CreateRoomRequest request, AuditSto
 
 app.MapPut("/api/rooms/{roomId:int}", [Authorize] async (int roomId, CreateRoomRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
-    var updated = store.UpdateRoom(roomId, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty, request.FieldsJson ?? "{}");
+    AuditRoom? updated;
+    try
+    {
+        updated = store.UpdateRoom(roomId, request.Name ?? string.Empty, request.Description ?? string.Empty, request.Capacity ?? string.Empty, request.Area ?? string.Empty, request.Notes ?? string.Empty, request.FieldsJson ?? "{}", request.ExpectedVersion);
+    }
+    catch (VersionConflictException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
     if (updated is null)
     {
         return Results.NotFound();
@@ -509,7 +600,12 @@ app.MapDelete("/api/objects/{objectId:int}/images/{imageName}", [Authorize] (int
     }
 });
 
-app.MapGet("/api/audits", [Authorize] (AuditStore store) => Results.Ok(store.Audits.Select(audit => new AuditInstanceSummary(audit.Id, audit.SiteId, audit.Title, audit.TemplateId, audit.TemplateName, audit.CreatedBy, audit.CreatedAtUtc, audit.Status, audit.ChecklistEntries.Count())).ToList()));
+app.MapGet("/api/audits", [Authorize] (AuditStore store, HttpContext httpContext, int? siteId) =>
+{
+    IEnumerable<AuditInstance> query = store.Audits;
+    if (siteId.HasValue) query = query.Where(audit => audit.SiteId == siteId.Value);
+    return ETagResult(httpContext, store, () => query.Select(audit => new AuditInstanceSummary(audit.Id, audit.SiteId, audit.Title, audit.TemplateId, audit.TemplateName, audit.CreatedBy, audit.CreatedAtUtc, audit.Status, audit.ChecklistEntries.Count())).ToList());
+});
 app.MapPost("/api/audits", [Authorize] (CreateAuditRequest request, AuditStore store, HttpContext httpContext) =>
 {
     if (request.SiteId <= 0 || request.TemplateId <= 0 || string.IsNullOrWhiteSpace(request.Title))
@@ -619,7 +715,7 @@ app.MapPut("/api/audits/{auditId:int}/checklist/{entryId:int}", [Authorize] (Aud
 });
 
 // PDF Designs
-app.MapGet("/api/pdfdesigns", [Authorize] (AuditStore store) => Results.Ok(store.PdfDesigns));
+app.MapGet("/api/pdfdesigns", [Authorize] (AuditStore store, HttpContext httpContext) => ETagResult(httpContext, store, () => store.PdfDesigns));
 app.MapGet("/api/pdfdesigns/{id:int}", [Authorize] (AuditStore store, int id) =>
 {
     var design = store.PdfDesigns.FirstOrDefault(d => d.Id == id);
@@ -657,7 +753,7 @@ app.MapDelete("/api/pdfdesigns/{id:int}", [Authorize(Policy = "RequireAdminAcces
 });
 
 // Checkliste Templates
-app.MapGet("/api/checklisttemplates", [Authorize] (AuditStore store) => Results.Ok(store.ChecklistTemplates));
+app.MapGet("/api/checklisttemplates", [Authorize] (AuditStore store, HttpContext httpContext) => ETagResult(httpContext, store, () => store.ChecklistTemplates));
 app.MapPost("/api/checklisttemplates", [Authorize(Policy = "RequireAdminAccess")] async (AuditStore store, CreateChecklistTemplateRequest request, AuditLogger logger, HttpContext httpContext) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name)) return Results.BadRequest(new { message = "Name erforderlich." });
@@ -826,6 +922,58 @@ app.MapPost("/api/documents/upload", [Authorize] async (HttpRequest request, Aud
     return Results.Ok(document);
 });
 
+// Nimmt ein (optional zusätzlich ein verkleinertes Thumbnail-) Bild entgegen und speichert es unter
+// storage/media, statt es wie bisher als Base64 direkt im Feldwert einzubetten. Antwort enthält die
+// URL(s), die der Client anschließend im jeweiligen Datensatz-Feld speichert.
+app.MapPost("/api/media", [Authorize] async (HttpRequest request) =>
+{
+    if (!request.HasFormContentType) return Results.BadRequest(new { message = "Multipart-Formular erwartet." });
+
+    var form = await request.ReadFormAsync();
+    var file = form.Files.GetFile("file");
+    if (file is null || file.Length == 0) return Results.BadRequest(new { message = "Keine Bilddatei hochgeladen." });
+    if (file.Length > 15 * 1024 * 1024) return Results.BadRequest(new { message = "Bild ist zu groß (max. 15 MB)." });
+
+    var extension = file.ContentType.ToLowerInvariant() switch
+    {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/jpeg" or "image/jpg" => "jpg",
+        _ => null
+    };
+    if (extension is null) return Results.BadRequest(new { message = "Nur JPEG, PNG, WebP oder GIF werden unterstützt." });
+
+    using var mainStream = new MemoryStream();
+    await file.CopyToAsync(mainStream);
+
+    byte[]? thumbBytes = null;
+    var thumbFile = form.Files.GetFile("thumb");
+    if (thumbFile is not null && thumbFile.Length > 0)
+    {
+        using var thumbStream = new MemoryStream();
+        await thumbFile.CopyToAsync(thumbStream);
+        thumbBytes = thumbStream.ToArray();
+    }
+
+    var (url, thumbUrl) = MediaStore.SaveUploadedPair(mainStream.ToArray(), extension, thumbBytes);
+    return Results.Ok(new { url, thumbUrl });
+});
+
+// Liefert eine ausgelagerte Mediendatei aus. Name wird strikt gegen das erwartete GUID-Namensschema
+// geprüft (siehe MediaStore.IsValidMediaName), um Path-Traversal/beliebigen Dateizugriff auszuschließen.
+// Bilder ändern sich unter einem einmal vergebenen Namen nie wieder (neue Uploads bekommen immer einen
+// neuen Namen) - daher ist ein sehr langes, unveränderliches Cache-Intervall sicher.
+app.MapGet("/api/media/{name}", [Authorize] (string name, HttpContext httpContext) =>
+{
+    if (!MediaStore.IsValidMediaName(name)) return Results.NotFound();
+    var fullPath = Path.Combine(mediaDirectory, name);
+    if (!File.Exists(fullPath)) return Results.NotFound();
+
+    httpContext.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+    return Results.File(fullPath, MediaStore.ContentTypeFor(name));
+});
+
 app.MapPut("/api/documents/{id:int}", [Authorize] async (int id, UpdateDocumentRequest request, AuditStore store, AuditLogger logger, HttpContext httpContext) =>
 {
     var document = store.UpdateDocument(id, request.Title?.Trim(), request.FolderId, request.IsArchived);
@@ -899,6 +1047,14 @@ app.MapPost("/api/users", [Authorize(Policy = "RequireAdminAccess")] async (Crea
         return Results.BadRequest(new { message = "Benutzername und Passwort sind erforderlich." });
     }
 
+    // fix010 Schritt 6a: Zentrale Passwortregel (8-128 Zeichen, Groß-/Kleinbuchstabe, Ziffer) jetzt
+    // auch hier - vorher wurde hier überhaupt nicht validiert.
+    var passwordValidation = InputValidator.ValidatePassword(request.Password);
+    if (!passwordValidation.isValid)
+    {
+        return Results.BadRequest(new { message = passwordValidation.error });
+    }
+
     var validRoles = new[] { "Superadmin", "Admin", "Benutzer", "Azubi" };
     if (!validRoles.Contains(request.Role, StringComparer.OrdinalIgnoreCase))
     {
@@ -963,6 +1119,13 @@ app.MapPut("/api/users/{userId:int}/password", [Authorize(Policy = "RequireAdmin
         return Results.BadRequest(new { message = "Neues Passwort ist erforderlich." });
     }
 
+    // fix010 Schritt 6a: Zentrale Passwortregel - vorher wurde hier (Admin-Reset) überhaupt nicht validiert.
+    var passwordValidation = InputValidator.ValidatePassword(request.NewPassword);
+    if (!passwordValidation.isValid)
+    {
+        return Results.BadRequest(new { message = passwordValidation.error });
+    }
+
     var requesterRole = httpContext.User.FindFirstValue(ClaimTypes.Role) ?? "Benutzer";
     var targetUser = users.GetById(userId);
     if (targetUser is null)
@@ -1000,9 +1163,11 @@ app.MapPut("/api/users/{userId:int}/change-password", [Authorize] (int userId, C
         return Results.BadRequest(new { message = "Aktuelles Passwort ist nicht korrekt." });
     }
 
-    if (request.NewPassword.Length < 8)
+    // fix010 Schritt 6a: Zentrale Passwortregel statt der bisherigen reinen Längenprüfung (>= 8).
+    var passwordValidation = InputValidator.ValidatePassword(request.NewPassword);
+    if (!passwordValidation.isValid)
     {
-        return Results.BadRequest(new { message = "Das neue Passwort muss mindestens 8 Zeichen lang sein." });
+        return Results.BadRequest(new { message = passwordValidation.error });
     }
 
     users.UpdatePassword(userId, request.NewPassword);
@@ -1166,7 +1331,7 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
                 // Alle nicht-Bild-Feldnamen über alle Räume sammeln, für eine einheitliche CSV-Kopfzeile.
                 var textFieldNames = roomFields
                     .SelectMany(x => x.Fields)
-                    .Where(kv => !kv.Value.Contains("data:image", StringComparison.OrdinalIgnoreCase))
+                    .Where(kv => !MediaStore.LooksLikeImageValue(kv.Value))
                     .Select(kv => kv.Key)
                     .Distinct()
                     .ToList();
@@ -1203,7 +1368,7 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
                     var roomImageFolder = $"{siteFolder}/{BackupStore.SanitizeFileName(room.Name)}";
                     foreach (var (key, value) in fields)
                     {
-                        if (string.IsNullOrWhiteSpace(value) || !value.Contains("data:image", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (string.IsNullOrWhiteSpace(value) || !MediaStore.LooksLikeImageValue(value)) continue;
                         var images = value.Split("||", StringSplitOptions.RemoveEmptyEntries);
                         for (var i = 0; i < images.Length; i++)
                         {
@@ -1237,7 +1402,21 @@ app.MapGet("/api/admin/export/zip", [Authorize(Policy = "RequireAdminAccess")] (
 app.MapGet("/api/admin/backup-schedule", [Authorize(Policy = "RequireAdminAccess")] (BackupScheduleStore scheduleStore) =>
 {
     var schedule = scheduleStore.GetSchedule();
-    return Results.Ok(schedule);
+    var nowBerlin = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BackupService.ResolveBerlinTimeZone());
+    var nextRunBerlin = BackupService.ComputeNextRun(schedule, nowBerlin);
+    return Results.Ok(new
+    {
+        schedule.Id,
+        schedule.Enabled,
+        schedule.Time,
+        schedule.Days,
+        schedule.MaxBackups,
+        schedule.CreatedAtUtc,
+        schedule.UpdatedAtUtc,
+        schedule.LastRunUtc,
+        // fix010 Schritt 5f: Für die Anzeige im Admin-UI - unspecified/lokal zu verstehen als Berliner Zeit.
+        nextRunBerlin
+    });
 });
 
 app.MapPut("/api/admin/backup-schedule", [Authorize(Policy = "RequireAdminAccess")] (BackupSchedule newSchedule, BackupScheduleStore scheduleStore) =>
@@ -1247,9 +1426,29 @@ app.MapPut("/api/admin/backup-schedule", [Authorize(Policy = "RequireAdminAccess
         newSchedule.Days = Array.Empty<string>();
     }
 
-    scheduleStore.UpdateSchedule(newSchedule);
+    try
+    {
+        scheduleStore.UpdateSchedule(newSchedule);
+    }
+    catch (Exception)
+    {
+        return Results.Problem("Backup-Zeitplan konnte nicht gespeichert werden.", statusCode: StatusCodes.Status500InternalServerError);
+    }
+
     return Results.Ok(new { message = "Backup-Zeitplan aktualisiert.", schedule = scheduleStore.GetSchedule() });
 });
+
+// fix010 Schritt 5f: Erstellt sofort ein Backup im "Automatisch"-Format (gleicher Code-Pfad wie der
+// Zeitplan), damit Admins die automatische Sicherung ohne Warten auf die geplante Uhrzeit testen können.
+// Rührt bewusst NICHT an LastRunUtc, damit ein echter geplanter Lauf am selben Tag dadurch nicht
+// unterdrückt wird.
+app.MapPost("/api/admin/backups/test-schedule", [Authorize(Policy = "RequireAdminAccess")] (BackupStore backups, AuditStore store, BackupScheduleStore scheduleStore) =>
+{
+    var backup = backups.Create(store, isAutomatic: true);
+    backups.ApplyBackupRotation(scheduleStore.GetSchedule().MaxBackups);
+    return Results.Ok(backup);
+});
+
 
 app.Run();
 
@@ -1306,10 +1505,26 @@ public sealed class AppDatabase
         command.ExecuteNonQuery();
     }
 
-    private void EnsureCreated()
+    // War bisher "private" und wurde nur einmal im Konstruktor aufgerufen. Wird jetzt zusätzlich von
+    // BackupStore.Restore() erneut aufgerufen: VACUUM INTO (siehe CreateConsistentSnapshot) erzeugt die
+    // Backup-Momentaufnahme bewusst immer im klassischen Rollback-Journal-Modus (nie im WAL-Modus), daher
+    // wäre die wiederhergestellte Datenbank sonst bis zum nächsten Container-Neustart ohne WAL unterwegs -
+    // mit den in Schritt 4 behobenen Sperrproblemen bei gleichzeitigen Zugriffen mehrerer Nutzer.
+    public void EnsureCreated()
     {
         using var connection = new SqliteConnection(ConnectionString);
         connection.Open();
+
+        using (var pragmaCommand = connection.CreateCommand())
+        {
+            // WAL erlaubt gleichzeitige Lese- und Schreibzugriffe ohne gegenseitige Blockaden (statt des
+            // SQLite-Standardmodus, bei dem ein Schreibvorgang alle Lesevorgänge kurzzeitig sperrt) -
+            // wichtig, da mehrere Request-Threads parallel auf dieselbe Datenbankdatei zugreifen.
+            // busy_timeout lässt SQLite bei einer kurzzeitigen Sperre automatisch bis zu 5s warten statt
+            // sofort mit "database is locked" zu scheitern.
+            pragmaCommand.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+            pragmaCommand.ExecuteNonQuery();
+        }
 
         using var command = connection.CreateCommand();
         command.CommandText = @"
@@ -1317,6 +1532,40 @@ public sealed class AppDatabase
                 key TEXT PRIMARY KEY,
                 payload TEXT NOT NULL
             );";
+        command.ExecuteNonQuery();
+    }
+
+    // Komprimiert die Datenbankdatei physisch (gibt von gelöschten/verkleinerten Zeilen freigewordene
+    // Seiten ans Dateisystem zurück) - wichtig direkt nach der Medien-Migration, da dabei potenziell
+    // viele Megabyte an Base64-Bilddaten aus den JSON-Feldern entfernt werden, SQLite diesen Platz aber
+    // sonst erst bei einem künftigen VACUUM wieder freigibt.
+    public void Vacuum()
+    {
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "VACUUM;";
+        command.ExecuteNonQuery();
+    }
+
+    // fix010 Schritt 5d: Erzeugt an "destinationPath" eine garantiert konsistente 1:1-Kopie der Datenbank
+    // für Backups. Eine einfache Dateikopie der Hauptdatei wäre im WAL-Modus unsicher, weil noch nicht
+    // zurückgeschriebene Änderungen in der begleitenden "-wal"-Datei liegen und bei einer reinen
+    // Dateikopie fehlen würden. "VACUUM INTO" schreibt dagegen eine vollständige, bereits
+    // zusammengeführte Momentaufnahme in eine neue Datei - sicher nutzbar, auch während parallel
+    // weitergeschrieben wird.
+    public void CreateConsistentSnapshot(string destinationPath)
+    {
+        if (File.Exists(destinationPath))
+        {
+            File.Delete(destinationPath);
+        }
+
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "VACUUM INTO @path;";
+        command.Parameters.AddWithValue("@path", destinationPath);
         command.ExecuteNonQuery();
     }
 }
@@ -1349,8 +1598,21 @@ public static class TokenHelper
     }
 }
 
+// fix010 Schritt 2: Wird von Update*-Methoden in AuditStore geworfen, wenn ein mitgeschickter
+// erwarteter Versionsstand nicht mehr mit dem aktuellen Datensatz übereinstimmt (= zwischenzeitlich
+// von jemand anderem geändert). Die jeweiligen Endpunkte fangen das ab und antworten mit 409.
+public sealed class VersionConflictException : Exception
+{
+    public VersionConflictException() : base("Dieser Eintrag wurde zwischenzeitlich von jemand anderem geändert. Bitte laden Sie die Seite neu und übertragen Sie Ihre Änderungen erneut.") { }
+}
+
 public sealed class AuditStore
 {
+    // fix010 Schritt 4a: Alle Lese- und Schreibzugriffe auf die Collections werden ueber diesen Lock
+    // serialisiert (mehrere gleichzeitige Nutzer/Requests sind der Normalfall bei diesem Werkzeug).
+    // Monitor-Locks in C# sind reentrant fuer denselben Thread, daher duerfen gesperrte Methoden
+    // (z.B. Persist) auch aus anderen bereits gesperrten Methoden heraus aufgerufen werden.
+    private readonly object _lock = new();
     private readonly AppDatabase _database;
     private readonly List<AuditCategory> _categories;
     private readonly List<AuditSite> _sites;
@@ -1364,6 +1626,27 @@ public sealed class AuditStore
     private readonly List<AuditDocument> _documents;
     private readonly List<DocumentFolder> _folders;
     private readonly List<ChecklistValue> _checklistValues;
+
+    // fix010 Schritt 4b: Schluessel-Konstanten fuer das gezielte Speichern nur der tatsaechlich
+    // geaenderten Collection(s) statt (wie zuvor) bei jeder Aenderung alle 12 Collections neu zu
+    // schreiben.
+    private const string KeyCategories = "audit_categories";
+    private const string KeySites = "audit_sites";
+    private const string KeyTemplates = "audit_templates";
+    private const string KeyRooms = "audit_rooms";
+    private const string KeyObjects = "audit_objects";
+    private const string KeyAudits = "audit_instances";
+    private const string KeyChecklistEntries = "audit_checklist_entries";
+    private const string KeyPdfDesigns = "pdf_designs";
+    private const string KeyChecklistTemplates = "checklist_templates";
+    private const string KeyDocuments = "audit_documents";
+    private const string KeyFolders = "document_folders";
+    private const string KeyChecklistValues = "checklist_values";
+    private static readonly string[] AllCollectionKeys =
+    {
+        KeyCategories, KeySites, KeyTemplates, KeyRooms, KeyObjects, KeyAudits,
+        KeyChecklistEntries, KeyPdfDesigns, KeyChecklistTemplates, KeyDocuments, KeyFolders, KeyChecklistValues
+    };
 
     public AuditStore(AppDatabase database)
     {
@@ -1398,35 +1681,126 @@ public sealed class AuditStore
         }
     }
 
-    public IReadOnlyList<AuditCategory> Categories => _categories;
-    public IReadOnlyList<AuditSite> Sites => _sites;
-    public IReadOnlyList<AuditTemplate> Templates => _templates;
-    public IReadOnlyList<AuditRoom> Rooms => _rooms;
-    public IReadOnlyList<AuditObject> Objects => _objects;
-    public IReadOnlyList<AuditInstance> Audits => _audits;
-    public IReadOnlyList<AuditDocument> Documents => _documents;
-    public IReadOnlyList<DocumentFolder> Folders => _folders;
-    public IReadOnlyList<ChecklistValue> ChecklistValues => _checklistValues;
-
-    private void Persist()
+    // Löst noch eingebettete Base64-Bilder (data:image/...) in allen relevanten JSON-Feldern (Räume,
+    // Standort-/Audit-Grunddaten, PDF-Design-Konfigurationen, Checklisten-Werte) zu echten Dateien unter
+    // storage/media auf. Rein textbasiert auf dem bereits serialisierten JSON-String - benötigt daher kein
+    // Wissen über die jeweilige innere Struktur und funktioniert unverändert auch für künftig hinzukommende
+    // Felder. Idempotent: Datensätze, die bereits "/api/media/..."-URLs enthalten, werden nicht erneut
+    // angefasst, ein wiederholter Aufruf (z. B. bei jedem Start oder nach einem Restore) ist daher ungefährlich
+    // und meist ein reines No-Op. Legt vor der allerersten echten Migration eine Sicherheitskopie der
+    // Datenbankdatei an (audit-tool.db.pre-media.bak), damit der Ausgangszustand nachträglich prüfbar bleibt.
+    public int MigrateEmbeddedMedia(string databasePath, string storageDirectory)
     {
-        _database.Save("audit_categories", _categories);
-        _database.Save("audit_sites", _sites);
-        _database.Save("audit_templates", _templates);
-        _database.Save("audit_rooms", _rooms);
-        _database.Save("audit_objects", _objects);
-        _database.Save("audit_instances", _audits);
-        _database.Save("audit_checklist_entries", _checklistEntries);
-        _database.Save("pdf_designs", _pdfDesigns);
-        _database.Save("checklist_templates", _checklistTemplates);
-        _database.Save("audit_documents", _documents);
-        _database.Save("document_folders", _folders);
-        _database.Save("checklist_values", _checklistValues);
+        lock (_lock)
+        {
+            var hasAnyEmbeddedImage =
+                _sites.Any(s => s.GroundDataJson.Contains("data:image", StringComparison.OrdinalIgnoreCase)) ||
+                _rooms.Any(r => r.FieldsJson.Contains("data:image", StringComparison.OrdinalIgnoreCase)) ||
+                _audits.Any(a => a.GroundDataJson.Contains("data:image", StringComparison.OrdinalIgnoreCase)) ||
+                _pdfDesigns.Any(p => p.ConfigJson.Contains("data:image", StringComparison.OrdinalIgnoreCase)) ||
+                _checklistValues.Any(c => c.DataJson.Contains("data:image", StringComparison.OrdinalIgnoreCase));
+
+            if (!hasAnyEmbeddedImage)
+            {
+                return 0;
+            }
+
+            var backupPath = databasePath + ".pre-media.bak";
+            if (File.Exists(databasePath) && !File.Exists(backupPath))
+            {
+                try { File.Copy(databasePath, backupPath); } catch { /* best-effort, Migration läuft trotzdem weiter */ }
+            }
+
+            var dedupe = new Dictionary<string, string>();
+            var migratedCount = 0;
+
+            for (var i = 0; i < _sites.Count; i++)
+            {
+                var updated = MediaStore.MigrateEmbeddedImages(_sites[i].GroundDataJson, dedupe, ref migratedCount);
+                if (!ReferenceEquals(updated, _sites[i].GroundDataJson)) _sites[i] = _sites[i] with { GroundDataJson = updated };
+            }
+            for (var i = 0; i < _rooms.Count; i++)
+            {
+                var updated = MediaStore.MigrateEmbeddedImages(_rooms[i].FieldsJson, dedupe, ref migratedCount);
+                if (!ReferenceEquals(updated, _rooms[i].FieldsJson)) _rooms[i] = _rooms[i] with { FieldsJson = updated };
+            }
+            for (var i = 0; i < _audits.Count; i++)
+            {
+                var updated = MediaStore.MigrateEmbeddedImages(_audits[i].GroundDataJson, dedupe, ref migratedCount);
+                if (!ReferenceEquals(updated, _audits[i].GroundDataJson)) _audits[i] = _audits[i] with { GroundDataJson = updated };
+            }
+            for (var i = 0; i < _pdfDesigns.Count; i++)
+            {
+                var updated = MediaStore.MigrateEmbeddedImages(_pdfDesigns[i].ConfigJson, dedupe, ref migratedCount);
+                if (!ReferenceEquals(updated, _pdfDesigns[i].ConfigJson)) _pdfDesigns[i] = _pdfDesigns[i] with { ConfigJson = updated };
+            }
+            for (var i = 0; i < _checklistValues.Count; i++)
+            {
+                var updated = MediaStore.MigrateEmbeddedImages(_checklistValues[i].DataJson, dedupe, ref migratedCount);
+                if (!ReferenceEquals(updated, _checklistValues[i].DataJson)) _checklistValues[i] = _checklistValues[i] with { DataJson = updated };
+            }
+
+            if (migratedCount > 0)
+            {
+                Persist(KeySites, KeyRooms, KeyAudits, KeyPdfDesigns, KeyChecklistValues);
+                try { _database.Vacuum(); } catch { /* best-effort - keine kritische Funktion */ }
+            }
+
+            return migratedCount;
+        }
+    }
+
+    // fix010 Schritt 4a: Getter liefern bewusst Kopien (ToList()) innerhalb des Locks zurück, damit ein
+    // Aufrufer, der die Liste durchläuft, nicht mit einer parallel schreibenden Anfrage kollidiert
+    // (sonst drohen z.B. "Collection was modified"-Ausnahmen bei gleichzeitigem Zugriff).
+    public IReadOnlyList<AuditCategory> Categories { get { lock (_lock) { return _categories.ToList(); } } }
+    public IReadOnlyList<AuditSite> Sites { get { lock (_lock) { return _sites.ToList(); } } }
+    public IReadOnlyList<AuditTemplate> Templates { get { lock (_lock) { return _templates.ToList(); } } }
+    public IReadOnlyList<AuditRoom> Rooms { get { lock (_lock) { return _rooms.ToList(); } } }
+    public IReadOnlyList<AuditObject> Objects { get { lock (_lock) { return _objects.ToList(); } } }
+    public IReadOnlyList<AuditInstance> Audits { get { lock (_lock) { return _audits.ToList(); } } }
+    public IReadOnlyList<AuditDocument> Documents { get { lock (_lock) { return _documents.ToList(); } } }
+    public IReadOnlyList<DocumentFolder> Folders { get { lock (_lock) { return _folders.ToList(); } } }
+    public IReadOnlyList<ChecklistValue> ChecklistValues { get { lock (_lock) { return _checklistValues.ToList(); } } }
+
+    // fix010 Schritt 2: Globaler Änderungszähler über alle Collections hinweg - treibt das ETag der
+    // Listen-Endpunkte. Grobkörnig (eine Änderung irgendwo erhöht ihn), aber korrekt und sehr billig.
+    public int DataVersion { get { lock (_lock) { return _dataVersion; } } }
+    private int _dataVersion = 1;
+
+    // fix010 Schritt 4b: Speichert gezielt nur die übergebenen Collection(s) statt (wie zuvor) bei jeder
+    // Änderung irgendwo alle 12 Collections neu zu schreiben - spart bei häufigen kleinen Änderungen
+    // (z.B. einzelner Raum) unnötige Schreibvorgänge der übrigen, unveränderten Collections.
+    // Ohne Argumente werden (sicherer Standardfall) weiterhin alle Collections gespeichert.
+    private void Persist(params string[] changedCollections)
+    {
+        _dataVersion++;
+        var keys = changedCollections.Length == 0 ? AllCollectionKeys : changedCollections;
+        foreach (var key in keys)
+        {
+            switch (key)
+            {
+                case KeyCategories: _database.Save(key, _categories); break;
+                case KeySites: _database.Save(key, _sites); break;
+                case KeyTemplates: _database.Save(key, _templates); break;
+                case KeyRooms: _database.Save(key, _rooms); break;
+                case KeyObjects: _database.Save(key, _objects); break;
+                case KeyAudits: _database.Save(key, _audits); break;
+                case KeyChecklistEntries: _database.Save(key, _checklistEntries); break;
+                case KeyPdfDesigns: _database.Save(key, _pdfDesigns); break;
+                case KeyChecklistTemplates: _database.Save(key, _checklistTemplates); break;
+                case KeyDocuments: _database.Save(key, _documents); break;
+                case KeyFolders: _database.Save(key, _folders); break;
+                case KeyChecklistValues: _database.Save(key, _checklistValues); break;
+            }
+        }
     }
 
     // Re-reads every collection from the (possibly just restored) database file. Used after a backup restore.
     public void ReloadFromDatabase()
     {
+        lock (_lock)
+        {
         ReplaceAll(_categories, _database.Load("audit_categories", CreateInitialCategories()));
         ReplaceAll(_sites, _database.Load("audit_sites", CreateInitialSites()));
         ReplaceAll(_templates, _database.Load("audit_templates", CreateInitialTemplates()));
@@ -1439,6 +1813,10 @@ public sealed class AuditStore
         ReplaceAll(_documents, _database.Load("audit_documents", new List<AuditDocument>()));
         ReplaceAll(_folders, _database.Load("document_folders", new List<DocumentFolder>()));
         ReplaceAll(_checklistValues, _database.Load("checklist_values", new List<ChecklistValue>()));
+        // fix010 Schritt 2: Nach einem Neuladen (z.B. Restore) alle ETags invalidieren, damit Clients
+        // garantiert den frisch wiederhergestellten Stand nachladen statt eine 304-Antwort zu erhalten.
+        _dataVersion++;
+        }
     }
 
     private static void ReplaceAll<T>(List<T> target, List<T> source)
@@ -1449,27 +1827,35 @@ public sealed class AuditStore
 
     public AuditCategory CreateCategory(string name, string description)
     {
+        lock (_lock)
+        {
         var id = _categories.Count == 0 ? 1 : _categories.Max(x => x.Id) + 1;
         var category = new AuditCategory(id, name, description);
         _categories.Add(category);
-        Persist();
+        Persist(KeyCategories);
         return category;
+        }
     }
 
     public AuditSite CreateSite(int categoryId, string name, string address, string phone, string caretakerPhone)
     {
+        lock (_lock)
+        {
         var id = _sites.Count == 0 ? 1 : _sites.Max(x => x.Id) + 1;
         var site = new AuditSite(id, categoryId, name, address, phone, caretakerPhone, true)
         {
             GroundDataJson = "{}"
         };
         _sites.Add(site);
-        Persist();
+        Persist(KeySites);
         return site;
+        }
     }
 
     public AuditTemplate CreateTemplate(string name, string description, IEnumerable<TemplateFieldRequest> fields)
     {
+        lock (_lock)
+        {
         var id = _templates.Count == 0 ? 1 : _templates.Max(x => x.Id) + 1;
         var templateFields = fields.Select((field, index) =>
             new TemplateField(index + 1, field.Name, field.Type, field.Order ?? index + 1, field.RelevantForProgress ?? true))
@@ -1478,30 +1864,39 @@ public sealed class AuditStore
 
         var template = new AuditTemplate(id, name, description, templateFields);
         _templates.Add(template);
-        Persist();
+        Persist(KeyTemplates);
         return template;
+        }
     }
 
     public AuditRoom CreateRoom(int siteId, string name, string description, string capacity, string area, string notes, string fieldsJson = "{}")
     {
+        lock (_lock)
+        {
         var id = _rooms.Count == 0 ? 1 : _rooms.Max(x => x.Id) + 1;
         var room = new AuditRoom(id, siteId, name, description, capacity, area, notes) { FieldsJson = fieldsJson };
         _rooms.Add(room);
-        Persist();
+        Persist(KeyRooms);
         return room;
+        }
     }
 
     public AuditObject CreateObject(int roomId, string name, string objectType, string status, string notes)
     {
+        lock (_lock)
+        {
         var id = _objects.Count == 0 ? 1 : _objects.Max(x => x.Id) + 1;
         var obj = new AuditObject(id, roomId, name, objectType, status, notes);
         _objects.Add(obj);
-        Persist();
+        Persist(KeyObjects);
         return obj;
+        }
     }
 
     public AuditInstance CreateAudit(int siteId, int templateId, string title, string createdBy, string templateName)
     {
+        lock (_lock)
+        {
         var id = _audits.Count == 0 ? 1 : _audits.Max(x => x.Id) + 1;
         var site = _sites.FirstOrDefault(s => s.Id == siteId);
         var groundDataJson = site?.GroundDataJson ?? "{}";
@@ -1521,8 +1916,9 @@ public sealed class AuditStore
             _rooms.Add(snapshot);
         }
 
-        Persist();
+        Persist(KeyAudits, KeyRooms);
         return audit;
+        }
     }
 
     // Gleicht den beim Erstellen eingefrorenen Raum-Snapshot eines Audits (AuditId == auditId) nachträglich
@@ -1532,6 +1928,8 @@ public sealed class AuditStore
     // auftauchen - ohne bei jeder einzelnen Raum-Änderung synchronisieren zu müssen.
     public bool SyncAuditRoomSnapshot(int auditId)
     {
+        lock (_lock)
+        {
         var audit = _audits.FirstOrDefault(a => a.Id == auditId);
         if (audit is null) return false;
 
@@ -1593,8 +1991,9 @@ public sealed class AuditStore
             }
         }
 
-        if (changed) Persist();
+        if (changed) Persist(KeyRooms);
         return changed;
+        }
     }
 
     // Löscht ein Audit vollständig samt allem, was ausschließlich daran hängt: der zum Erstellzeitpunkt
@@ -1603,19 +2002,24 @@ public sealed class AuditStore
     // gelöschten Dokumente zurück, damit der Aufrufer auch ihre Dateien auf der Festplatte entfernen kann.
     public IReadOnlyList<AuditDocument> DeleteAudit(int id)
     {
+        lock (_lock)
+        {
         var removedDocuments = _documents.Where(d => d.AuditId == id).ToList();
         if (_audits.RemoveAll(a => a.Id == id) > 0)
         {
             _rooms.RemoveAll(r => r.AuditId == id);
             _checklistEntries.RemoveAll(e => e.AuditId == id);
             _documents.RemoveAll(d => d.AuditId == id);
-            Persist();
+            Persist(KeyAudits, KeyRooms, KeyChecklistEntries, KeyDocuments);
         }
         return removedDocuments;
+        }
     }
 
     public AuditChecklistEntry AddChecklistEntry(int auditId, string question, string answer, string status)
     {
+        lock (_lock)
+        {
         var id = _checklistEntries.Count == 0 ? 1 : _checklistEntries.Max(x => x.Id) + 1;
         var entry = new AuditChecklistEntry(id, auditId, 0, question, answer, status);
         _checklistEntries.Add(entry);
@@ -1629,99 +2033,124 @@ public sealed class AuditStore
             _audits[index] = replaced;
         }
 
-        Persist();
+        Persist(KeyChecklistEntries, KeyAudits);
         return entry;
+        }
     }
 
     public AuditChecklistEntry? UpdateChecklistEntry(int entryId, string? answer, string? status)
     {
+        lock (_lock)
+        {
         var idx = _checklistEntries.FindIndex(e => e.Id == entryId);
         if (idx < 0) return null;
         var existing = _checklistEntries[idx];
         var updated = existing with { Answer = answer ?? existing.Answer, Status = status ?? existing.Status };
         _checklistEntries[idx] = updated;
-        Persist();
+        Persist(KeyChecklistEntries);
         return updated;
+        }
     }
 
-    public IReadOnlyList<AuditChecklistEntry> ChecklistEntries => _checklistEntries;
-    public IReadOnlyList<PdfDesign> PdfDesigns => _pdfDesigns;
-    public IReadOnlyList<ChecklistTemplate> ChecklistTemplates => _checklistTemplates;
+    public IReadOnlyList<AuditChecklistEntry> ChecklistEntries { get { lock (_lock) { return _checklistEntries.ToList(); } } }
+    public IReadOnlyList<PdfDesign> PdfDesigns { get { lock (_lock) { return _pdfDesigns.ToList(); } } }
+    public IReadOnlyList<ChecklistTemplate> ChecklistTemplates { get { lock (_lock) { return _checklistTemplates.ToList(); } } }
+
 
     public PdfDesign CreatePdfDesign(string name, string description, string configJson)
     {
+        lock (_lock)
+        {
         var id = _pdfDesigns.Count == 0 ? 1 : _pdfDesigns.Max(x => x.Id) + 1;
         var design = new PdfDesign(id, name, description, configJson, DateTime.UtcNow);
         _pdfDesigns.Add(design);
-        Persist();
+        Persist(KeyPdfDesigns);
         return design;
+        }
     }
 
     public PdfDesign? UpdatePdfDesign(int id, string name, string description, string configJson)
     {
+        lock (_lock)
+        {
         var idx = _pdfDesigns.FindIndex(d => d.Id == id);
         if (idx < 0) return null;
         var updated = _pdfDesigns[idx] with { Name = name, Description = description, ConfigJson = configJson };
         _pdfDesigns[idx] = updated;
-        Persist();
+        Persist(KeyPdfDesigns);
         return updated;
+        }
     }
 
-    public void DeletePdfDesign(int id) { _pdfDesigns.RemoveAll(d => d.Id == id); Persist(); }
+    public void DeletePdfDesign(int id) { lock (_lock) { _pdfDesigns.RemoveAll(d => d.Id == id); Persist(KeyPdfDesigns); } }
 
     public ChecklistTemplate CreateChecklistTemplate(string name, int templateId, string columnsJson)
     {
+        lock (_lock)
+        {
         var id = _checklistTemplates.Count == 0 ? 1 : _checklistTemplates.Max(x => x.Id) + 1;
         var tmpl = new ChecklistTemplate(id, name, templateId, columnsJson, DateTime.UtcNow);
         _checklistTemplates.Add(tmpl);
-        Persist();
+        Persist(KeyChecklistTemplates);
         return tmpl;
+        }
     }
 
     public ChecklistTemplate? UpdateChecklistTemplate(int id, string name, int templateId, string columnsJson)
     {
+        lock (_lock)
+        {
         var idx = _checklistTemplates.FindIndex(t => t.Id == id);
         if (idx < 0) return null;
         var updated = _checklistTemplates[idx] with { Name = name, TemplateId = templateId, ColumnsJson = columnsJson };
         _checklistTemplates[idx] = updated;
-        Persist();
+        Persist(KeyChecklistTemplates);
         return updated;
+        }
     }
 
-    public void DeleteChecklistTemplate(int id) { _checklistTemplates.RemoveAll(t => t.Id == id); Persist(); }
+    public void DeleteChecklistTemplate(int id) { lock (_lock) { _checklistTemplates.RemoveAll(t => t.Id == id); Persist(KeyChecklistTemplates); } }
 
     // Speichert/aktualisiert die "freien" Spaltenwerte (source:'custom') einer Checkliste für einen Raum.
     // Spalten mit source 'room'/'field' werden nicht hier gespeichert - sie werden live aus den Raumdaten
     // abgeleitet und müssen daher nicht persistiert werden.
     public ChecklistValue UpsertChecklistValue(int checklistTemplateId, int roomId, string dataJson)
     {
+        lock (_lock)
+        {
         var idx = _checklistValues.FindIndex(v => v.ChecklistTemplateId == checklistTemplateId && v.RoomId == roomId);
         if (idx >= 0)
         {
             var updated = _checklistValues[idx] with { DataJson = dataJson, UpdatedAtUtc = DateTime.UtcNow };
             _checklistValues[idx] = updated;
-            Persist();
+            Persist(KeyChecklistValues);
             return updated;
         }
 
         var id = _checklistValues.Count == 0 ? 1 : _checklistValues.Max(v => v.Id) + 1;
         var value = new ChecklistValue(id, checklistTemplateId, roomId, dataJson, DateTime.UtcNow);
         _checklistValues.Add(value);
-        Persist();
+        Persist(KeyChecklistValues);
         return value;
+        }
     }
 
     public DocumentFolder CreateFolder(int siteId, string name, int parentFolderId)
     {
+        lock (_lock)
+        {
         var id = _folders.Count == 0 ? 1 : _folders.Max(x => x.Id) + 1;
         var folder = new DocumentFolder(id, siteId, parentFolderId, name, DateTime.UtcNow);
         _folders.Add(folder);
-        Persist();
+        Persist(KeyFolders);
         return folder;
+        }
     }
 
     public DeleteFolderResult? DeleteFolder(int id)
         {
+            lock (_lock)
+            {
             if (!_folders.Any(f => f.Id == id)) return null;
             // Rekursiv alle Unterordner (beliebiger Tiefe) ermitteln, damit beim Löschen eines Ordners
             // auch sämtliche darin verschachtelten Unterordner mitgelöscht werden.
@@ -1753,21 +2182,27 @@ public sealed class AuditStore
                     movedDocumentIds.Add(_documents[i].Id);
                 }
             }
-            Persist();
+            Persist(KeyFolders, KeyDocuments);
             return new DeleteFolderResult(toDelete.ToList(), movedDocumentIds);
+            }
         }
 
     public AuditDocument AddDocument(int auditId, int siteId, string title, int? pdfDesignId, string? pdfDesignName, string fileName, long sizeBytes, int folderId, bool isUploaded = false)
     {
+        lock (_lock)
+        {
         var id = _documents.Count == 0 ? 1 : _documents.Max(x => x.Id) + 1;
         var document = new AuditDocument(id, auditId, siteId, title, pdfDesignId, pdfDesignName, fileName, sizeBytes, DateTime.UtcNow, false, isUploaded, folderId);
         _documents.Add(document);
-        Persist();
+        Persist(KeyDocuments);
         return document;
+        }
     }
 
     public AuditDocument? UpdateDocument(int id, string? title, int? folderId, bool? isArchived)
     {
+        lock (_lock)
+        {
         var idx = _documents.FindIndex(d => d.Id == id);
         if (idx < 0) return null;
         var updated = _documents[idx] with
@@ -1777,34 +2212,44 @@ public sealed class AuditStore
             IsArchived = isArchived ?? _documents[idx].IsArchived
         };
         _documents[idx] = updated;
-        Persist();
+        Persist(KeyDocuments);
         return updated;
+        }
     }
 
     public bool DeleteDocument(int id)
     {
+        lock (_lock)
+        {
         var removed = _documents.RemoveAll(d => d.Id == id);
-        if (removed > 0) Persist();
+        if (removed > 0) Persist(KeyDocuments);
         return removed > 0;
+        }
     }
 
     public AuditCategory? UpdateCategory(int id, string name, string description)
     {
+        lock (_lock)
+        {
         var idx = _categories.FindIndex(c => c.Id == id);
         if (idx < 0) return null;
         var updated = _categories[idx] with { Name = name, Description = description };
         _categories[idx] = updated;
         // Propagate rename to no extra fields needed (sites reference by CategoryId)
-        Persist();
+        Persist(KeyCategories);
         return updated;
+        }
     }
 
-    public void DeleteCategory(int id) { _categories.RemoveAll(c => c.Id == id); Persist(); }
+    public void DeleteCategory(int id) { lock (_lock) { _categories.RemoveAll(c => c.Id == id); Persist(KeyCategories); } }
 
-    public AuditSite? UpdateSite(int id, int categoryId, string name, string address, string phone, string caretakerPhone, string? groundDataJson = null)
+    public AuditSite? UpdateSite(int id, int categoryId, string name, string address, string phone, string caretakerPhone, string? groundDataJson = null, int? expectedVersion = null)
     {
+        lock (_lock)
+        {
         var idx = _sites.FindIndex(s => s.Id == id);
         if (idx < 0) return null;
+        if (expectedVersion.HasValue && expectedVersion.Value != _sites[idx].Version) throw new VersionConflictException();
         var updated = _sites[idx] with
         {
             CategoryId = categoryId,
@@ -1812,27 +2257,35 @@ public sealed class AuditStore
             Address = address,
             Phone = phone,
             CaretakerPhone = caretakerPhone,
-            GroundDataJson = groundDataJson ?? _sites[idx].GroundDataJson
+            GroundDataJson = groundDataJson ?? _sites[idx].GroundDataJson,
+            Version = _sites[idx].Version + 1
         };
         _sites[idx] = updated;
-        Persist();
+        Persist(KeySites);
         return updated;
+        }
     }
 
-    public AuditSite? UpdateSiteGroundData(int id, string groundDataJson)
+    public AuditSite? UpdateSiteGroundData(int id, string groundDataJson, int? expectedVersion = null)
     {
+        lock (_lock)
+        {
         var idx = _sites.FindIndex(s => s.Id == id);
         if (idx < 0) return null;
-        var updated = _sites[idx] with { GroundDataJson = string.IsNullOrWhiteSpace(groundDataJson) ? "{}" : groundDataJson };
+        if (expectedVersion.HasValue && expectedVersion.Value != _sites[idx].Version) throw new VersionConflictException();
+        var updated = _sites[idx] with { GroundDataJson = string.IsNullOrWhiteSpace(groundDataJson) ? "{}" : groundDataJson, Version = _sites[idx].Version + 1 };
         _sites[idx] = updated;
-        Persist();
+        Persist(KeySites);
         return updated;
+        }
     }
 
-    public void DeleteSite(int id) { _sites.RemoveAll(s => s.Id == id); Persist(); }
+    public void DeleteSite(int id) { lock (_lock) { _sites.RemoveAll(s => s.Id == id); Persist(KeySites); } }
 
     public AuditTemplate? UpdateTemplate(int id, string name, string description, IEnumerable<TemplateFieldRequest> fields)
     {
+        lock (_lock)
+        {
         var idx = _templates.FindIndex(t => t.Id == id);
         if (idx < 0) return null;
         var templateFields = fields.Select((field, index) =>
@@ -1840,31 +2293,39 @@ public sealed class AuditStore
             .OrderBy(f => f.Order).ToArray();
         var updated = _templates[idx] with { Name = name, Description = description, Fields = templateFields };
         _templates[idx] = updated;
-        Persist();
+        Persist(KeyTemplates);
         return updated;
+        }
     }
 
-    public void DeleteTemplate(int id) { _templates.RemoveAll(t => t.Id == id); Persist(); }
+    public void DeleteTemplate(int id) { lock (_lock) { _templates.RemoveAll(t => t.Id == id); Persist(KeyTemplates); } }
 
-    public AuditRoom? UpdateRoom(int id, string name, string description, string capacity, string area, string notes, string fieldsJson = "{}")
+    public AuditRoom? UpdateRoom(int id, string name, string description, string capacity, string area, string notes, string fieldsJson = "{}", int? expectedVersion = null)
     {
+        lock (_lock)
+        {
         var idx = _rooms.FindIndex(r => r.Id == id);
         if (idx < 0) return null;
-        var updated = _rooms[idx] with { Name = name, Description = description, Capacity = capacity, Area = area, Notes = notes, FieldsJson = fieldsJson };
+        if (expectedVersion.HasValue && expectedVersion.Value != _rooms[idx].Version) throw new VersionConflictException();
+        var updated = _rooms[idx] with { Name = name, Description = description, Capacity = capacity, Area = area, Notes = notes, FieldsJson = fieldsJson, Version = _rooms[idx].Version + 1 };
         _rooms[idx] = updated;
-        Persist();
+        Persist(KeyRooms);
         return updated;
+        }
     }
 
-    public void DeleteRoom(int id) { _rooms.RemoveAll(r => r.Id == id); Persist(); }
+    public void DeleteRoom(int id) { lock (_lock) { _rooms.RemoveAll(r => r.Id == id); Persist(KeyRooms); } }
 
     private readonly List<string> _inMemoryLog = new();
 
     public void AddLog(string level, string category, string message)
     {
+        lock (_lock)
+        {
         // in-memory log (also written to file via AuditLogger DI)
         _inMemoryLog.Insert(0, $"[{DateTime.UtcNow:HH:mm:ss}] [{level}] [{category}] {message}");
         if (_inMemoryLog.Count > 200) _inMemoryLog.RemoveAt(_inMemoryLog.Count - 1);
+        }
     }
 
     private static List<AuditCategory> CreateInitialCategories() => new()
@@ -1921,17 +2382,19 @@ public sealed class BackupStore
     private readonly string _folderPath;
     private readonly string _uploadDirectory;
     private readonly string _documentsDirectory;
+    private readonly string _mediaDirectory;
     private readonly string _storageDirectory;
     private readonly AppDatabase _appDatabase;
     private readonly UserStore _userStore;
     private readonly AuditStore _auditStore;
     private const int DEFAULT_MAX_BACKUPS = 10;
 
-    public BackupStore(string folderPath, string uploadDirectory, string documentsDirectory, string storageDirectory, AppDatabase appDatabase, UserStore userStore, AuditStore auditStore)
+    public BackupStore(string folderPath, string uploadDirectory, string documentsDirectory, string mediaDirectory, string storageDirectory, AppDatabase appDatabase, UserStore userStore, AuditStore auditStore)
     {
         _folderPath = folderPath;
         _uploadDirectory = uploadDirectory;
         _documentsDirectory = documentsDirectory;
+        _mediaDirectory = mediaDirectory;
         _storageDirectory = storageDirectory;
         _appDatabase = appDatabase;
         _userStore = userStore;
@@ -1950,6 +2413,11 @@ public sealed class BackupStore
                     fileInfo.Name,
                     fileInfo.LastWriteTimeUtc,
                     fileInfo.Length,
+                    // fix010 Schritt 5b/e: "auto_"-Präfix kennzeichnet automatische, vom Zeitplan erzeugte
+                    // Backups (werden von der Rotation erfasst); "upload_" sind hochgeladene Fremd-Backups;
+                    // alles andere (inkl. älterer "audit-backup_"-Dateien aus Vorgängerversionen) gilt
+                    // konservativ als manuelles Vollbackup und wird von der Rotation nie angefasst.
+                    fileInfo.Name.StartsWith("auto_", StringComparison.OrdinalIgnoreCase) ? "Automatisch" :
                     fileInfo.Name.StartsWith("upload_", StringComparison.OrdinalIgnoreCase) ? "Hochgeladen" : "Vollbackup");
             })
             .OrderByDescending(record => record.CreatedAtUtc)
@@ -1962,46 +2430,64 @@ public sealed class BackupStore
     // wird unter "Lesbare-Struktur/" eine für Menschen nachvollziehbare Ordnerhierarchie
     // (Kategorie/Standort/Grunddaten|Raeume|Dokumente, Bilder als echte Dateien) abgelegt, rein zur
     // Durchsicht - diese wird beim Wiederherstellen nicht benötigt und auch nicht gelesen.
-    public BackupRecord Create(AuditStore store)
+    // "isAutomatic" steuert nur den Dateinamen-Präfix (für Anzeige/Rotation) - der Inhalt des Backups ist
+    // in beiden Fällen identisch vollständig. Rotation wird hier bewusst NICHT ausgelöst - das übernimmt
+    // der jeweilige Aufrufer gezielt (BackupService nach einem automatischen Lauf), damit manuell über den
+    // Button erstellte Backups niemals versehentlich von der automatischen Rotation gelöscht werden.
+    public BackupRecord Create(AuditStore store, bool isAutomatic = false)
     {
-        var fileName = $"backup_{DateTime.UtcNow:yyyyMMdd_HHmmss}.zip";
+        var prefix = isAutomatic ? "auto" : "backup";
+        var fileName = $"{prefix}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.zip";
         var fullPath = Path.Combine(_folderPath, fileName);
+        // fix010 Schritt 5d: konsistente Momentaufnahme statt roher Dateikopie - siehe AppDatabase.CreateConsistentSnapshot.
+        var snapshotPath = Path.Combine(_storageDirectory, $".backup-snapshot-{Guid.NewGuid():N}.db");
 
-        using (var archiveStream = File.Create(fullPath))
-        using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
+        try
         {
-            var manifest = new
-            {
-                generatedUtc = DateTime.UtcNow,
-                kategorien = store.Categories.Select(c => c.Name),
-                standorte = store.Sites.Select(s => s.Name),
-                anzahlRaeume = store.Rooms.Count,
-                anzahlAudits = store.Audits.Count,
-                anzahlDokumente = store.Documents.Count,
-                anzahlBenutzer = _userStore.All.Count(),
-                hinweis = "Benutzerpasswörter liegen in der Datenbank ausschließlich als Einweg-Hash (PBKDF2) vor, niemals im Klartext."
-            };
+            _appDatabase.CreateConsistentSnapshot(snapshotPath);
 
-            var manifestEntry = archive.CreateEntry("manifest.json");
-            using (var manifestStream = new StreamWriter(manifestEntry.Open(), Encoding.UTF8))
+            using (var archiveStream = File.Create(fullPath))
+            using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
             {
-                manifestStream.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+                var manifest = new
+                {
+                    generatedUtc = DateTime.UtcNow,
+                    kategorien = store.Categories.Select(c => c.Name),
+                    standorte = store.Sites.Select(s => s.Name),
+                    anzahlRaeume = store.Rooms.Count,
+                    anzahlAudits = store.Audits.Count,
+                    anzahlDokumente = store.Documents.Count,
+                    anzahlBenutzer = _userStore.All.Count(),
+                    hinweis = "Benutzerpasswörter liegen in der Datenbank ausschließlich als Einweg-Hash (PBKDF2) vor, niemals im Klartext."
+                };
+
+                var manifestEntry = archive.CreateEntry("manifest.json");
+                using (var manifestStream = new StreamWriter(manifestEntry.Open(), Encoding.UTF8))
+                {
+                    manifestStream.Write(JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+                }
+
+                if (File.Exists(snapshotPath))
+                {
+                    archive.CreateEntryFromFile(snapshotPath, "database/audit-tool.db");
+                }
+
+                AddDirectoryToArchive(archive, _uploadDirectory, "uploads");
+                AddDirectoryToArchive(archive, _documentsDirectory, "documents");
+                AddDirectoryToArchive(archive, _mediaDirectory, "media");
+                AddLogsToArchive(archive);
+                AddHumanReadableStructure(archive, store);
             }
-
-            if (File.Exists(_appDatabase.DatabasePath))
-            {
-                archive.CreateEntryFromFile(_appDatabase.DatabasePath, "database/audit-tool.db");
-            }
-
-            AddDirectoryToArchive(archive, _uploadDirectory, "uploads");
-            AddDirectoryToArchive(archive, _documentsDirectory, "documents");
-            AddLogsToArchive(archive);
-            AddHumanReadableStructure(archive, store);
+        }
+        finally
+        {
+            // Die temporäre Momentaufnahme wird in jedem Fall entfernt - sie liegt nur kurzzeitig neben der
+            // echten Datenbank und würde sonst bei wiederholten Backups unnötig Speicherplatz belegen.
+            try { if (File.Exists(snapshotPath)) File.Delete(snapshotPath); } catch { /* best-effort */ }
         }
 
         var info = new FileInfo(fullPath);
-        ApplyBackupRotation(DEFAULT_MAX_BACKUPS);
-        return new BackupRecord(Path.GetFileNameWithoutExtension(info.Name), info.Name, info.LastWriteTimeUtc, info.Length, "Vollbackup");
+        return new BackupRecord(Path.GetFileNameWithoutExtension(info.Name), info.Name, info.LastWriteTimeUtc, info.Length, isAutomatic ? "Automatisch" : "Vollbackup");
     }
 
     private void AddLogsToArchive(ZipArchive archive)
@@ -2044,7 +2530,7 @@ public sealed class BackupStore
         foreach (var (key, value) in fields)
         {
             if (string.IsNullOrWhiteSpace(value)) continue;
-            if (value.Contains("data:image", StringComparison.OrdinalIgnoreCase))
+            if (MediaStore.LooksLikeImageValue(value))
             {
                 var images = value.Split("||", StringSplitOptions.RemoveEmptyEntries);
                 for (var i = 0; i < images.Length; i++)
@@ -2066,31 +2552,18 @@ public sealed class BackupStore
         }
     }
 
+    // Schreibt EIN Bild (egal ob noch als alte "data:image/...;base64,..."-Data-URL eingebettet oder bereits
+    // als neue "/api/media/{name}"-Referenz gespeichert) als echte Datei in die "Lesbare-Struktur" des
+    // Backup-ZIPs bzw. den Admin-Export.
     public static void WriteDataUrlImage(ZipArchive archive, string folderPath, string fieldName, int index, string dataUrl)
     {
-        var commaIndex = dataUrl.IndexOf(',');
-        if (commaIndex < 0) return;
-        var header = dataUrl[..commaIndex];
-        var payload = dataUrl[(commaIndex + 1)..];
-        var extension = header.Contains("png", StringComparison.OrdinalIgnoreCase) ? "png"
-            : header.Contains("webp", StringComparison.OrdinalIgnoreCase) ? "webp"
-            : header.Contains("gif", StringComparison.OrdinalIgnoreCase) ? "gif"
-            : "jpg";
-
-        byte[] bytes;
-        try
-        {
-            bytes = Convert.FromBase64String(payload);
-        }
-        catch
-        {
-            return;
-        }
+        var resolved = MediaStore.ResolveImageBytes(dataUrl);
+        if (resolved is null) return;
 
         var suffix = index > 0 ? $"_{index + 1}" : "";
-        var entry = archive.CreateEntry($"{folderPath}/{fieldName}{suffix}.{extension}");
+        var entry = archive.CreateEntry($"{folderPath}/{fieldName}{suffix}.{resolved.Value.Extension}");
         using var entryStream = entry.Open();
-        entryStream.Write(bytes, 0, bytes.Length);
+        entryStream.Write(resolved.Value.Bytes, 0, resolved.Value.Bytes.Length);
     }
 
     private static string ResolveFolderPath(AuditStore store, int folderId)
@@ -2163,15 +2636,18 @@ public sealed class BackupStore
         }
     }
 
+    // fix010 Schritt 5e: Rotation betrifft ausschließlich automatische ("auto_"-) Backups - manuell über
+    // den Button erstellte Vollbackups und hochgeladene Fremd-Backups bleiben unabhängig von ihrer Anzahl
+    // immer erhalten und werden hier bewusst nicht mitgezählt.
     public void ApplyBackupRotation(int maxBackups = DEFAULT_MAX_BACKUPS)
     {
-        var backups = List();
-        if (backups.Count <= maxBackups)
+        var autoBackups = List().Where(b => b.Type == "Automatisch").ToList();
+        if (autoBackups.Count <= maxBackups)
         {
             return;
         }
 
-        var backupsToDelete = backups.Skip(maxBackups).ToList();
+        var backupsToDelete = autoBackups.Skip(maxBackups).ToList();
         foreach (var backup in backupsToDelete)
         {
             Delete(backup.Id);
@@ -2205,14 +2681,49 @@ public sealed class BackupStore
             Directory.CreateDirectory(databaseDirectory);
         }
 
+        // Bugfix (gefunden beim fix010-Testlauf): Die laufende Datenbankverbindung arbeitet im WAL-Modus
+        // (PRAGMA journal_mode=WAL) und legt dafür die Begleitdateien "audit-tool.db-wal"/"-shm" an. Die
+        // Backup-Snapshots selbst sind dank VACUUM INTO bereits WAL-frei und vollständig konsistent - aber
+        // ein einfaches Überschreiben NUR der Hauptdatei liess diese veralteten Begleitdateien der VORHER
+        // laufenden Datenbank unangetastet zurück. Eine neu geöffnete Verbindung versuchte dann, die darin
+        // enthaltenen (zur neuen Hauptdatei nicht mehr passenden) WAL-Frames auf die frisch wiederhergestellte
+        // Datei anzuwenden, was SQLite als "database disk image is malformed" meldete. Zusätzlich müssen alle
+        // gepoolten Verbindungen verworfen werden, da Microsoft.Data.Sqlite sonst noch Handles/Caches zur
+        // alten Datei offen halten könnte.
+        SqliteConnection.ClearAllPools();
+        foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
+        {
+            var sidecarPath = _appDatabase.DatabasePath + suffix;
+            if (File.Exists(sidecarPath))
+            {
+                File.Delete(sidecarPath);
+            }
+        }
+
         databaseEntry.ExtractToFile(_appDatabase.DatabasePath, overwrite: true);
+
+        // VACUUM INTO (siehe CreateConsistentSnapshot) erzeugt die Momentaufnahme immer im klassischen
+        // Rollback-Journal-Modus statt WAL - ohne diesen erneuten Aufruf würde die wiederhergestellte
+        // Datenbank bis zum naechsten Container-Neustart ohne WAL-Modus (und damit ohne die in Schritt 4
+        // behobene Mehrbenutzer-Nebenlaeufigkeit) weiterlaufen.
+        _appDatabase.EnsureCreated();
 
         RestoreDirectoryFromArchive(archive, "uploads/", _uploadDirectory);
         RestoreDirectoryFromArchive(archive, "documents/", _documentsDirectory);
+        // Ältere Backups (vor Einführung der Medien-Auslagerung) enthalten keinen "media/"-Ordner - das ist
+        // kein Fehler, RestoreDirectoryFromArchive lässt den bestehenden Ordner dann unangetastet.
+        RestoreDirectoryFromArchive(archive, "media/", _mediaDirectory);
         RestoreLogsFromArchive(archive);
 
         store.ReloadFromDatabase();
         _userStore.ReloadFromDatabase();
+
+        // Backward-Kompatibilität: Falls das wiederhergestellte Backup noch aus der Zeit vor der Medien-
+        // Auslagerung stammt (oder von einem noch nicht aktualisierten Live-System erzeugt wurde), können
+        // die geladenen Datensätze weiterhin alte eingebettete Base64-Bilder enthalten. Direkt nach dem
+        // Neuladen erneut die Migration anstoßen, damit das System sofort wieder im neuen, schlanken Format
+        // arbeitet - ohne dass dafür ein Neustart des Containers nötig wäre.
+        _auditStore.MigrateEmbeddedMedia(_appDatabase.DatabasePath, _storageDirectory);
 
         return true;
     }
@@ -2305,10 +2816,15 @@ public static class PasswordHasher
 
     public static bool IsHashed(string stored) => stored.StartsWith(Prefix + "$", StringComparison.Ordinal);
 
+    // fix010 Schritt 6b: Passwörter vor dem Hashen auf die Unicode-Normalform C (NFC) bringen - ein
+    // Umlaut/Sonderzeichen kann je nach Tastatur/Betriebssystem als vorkomponiertes Zeichen (NFC) oder
+    // als Basiszeichen+Kombinationszeichen (NFD) eingegeben werden; ohne Normalisierung würden beide
+    // Formen zu unterschiedlichen Hashes führen, obwohl der Mensch dasselbe Passwort eingegeben hat.
     public static string Hash(string password)
     {
+        var normalized = password.Normalize(NormalizationForm.FormC);
         var salt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(SaltSize);
-        var hash = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(password, salt, Iterations, System.Security.Cryptography.HashAlgorithmName.SHA256, HashSize);
+        var hash = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(normalized, salt, Iterations, System.Security.Cryptography.HashAlgorithmName.SHA256, HashSize);
         return $"{Prefix}${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
     }
 
@@ -2328,6 +2844,11 @@ public sealed class UserStore
 {
     private readonly AppDatabase _database;
     private readonly List<AppUser> _users;
+    // fix010 Schritt 4a: Schützt _users (und damit auch die Login-/Passwort-Logik) vor gleichzeitigem
+    // Zugriff mehrerer Anfragen - siehe AuditStore._lock für die ausführliche Begründung. Der C#-lock
+    // (Monitor) ist pro Thread reentrant, verschachtelte Aufrufe (z.B. Authenticate -> VerifyPassword ->
+    // UpdatePassword) innerhalb desselben Threads sind daher unkritisch.
+    private readonly object _lock = new();
 
     public UserStore(AppDatabase database)
     {
@@ -2335,23 +2856,46 @@ public sealed class UserStore
         _users = _database.Load("app_users", CreateDefaultUsers());
     }
 
-    public IEnumerable<AppUser> All => _users;
+    public IEnumerable<AppUser> All { get { lock (_lock) { return _users.ToList(); } } }
 
     // Re-reads users from the (possibly just restored) database file. Used after a backup restore.
     public void ReloadFromDatabase()
     {
+        lock (_lock)
+        {
         var reloaded = _database.Load("app_users", CreateDefaultUsers());
         _users.Clear();
         _users.AddRange(reloaded);
+        }
     }
 
     // Prüft ein Passwort gegen den gespeicherten Hash. Ältere Konten (vor Einführung des Hashings) mit
     // Klartext-Passwort werden bei erfolgreichem Login transparent auf PBKDF2 migriert.
     public bool VerifyPassword(AppUser user, string password)
     {
+        lock (_lock)
+        {
         if (PasswordHasher.IsHashed(user.Password))
         {
-            return PasswordHasher.Verify(user.Password, password);
+            // fix010 Schritt 6b: Zuerst die normalisierte (NFC) Form prüfen - so werden alle künftigen
+            // Logins unabhängig vom Eingabegerät/Tastaturlayout konsistent verifiziert. Schlägt das fehl,
+            // zusätzlich den unveränderten Rohwert probieren (Abwärtskompatibilität zu Hashes, die vor
+            // Einführung der Normalisierung aus nicht-normalisiertem Text erzeugt wurden); bei Erfolg wird
+            // auf einen Hash der normalisierten Form umgestellt, damit künftige Logins nur noch den
+            // schnellen (normalisierten) Pfad brauchen.
+            var normalized = password.Normalize(NormalizationForm.FormC);
+            if (PasswordHasher.Verify(user.Password, normalized))
+            {
+                return true;
+            }
+
+            if (normalized != password && PasswordHasher.Verify(user.Password, password))
+            {
+                UpdatePassword(user.Id, normalized);
+                return true;
+            }
+
+            return false;
         }
 
         if (!string.Equals(user.Password, password, StringComparison.Ordinal))
@@ -2361,10 +2905,13 @@ public sealed class UserStore
 
         UpdatePassword(user.Id, password);
         return true;
+        }
     }
 
     public AppUser? Authenticate(string username, string password)
     {
+        lock (_lock)
+        {
         var user = _users.FirstOrDefault(u =>
             string.Equals(u.UserName, username, StringComparison.OrdinalIgnoreCase) && u.IsActive);
 
@@ -2374,29 +2921,41 @@ public sealed class UserStore
         }
 
         return GetById(user.Id);
+        }
     }
 
     public AppUser? GetByUsername(string? username)
     {
+        lock (_lock)
+        {
         return _users.FirstOrDefault(u => string.Equals(u.UserName, username, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     public AppUser? GetById(int userId)
     {
+        lock (_lock)
+        {
         return _users.FirstOrDefault(u => u.Id == userId);
+        }
     }
 
     public AppUser Create(string userName, string password, string? displayName, string role)
     {
+        lock (_lock)
+        {
         var nextId = _users.Count == 0 ? 1 : _users.Max(x => x.Id) + 1;
         var user = new AppUser(nextId, userName, PasswordHasher.Hash(password), role, displayName ?? userName);
         _users.Add(user);
         _database.Save("app_users", _users);
         return user;
+        }
     }
 
     public AppUser? UpdateDisplayNameAndRole(int userId, string displayName, string role)
     {
+        lock (_lock)
+        {
         var user = _users.FirstOrDefault(u => u.Id == userId);
         if (user is null)
         {
@@ -2408,10 +2967,13 @@ public sealed class UserStore
         _users[index] = updated;
         _database.Save("app_users", _users);
         return updated;
+        }
     }
 
     public void UpdatePassword(int userId, string newPassword)
     {
+        lock (_lock)
+        {
         var user = _users.FirstOrDefault(u => u.Id == userId);
         if (user is not null)
         {
@@ -2419,10 +2981,13 @@ public sealed class UserStore
             _users[index] = user with { Password = PasswordHasher.Hash(newPassword) };
             _database.Save("app_users", _users);
         }
+        }
     }
 
     public void ToggleActive(int userId)
     {
+        lock (_lock)
+        {
         var user = _users.FirstOrDefault(u => u.Id == userId);
         if (user is not null)
         {
@@ -2430,15 +2995,19 @@ public sealed class UserStore
             _users[index] = user with { IsActive = !user.IsActive };
             _database.Save("app_users", _users);
         }
+        }
     }
 
     public void Delete(int userId)
     {
+        lock (_lock)
+        {
         var user = _users.FirstOrDefault(u => u.Id == userId);
         if (user is not null)
         {
             _users.Remove(user);
             _database.Save("app_users", _users);
+        }
         }
     }
 
@@ -2460,6 +3029,9 @@ public sealed record AuditCategory(int Id, string Name, string Description);
 public sealed record AuditSite(int Id, int CategoryId, string Name, string Address, string Phone, string CaretakerPhone, bool Active)
 {
     public string GroundDataJson { get; init; } = "{}";
+    // fix010 Schritt 2: Optimistic-Concurrency-Zähler. Default 1 sorgt dafür, dass bereits in der
+    // Datenbank gespeicherte Zeilen ohne dieses Feld beim Deserialisieren korrekt mit Version 1 starten.
+    public int Version { get; init; } = 1;
 }
 public sealed record AuditRoom(int Id, int SiteId, string Name, string Description, string Capacity, string Area, string Notes)
 {
@@ -2468,6 +3040,8 @@ public sealed record AuditRoom(int Id, int SiteId, string Name, string Descripti
     // Verknüpft eine eingefrorene Audit-Schnappschuss-Zeile mit dem Live-Raum, aus dem sie erzeugt wurde.
     // 0 bedeutet: entweder ein Live-Raum selbst (AuditId==0) oder ein alter/unverknüpfter Schnappschuss.
     public int OriginLiveRoomId { get; init; } = 0;
+    // fix010 Schritt 2: Optimistic-Concurrency-Zähler, siehe AuditSite.Version.
+    public int Version { get; init; } = 1;
 }
 
 public sealed record AuditObject(int Id, int RoomId, string Name, string ObjectType, string Status, string Notes);
@@ -2477,6 +3051,10 @@ public sealed record AuditInstance(int Id, int SiteId, int TemplateId, string Ti
     public string GroundDataJson { get; init; } = "{}";
 }
 public sealed record AuditInstanceSummary(int Id, int SiteId, string Title, int TemplateId, string TemplateName, string CreatedBy, DateTime CreatedAtUtc, string Status, int EntryCount);
+// fix010 Schritt 2b: Schlanke Standort-Projektion für die Listenansicht (kein GroundDataJson - das
+// kann je nach Standort beliebig groß werden). RoomCount/AuditCount ersetzen das bisherige Vorgehen,
+// bei dem das Frontend dafür ALLE Räume/Audits ALLER Standorte vollständig laden musste.
+public sealed record SiteSummary(int Id, int CategoryId, string Name, string Address, string Phone, string CaretakerPhone, bool Active, int Version, int RoomCount, int AuditCount);
 public sealed record TemplateField(int Id, string Name, string Type, int Order, bool RelevantForProgress);
 public sealed record AuditTemplate(int Id, string Name, string Description, IEnumerable<TemplateField> Fields);
 public sealed record PdfDesign(int Id, string Name, string Description, string ConfigJson, DateTime CreatedAtUtc);
@@ -2497,6 +3075,8 @@ public sealed record CreateSiteRequest(int CategoryId, string Name, string Addre
 public sealed record CreateRoomRequest(int SiteId, string Name, string Description, string? Capacity, string? Area, string? Notes)
 {
     public string? FieldsJson { get; init; }
+    // fix010 Schritt 2: Optionaler erwarteter Versionsstand für Optimistic Concurrency bei PUT (Create ignoriert ihn).
+    public int? ExpectedVersion { get; init; }
 }
 public sealed record CreateObjectRequest(int RoomId, string Name, string? ObjectType, string? Status, string? Notes);
 public sealed record CreateAuditRequest(int SiteId, int TemplateId, string Title);
@@ -2507,8 +3087,12 @@ public sealed record CreateTemplateRequest(string Name, string Description, IEnu
 public sealed record UpdateSiteRequest(int CategoryId, string? Name, string? Address, string? Phone, string? CaretakerPhone)
 {
     public string? GroundDataJson { get; init; }
+    public int? ExpectedVersion { get; init; }
 }
-public sealed record UpdateGroundDataRequest(string? GroundDataJson);
+public sealed record UpdateGroundDataRequest(string? GroundDataJson)
+{
+    public int? ExpectedVersion { get; init; }
+}
 public sealed record CreatePdfDesignRequest(string Name, string? Description, string? ConfigJson);
 public sealed record CreateChecklistTemplateRequest(string Name, int? TemplateId, string? ColumnsJson);
 public sealed record UpsertChecklistValueRequest(int ChecklistTemplateId, int RoomId, string? DataJson);

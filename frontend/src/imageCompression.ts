@@ -115,3 +115,9 @@ export function getCompressedFileName(originalName: string): string {
   const ext = originalName.split('.').pop() || 'jpg'
   return `${timestamp}_${originalName.replace(/\.[^/.]+$/, '')}.${ext}`
 }
+
+// Erzeugt zusätzlich zum komprimierten Hauptbild ein kleines Vorschaubild (lange Kante ca. 320px), das
+// in Listen/Thumbnail-Ansichten geladen wird, statt dort unnötig das volle Bild herunterzuladen.
+export async function createThumbnail(file: File, maxEdge = 320): Promise<Blob> {
+  return compressImage(file, { maxWidth: maxEdge, maxHeight: maxEdge, quality: 0.7, maxSizeKB: 200 })
+}

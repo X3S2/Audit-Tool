@@ -13,6 +13,11 @@
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.23.0" />
     <PackageReference Include="itext7" Version="8.0.5" />
     <PackageReference Include="itext7.bouncy-castle-adapter" Version="8.0.5" />
+    <!-- fix010 Schritt 7a: itext7.bouncy-castle-adapter 8.0.5 zieht transitiv BouncyCastle.Cryptography
+         2.2.1 mit 3 bekannten Schwachstellen (NU1902, GHSA-8xfc-gm6g-vgpv/-m44j-cfrm-g8qc/-v435-xc8x-wvr9).
+         Explizite Referenz auf die neueste stabile 2.x-Version überschreibt die transitive Version,
+         ohne einen Haupt-/Breaking-Change-Sprung zu riskieren. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
 

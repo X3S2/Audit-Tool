@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.1.0] - 2026-10-14
+
+### Performance, Backups & Passwort-Sicherheit (fix010.md)
+
+#### Fotos aus JSON-Feldern in echte Dateien ausgelagert
+- Bilder in Grunddaten-/Raumfeldern wurden bisher als Base64-Data-URLs direkt im JSON-Feldwert gespeichert — das machte jede Standort-/Raum-Antwort riesig (teils mehrere MB pro Datensatz) und sorgte bei nur ~8 Mbit/s geteilter Bandbreite für sehr lange Ladezeiten
+- Neue Endpunkte `POST /api/media` (Upload, mit optionalem verkleinertem Thumbnail) und `GET /api/media/{name}` (Auslieferung) speichern Bilder jetzt als echte Dateien unter `storage/media/`; Felder enthalten nur noch eine kurze URL
+- Automatische Einmal-Migration bestehender eingebetteter Bilder beim Start (mit Deduplizierung über Hash) sowie erneut nach jedem Backup-Restore (Rückwärtskompatibilität mit älteren Backups)
+- Frontend: neue `AuthImage`-Komponente (lädt Bilder mit Authorization-Header statt über öffentliche `<img src>`-URLs) sowie clientseitige Bildkompression vor dem Upload
+
+#### Lazy Loading & bandbreitenschonendes Nachladen
+- Komplette Überarbeitung der Datenlade-Architektur: Die Standortliste liefert nur noch eine schlanke Übersicht (Name, Raum-/Audit-Anzahl) statt aller Details; Räume, Dokumente und Ordner werden erst beim Öffnen eines konkreten Standorts/Audits nachgeladen, statt beim Login pauschal alle Daten aller Standorte zu übertragen
+- ETag-/304-Caching für unveränderte Listenabrufe, gezielt skaliertes Nachladen pro Standort/Audit statt globaler „alle Räume"-Abfragen
+- Live verifiziert: Login erzeugt keine Raum-/Dokumenten-Anfragen mehr; das Öffnen eines Standorts lädt ausschließlich dessen eigene Daten
+
+#### Kompression & Caching
+- Serverseitige Brotli-/Gzip-Kompression (inkl. JSON-Antworten) sowie gzip-Kompression im nginx-Reverse-Proxy für ausgelieferte Frontend-Dateien
+- Response-Caching-Header für unveränderliche, hash-benannte Build-Assets
+
+#### Mehrbenutzer-Sicherheit im Backend
+- Alle lese- und schreibenden Zugriffe auf die In-Memory-Datenbestände (`AuditStore`, `UserStore`) sind jetzt durch Locks abgesichert, um Dateninkonsistenzen bei gleichzeitigen Zugriffen mehrerer Nutzer zu verhindern
+- `Persist()` schreibt nicht mehr bei jeder Änderung alle 12 Datenbereiche, sondern gezielt nur den tatsächlich geänderten
+- SQLite läuft jetzt im WAL-Modus (`PRAGMA journal_mode=WAL`) mit `busy_timeout=5000` — gleichzeitige Lese- und Schreibzugriffe blockieren sich dadurch nicht mehr gegenseitig
+
+#### Automatische Backups repariert
+- Der Backup-Zeitplan ließ sich bisher nicht dauerhaft speichern (veralteter Datenbankzugriff auf eine nicht mehr existierende Spalte) — vollständig neu implementiert, inklusive Anzeige des letzten sowie des nächsten geplanten Ausführungszeitpunkts (Berliner Zeit)
+- Fehlende Bedienelemente ergänzt: Checkbox „Automatische Backups aktivieren" (existierte im Datenmodell, hatte aber bisher gar kein Bedienelement in der Oberfläche) sowie ein „🧪 Automatisches Backup testen"-Button zum sofortigen Testlauf ohne den eigentlichen Zeitplan zu beeinflussen
+- Server-Zeitzone des Backend-Containers auf `Europe/Berlin` gesetzt
+
+#### Passwort-Handling vereinheitlicht und gehärtet
+- Einheitliche Passwort-Validierung (mind. 8 Zeichen, Groß-/Kleinbuchstabe, Ziffer) jetzt an allen drei Stellen durchgesetzt (Benutzer anlegen, Admin-Zurücksetzung, Passwort selbst ändern) statt bisher uneinheitlicher/fehlender Prüfungen
+- Passwörter werden vor dem Hashen/Prüfen Unicode-normalisiert (NFC) — unterschiedliche Tastatur-/Betriebssystem-Encodings desselben Passworts (z. B. bei Umlauten) werden dadurch als identisch erkannt; bereits bestehende Hashes bleiben über einen automatischen Kompatibilitäts-Fallback gültig und werden beim nächsten erfolgreichen Login automatisch auf das normalisierte Format aktualisiert
+- Admin-Passwort-Zurücksetzung komplett überarbeitet: Passwort- und Bestätigungsfeld, Anzeigen/Verbergen-Umschalter, expliziter „Passwort setzen"-Button statt des bisherigen stillen Speicherns beim Verlassen des Feldes (wodurch zu kurze Passwörter bisher unbemerkt verworfen wurden)
+
+#### NuGet-Sicherheitswarnungen behoben
+- `BouncyCastle.Cryptography` explizit auf Version 2.7.0 angehoben (vorher transitiv 2.2.1 über `itext7.bouncy-castle-adapter`) — behebt drei als „mittel" eingestufte Schwachstellen (GHSA-8xfc-gm6g-vgpv, GHSA-m44j-cfrm-g8qc, GHSA-v435-xc8x-wvr9); PDF-Erzeugung danach erfolgreich getestet
+- `SQLitePCLRaw.lib.e_sqlite3`: die zuvor gemeldete Schwachstelle (GHSA-2m69-gcr7-jv3q) ist durch ein bereits transitiv eingezogenes Patch-Release (2.1.12) ohne weiteres Zutun behoben — keine weitere Maßnahme nötig
+- `dotnet list package --vulnerable --include-transitive` meldet seitdem keine bekannten Schwachstellen mehr
+
+#### Aufräumen
+- Nicht genutzter `ports`-Block des PostgreSQL-Dienstes aus `docker-compose.yml` entfernt (der Dienst selbst wird vom Backend aktuell nicht angesprochen und bleibt nur als Option für eine mögliche spätere Migration bestehen)
+- Toten `/api/dashboard`-Endpunkt entfernt, der ausschließlich hartkodierte Platzhalterzahlen lieferte und vom Frontend nirgends aufgerufen wurde
+- `.gitignore` um `storage/media/` und `*.pre-media.bak` ergänzt
+
+#### Kritische Zusatzfunde beim Testen (nicht im ursprünglichen Plan, aber direkt dadurch aufgedeckt)
+- **Backup-Hochladen schlug ab ca. 29 MB mit HTTP 500 fehl**: Weder Kestrels Standard-Obergrenze für Request-Bodies (~28,6 MB) noch die separate Multipart-Formular-Obergrenze (128 MB) waren für reale, mediengefüllte Backups ausreichend — beide Limits auf 1 GB angehoben, das nginx-Limit entsprechend mit angepasst, Timeouts für große Uploads verlängert
+- **Backup-Wiederherstellung beschädigte die Datenbank („database disk image is malformed")**: Beim Restore wurden veraltete WAL-Begleitdateien (`-wal`/`-shm`) der vorher laufenden Datenbank nicht entfernt, wodurch sie nicht mehr zur frisch eingespielten Datenbankdatei passten. Behoben durch Verwerfen aller gepoolten Datenbankverbindungen, Entfernen der veralteten Begleitdateien vor dem Einspielen sowie erneute Aktivierung des WAL-Modus nach dem Restore. Die vorhandenen Backup-Dateien selbst waren davon nachweislich nicht betroffen — der Fehler lag ausschließlich im Restore-Vorgang
+
 ## [2.0.1] - 2026-10-13
 
 ### PDF-Designer, Dokumentenablage & Grunddaten-Stabilität (fix009.md)

@@ -9,8 +9,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-audittool}
       POSTGRES_USER: ${POSTGRES_USER:-audittool}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-AuditTool!2026}
-    ports:
-      - "5432:5432"
+    # fix010 Schritt 8a: Keine ports-Freigabe mehr - der Postgres-Dienst wird vom Backend aktuell
+    # nicht genutzt (DatabaseMigrationService wird nirgends aufgerufen, die eigentliche Datenhaltung
+    # laeuft ueber SQLite/AppDatabase). Der Dienst bleibt als Option fuer eine spaetere Migration
+    # bestehen, muss dafuer aber nicht von aussen erreichbar sein; der Zugriff innerhalb des
+    # audittool-network (fuer ein eventuelles kuenftiges Backend) bleibt unveraendert moeglich.
     volumes:
       - audit_postgres_data:/var/lib/postgresql/data
     networks:
@@ -28,6 +31,10 @@ services:
       Jwt__Key: ${JWT_KEY:-AuditTool-Dev-Key-Change-me-in-production-1234567890}
       Jwt__Issuer: ${JWT_ISSUER:-audit-tool}
       Jwt__Audience: ${JWT_AUDIENCE:-audit-tool-clients}
+      # fix010 Schritt 5c/8a: Stellt sicher, dass auch ohne IANA-Zeitzonendaten im Image (Fallback des
+      # BackupService auf "Europe/Berlin" via TimeZoneInfo) die Container-Systemzeit selbst bereits in
+      # der richtigen Zeitzone läuft - u.a. relevant für Zeitstempel in Logs und Dateinamen.
+      TZ: Europe/Berlin
     ports:
       - "5050:8080"
     # Hinweis: Dieser Port wird vom Browser NICHT mehr benoetigt (das Frontend ruft die API ueber

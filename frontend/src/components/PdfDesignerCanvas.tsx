@@ -1,5 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { RepeatBlockEditorModal } from './RepeatBlockEditorModal'
+import { AuthImage } from './AuthImage'
+import { uploadMediaImage } from '../mediaUpload'
 
 // DIN A4 at 96dpi scale 75% → 596x842 (portrait), 842x596 (landscape)
 const A4_W = 596
@@ -301,7 +303,7 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
       inner = <div style={{ width: '100%', height: '100%', background: s.background, border: `1px solid ${s.borderColor || '#94a3b8'}`, borderRadius: s.borderRadius }} />
     } else if (el.type === 'image-static') {
       inner = el.imageData
-        ? <img src={el.imageData} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        ? <AuthImage src={el.imageData} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         : <div style={{ width: '100%', height: '100%', border: '2px dashed #94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 11, color: '#94a3b8', flexDirection: 'column' }}>
             <span style={{ fontSize: 24 }}>📷</span>
             <span>Bild hochladen →</span>
@@ -614,11 +616,16 @@ export const PdfDesignerCanvas: React.FC<Props> = ({
             {selectedEl.type === 'image-static' && (
               <div className="pdf-prop-group">
                 <label>Statisches Bild hochladen</label>
-                <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => {
+                <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
                   const file = e.target.files?.[0]; if (!file) return
-                  const reader = new FileReader()
-                  reader.onload = ev => updateEl(selectedEl.id, { imageData: ev.target?.result as string })
-                  reader.readAsDataURL(file)
+                  try {
+                    const url = await uploadMediaImage(file)
+                    updateEl(selectedEl.id, { imageData: url })
+                  } catch {
+                    window.alert('Bild konnte nicht hochgeladen werden.')
+                  } finally {
+                    e.target.value = ''
+                  }
                 }} />
                 <button type="button" className="secondary-button" style={{ width: '100%', marginTop: 4 }} onClick={() => fileInputRef.current?.click()}>📁 Bild wählen...</button>
                 {selectedEl.imageData && <div style={{ marginTop: 4, fontSize: '0.78rem', color: 'var(--muted)' }}>✓ Bild geladen</div>}

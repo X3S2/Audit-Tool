@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Routing;
 
 public class CircuitBreakerMiddleware
 {
@@ -14,7 +15,12 @@ public class CircuitBreakerMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        var endpoint = $"{context.Request.Method} {context.Request.Path}";
+        // fix010 Schritt 3c: Als Schluessel das geroutete Pfad-TEMPLATE (z.B. "/api/rooms/{roomId}")
+        // statt des konkreten Pfads verwenden - sonst waechst das Dictionary unbegrenzt, weil jede
+        // einzelne Medien-/Dokument-/Raum-ID (z.B. /api/media/<guid>.jpg) einen eigenen, nie wieder
+        // entfernten Eintrag erzeugen wuerde.
+        var routeTemplate = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? context.Request.Path.Value ?? string.Empty;
+        var endpoint = $"{context.Request.Method} {routeTemplate}";
         var state = States.GetOrAdd(endpoint, _ => new CircuitBreakerState());
 
         if (state.Status == CircuitBreakerStatus.Open)
@@ -36,44 +42,41 @@ public class CircuitBreakerMiddleware
             }
         }
 
-        var originalBodyStream = context.Response.Body;
+        // fix010 Schritt 3c: Response NICHT mehr komplett in einen MemoryStream puffern - das hat
+        // ZIP-Exporte, Backups, PDFs und Bilder vollstaendig im RAM gehalten und die Auslieferung an
+        // den Client erst nach vollstaendiger Fertigstellung begonnen (kein Streaming). Der
+        // Statuscode ist nach Abschluss von _next(context) bereits gesetzt, dafuer ist keine
+        // Pufferung noetig.
         try
         {
-            using (var bufferedStream = new MemoryStream())
+            await _next(context);
+
+            if (context.Response.StatusCode < 500)
             {
-                context.Response.Body = bufferedStream;
-
-                await _next(context);
-
-                if (context.Response.StatusCode < 500)
+                state.RecordSuccess();
+            }
+            else
+            {
+                state.RecordFailure();
+                if (state.FailureCount >= 5)
                 {
-                    state.RecordSuccess();
+                    state.Status = CircuitBreakerStatus.Open;
+                    state.OpenedAt = DateTime.UtcNow;
+                    _logger.LogWarning($"Circuit breaker opened for {endpoint} (failures: {state.FailureCount})");
                 }
-                else
-                {
-                    state.RecordFailure();
-                    if (state.FailureCount >= 5)
-                    {
-                        state.Status = CircuitBreakerStatus.Open;
-                        state.OpenedAt = DateTime.UtcNow;
-                        _logger.LogWarning($"Circuit breaker opened for {endpoint} (failures: {state.FailureCount})");
-                    }
-                }
-
-                bufferedStream.Position = 0;
-                await bufferedStream.CopyToAsync(originalBodyStream);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error in CircuitBreakerMiddleware for {endpoint}");
             state.RecordFailure();
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-            await context.Response.WriteAsJsonAsync(new { message = "Ein Fehler ist aufgetreten." });
-        }
-        finally
-        {
-            context.Response.Body = originalBodyStream;
+            // Ohne Pufferung kann die Response bei einem spaet auftretenden Fehler bereits
+            // (teilweise) gesendet worden sein - dann darf Status/Body nicht mehr veraendert werden.
+            if (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                await context.Response.WriteAsJsonAsync(new { message = "Ein Fehler ist aufgetreten." });
+            }
         }
     }
 }

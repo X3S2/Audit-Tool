@@ -17,3 +17,7 @@ storage/refresh_tokens.json
 *.backup.*
 *.bak
 Audit2.zip
+# fix010 Schritt 1/8c: ausgelagerte Bilddateien und das vor der Medien-Migration erzeugte
+# Sicherungs-Backup der alten JSON-Datenbank gehoeren nicht ins Repository.
+storage/media/
+*.pre-media.bak
